@@ -74,7 +74,8 @@ class SecurityGate:
         re.compile(r"url\s*\(\s*[\"']?\s*javascript:", re.IGNORECASE),
         re.compile(r"data\s*:\s*text/html", re.IGNORECASE),
         re.compile(r"\\u003c\s*script", re.IGNORECASE),      # Unicode-escaped
-        re.compile(r"&#x?0*3c;?\s*script", re.IGNORECASE),   # HTML entity encoded
+        re.compile(r"&#x0*3c;?\s*script", re.IGNORECASE),      # HTML hex entity &#x3c;
+        re.compile(r"&#0*60;?\s*script", re.IGNORECASE),       # HTML decimal entity &#60;
     ]
 
     # --- Key name validation (for form field keys used in data attributes) ---
