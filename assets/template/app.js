@@ -100,16 +100,16 @@
       if (action.type === "input") {
         html +=
           '<div class="input-group">' +
-          '<label for="input-' + action.id + '">' + escapeHtml(action.label) + "</label>" +
-          '<input type="text" id="input-' + action.id + '" placeholder="' +
+          '<label for="input-' + escAttr(action.id) + '">' + escapeHtml(action.label) + "</label>" +
+          '<input type="text" id="input-' + escAttr(action.id) + '" placeholder="' +
           escapeHtml(action.description || "") + '">' +
           '<button class="btn btn-default" onclick="submitInput(\'' +
-          action.id + "')\">" + "Submit</button>" +
+          escAttr(action.id) + "')\">" + "Submit</button>" +
           "</div>";
       } else {
         html +=
           '<button class="' + btnClass + '" onclick="handleAction(\'' +
-          action.id + "', '" + action.type + "')\">" +
+          escAttr(action.id) + "', '" + escAttr(action.type) + "')\">" +
           escapeHtml(action.label) + "</button>";
       }
     });
@@ -148,5 +148,14 @@
     var div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function escAttr(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/'/g, "&#39;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 })();

@@ -191,7 +191,7 @@
 
       var btnTitle = escapeHtml(action.description || "");
       var btnLabel = escapeHtml(action.label);
-      html += '<button class="' + btnClass + '" onclick="handleAction(\'' + action.id + "','" + action.type + '\')" title="' + btnTitle + '">' + btnLabel + "</button>";
+      html += '<button class="' + btnClass + '" onclick="handleAction(\'' + escAttr(action.id) + "','" + escAttr(action.type) + '\')" title="' + btnTitle + '">' + btnLabel + "</button>";
     });
     html += "</div></div>";
     els.actionsArea.innerHTML = html;
@@ -241,5 +241,14 @@
     var div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function escAttr(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/'/g, "&#39;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 })();

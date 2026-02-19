@@ -25,6 +25,13 @@ fi
 
 PID=$(cat "$PID_FILE")
 
+# Validate PID is a positive integer (prevent injection via corrupted PID file)
+if ! [[ "$PID" =~ ^[0-9]+$ ]] || [[ "$PID" -lt 1 ]]; then
+    echo "Error: Invalid PID in $PID_FILE: $PID" >&2
+    rm -f "$PID_FILE"
+    exit 1
+fi
+
 if kill -0 "$PID" 2>/dev/null; then
     echo "Stopping webview server (PID: $PID)..."
     kill "$PID"
@@ -56,7 +63,8 @@ rm -f "$PID_FILE"
 CHROME_PIDS_FILE="$DATA_DIR/.chrome.pids"
 if [[ -f "$CHROME_PIDS_FILE" ]]; then
     while IFS= read -r cpid; do
-        if [[ -n "$cpid" ]] && kill -0 "$cpid" 2>/dev/null; then
+        # Validate each PID is a positive integer
+        if [[ -n "$cpid" ]] && [[ "$cpid" =~ ^[0-9]+$ ]] && kill -0 "$cpid" 2>/dev/null; then
             echo "Closing Chrome window (PID: $cpid)..."
             kill "$cpid" 2>/dev/null || true
         fi

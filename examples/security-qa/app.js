@@ -180,7 +180,7 @@
       return '<div class="field" id="wrap-' + id + '">' +
         '<div class="field-label">' + escHtml(label) + '</div>' +
         '<textarea class="field-value editable" id="' + id + '" rows="3" placeholder="' + escHtml(ph) + '" ' +
-        'oninput="saveEdit(' + index + ',\'' + key + '\',this.value)" ' +
+        'oninput="saveEdit(' + index + ',\'' + escAttr(key) + '\',this.value)" ' +
         'onfocus="this.parentElement.classList.add(\'editing\')" ' +
         'onblur="this.parentElement.classList.remove(\'editing\')">' +
         escHtml(value || "") + '</textarea></div>';
@@ -188,7 +188,7 @@
     return '<div class="field" id="wrap-' + id + '">' +
       '<div class="field-label">' + escHtml(label) + '</div>' +
       '<input class="field-value editable" id="' + id + '" type="text" value="' + escAttr(value || "") + '" placeholder="' + escAttr(ph) + '" ' +
-      'oninput="saveEdit(' + index + ',\'' + key + '\',this.value)" ' +
+      'oninput="saveEdit(' + index + ',\'' + escAttr(key) + '\',this.value)" ' +
       'onfocus="this.parentElement.classList.add(\'editing\')" ' +
       'onblur="this.parentElement.classList.remove(\'editing\')" />' +
       '</div>';
@@ -329,7 +329,12 @@
   }
 
   function escAttr(s) {
-    return String(s || "").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/'/g, "&#39;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 
   function truncate(s, n) {

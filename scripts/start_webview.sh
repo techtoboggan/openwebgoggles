@@ -34,6 +34,22 @@ if [[ -z "$APP_NAME" ]]; then
     exit 1
 fi
 
+# Validate port numbers (must be integers in valid range)
+if ! [[ "$HTTP_PORT" =~ ^[0-9]+$ ]] || [[ "$HTTP_PORT" -lt 1 ]] || [[ "$HTTP_PORT" -gt 65535 ]]; then
+    echo "Error: --port must be an integer between 1 and 65535" >&2
+    exit 1
+fi
+if ! [[ "$WS_PORT" =~ ^[0-9]+$ ]] || [[ "$WS_PORT" -lt 1 ]] || [[ "$WS_PORT" -gt 65535 ]]; then
+    echo "Error: --ws-port must be an integer between 1 and 65535" >&2
+    exit 1
+fi
+
+# Validate app name: prevent path traversal and shell metacharacter injection
+if ! [[ "$APP_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    echo "Error: App name must match /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/" >&2
+    exit 1
+fi
+
 # Check if server is already running
 if [[ -f "$DATA_DIR/.server.pid" ]]; then
     OLD_PID=$(cat "$DATA_DIR/.server.pid")

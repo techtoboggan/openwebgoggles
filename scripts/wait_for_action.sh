@@ -30,6 +30,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate numeric parameters
+if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
+    echo "Error: --timeout must be a non-negative integer" >&2
+    exit 1
+fi
+if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [[ "$POLL_INTERVAL" -lt 1 ]]; then
+    echo "Error: --poll-interval must be a positive integer" >&2
+    exit 1
+fi
+
 ACTIONS_FILE="$DATA_DIR/actions.json"
 ELAPSED=0
 

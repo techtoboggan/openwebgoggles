@@ -27,6 +27,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate DELAY_MS is a non-negative integer
+if ! [[ "$DELAY_MS" =~ ^[0-9]+$ ]]; then
+    echo "Error: --delay-ms must be a non-negative integer" >&2
+    exit 1
+fi
+
 # 1. Notify connected browser clients via the API (they'll self-close after delay)
 if [[ -f "$DATA_DIR/manifest.json" ]]; then
     TOKEN=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['session']['token'])" "$DATA_DIR/manifest.json" 2>/dev/null || echo "")
@@ -56,7 +62,8 @@ CHROME_PIDS_FILE="$DATA_DIR/.chrome.pids"
 KILLED=0
 if [[ -f "$CHROME_PIDS_FILE" ]]; then
     while IFS= read -r cpid; do
-        if [[ -n "$cpid" ]] && kill -0 "$cpid" 2>/dev/null; then
+        # Validate each PID is a positive integer
+        if [[ -n "$cpid" ]] && [[ "$cpid" =~ ^[0-9]+$ ]] && kill -0 "$cpid" 2>/dev/null; then
             kill "$cpid" 2>/dev/null && KILLED=$((KILLED + 1)) || true
         fi
     done < "$CHROME_PIDS_FILE"
