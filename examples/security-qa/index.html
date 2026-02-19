@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Security Assessment QA — OpenCode Webview</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="header-left">
+        <span class="header-title">Security Assessment QA</span>
+        <span id="progress-badge" class="badge badge-neutral">Loading...</span>
+      </div>
+      <div class="header-right">
+        <span id="session-info" class="session-info"></span>
+        <span id="conn-dot" class="conn-dot"></span>
+      </div>
+    </header>
+
+    <div id="loading" class="loading-screen">
+      <p>Connecting to agent...</p>
+    </div>
+
+    <div id="main" class="hidden">
+      <!-- Progress bar -->
+      <div class="progress-bar-wrap">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+
+      <!-- Finding nav tabs -->
+      <div class="tabs-row">
+        <button class="tabs-arrow" id="tabs-left" onclick="scrollTabs(-1)" aria-label="Scroll left">&#8592;</button>
+        <div id="finding-tabs" class="finding-tabs"></div>
+        <button class="tabs-arrow" id="tabs-right" onclick="scrollTabs(1)" aria-label="Scroll right">&#8594;</button>
+      </div>
+
+      <!-- Finding card -->
+      <div id="finding-card" class="finding-card">
+        <!-- filled by JS -->
+      </div>
+
+      <!-- Footer nav -->
+      <div class="footer-nav">
+        <button id="btn-prev" class="btn btn-secondary" onclick="navPrev()">&#8592; Prev</button>
+        <div class="footer-center">
+          <button id="btn-fp" class="btn btn-warning" onclick="markFalsePositive()">False Positive</button>
+          <button id="btn-reviewed" class="btn btn-success" onclick="markReviewed()">Mark Reviewed</button>
+        </div>
+        <button id="btn-next" class="btn btn-primary" onclick="navNext()">Next &#8594;</button>
+      </div>
+
+      <!-- Submit bar (shown when all reviewed) -->
+      <div id="submit-bar" class="submit-bar hidden">
+        <span class="submit-msg">All findings reviewed &#10003;</span>
+        <button class="btn btn-approve" onclick="submitReport()">Submit Report</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="opencode-webview-sdk.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

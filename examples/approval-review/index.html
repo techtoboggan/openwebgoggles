@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Review — OpenCode Webview</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="header">
+    <div class="header-left">
+      <h1 id="app-title">Code Review</h1>
+      <span id="status-badge" class="badge">connecting</span>
+    </div>
+    <div class="header-right">
+      <span id="session-info" class="session-info"></span>
+      <span id="connection-indicator" class="indicator disconnected"></span>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="loading" class="center-message">
+      <p>Connecting to OpenCode agent...</p>
+    </div>
+
+    <div id="content" class="hidden">
+      <!-- Message from agent -->
+      <div id="message-area"></div>
+
+      <!-- File changes list -->
+      <div id="files-area"></div>
+
+      <!-- Summary stats -->
+      <div id="summary-area"></div>
+
+      <!-- Feedback + action buttons -->
+      <div id="actions-area"></div>
+    </div>
+
+    <!-- Shown after user responds -->
+    <div id="completed" class="hidden center-message">
+      <div class="completed-content">
+        <div class="check-icon">&#10003;</div>
+        <p id="completed-message">Response sent to agent.</p>
+      </div>
+    </div>
+  </main>
+
+  <script src="opencode-webview-sdk.js"></script>
+  <script>
+    // Surface any JS errors visibly in the loading div
+    window.onerror = function(msg, src, line, col, err) {
+      var el = document.getElementById('loading');
+      if (el) el.innerHTML = '<p style="color:#f85149;padding:16px;font-family:monospace;white-space:pre-wrap">JS ERROR:\n' + msg + '\n' + src + ':' + line + '</p>';
+      return false;
+    };
+    window.addEventListener('unhandledrejection', function(e) {
+      var el = document.getElementById('loading');
+      if (el) el.innerHTML = '<p style="color:#f85149;padding:16px;font-family:monospace;white-space:pre-wrap">UNHANDLED REJECTION:\n' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)) + '</p>';
+    });
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>

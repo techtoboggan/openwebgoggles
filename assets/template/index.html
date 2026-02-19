@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{APP_NAME}} — OpenCode Webview</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="header">
+    <div class="header-left">
+      <h1 id="app-title">{{APP_NAME}}</h1>
+      <span id="status-badge" class="badge">connecting</span>
+    </div>
+    <div class="header-right">
+      <span id="connection-indicator" class="indicator disconnected"></span>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="loading" class="center-message">
+      <p>Connecting to OpenCode agent...</p>
+    </div>
+
+    <div id="content" class="hidden">
+      <div id="message-area"></div>
+      <div id="data-area"></div>
+      <div id="actions-area"></div>
+    </div>
+  </main>
+
+  <script src="opencode-webview-sdk.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

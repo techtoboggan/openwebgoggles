@@ -1,0 +1,275 @@
+/* Approval Review — OpenCode Webview Example */
+
+:root {
+  --bg: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --border: #30363d;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --danger: #f85149;
+  --warning: #d29922;
+  --diff-add-bg: #12261e;
+  --diff-add-text: #3fb950;
+  --diff-remove-bg: #2d1215;
+  --diff-remove-text: #f85149;
+  --diff-hunk-bg: #1a1f35;
+  --diff-hunk-text: #79c0ff;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* --- Header --- */
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-left h1 { font-size: 16px; font-weight: 600; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+
+.session-info {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: "SF Mono", Monaco, monospace;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.status-pending_review { background: #d2992222; color: var(--warning); border-color: var(--warning); }
+.status-waiting_input { background: #58a6ff22; color: var(--accent); border-color: var(--accent); }
+.status-completed { background: #3fb95022; color: var(--success); border-color: var(--success); }
+.status-error { background: #f8514922; color: var(--danger); border-color: var(--danger); }
+.status-processing { background: #58a6ff22; color: var(--accent); border-color: var(--accent); }
+
+.indicator { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.indicator.connected { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.indicator.disconnected { background: var(--danger); }
+
+/* --- Main --- */
+
+main { padding: 24px; max-width: 1024px; margin: 0 auto; }
+
+.center-message {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 300px;
+  color: var(--text-muted);
+}
+
+.hidden { display: none !important; }
+
+/* --- Completed state --- */
+
+.completed-content { text-align: center; }
+
+.check-icon {
+  font-size: 48px;
+  color: var(--success);
+  margin-bottom: 16px;
+}
+
+/* --- Message --- */
+
+.message {
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+/* --- File cards --- */
+
+.files-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+
+.file-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.file-header:hover { background: var(--bg-tertiary); }
+
+.file-icon { font-size: 14px; }
+
+.file-path {
+  font-family: "SF Mono", Monaco, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  flex: 1;
+}
+
+.file-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-toggle {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+/* --- Diff view --- */
+
+.file-diff { border-top: 1px solid var(--border); }
+
+.diff-view {
+  font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.diff-line { padding: 0 16px; white-space: pre-wrap; word-break: break-all; }
+.diff-add { background: var(--diff-add-bg); color: var(--diff-add-text); }
+.diff-remove { background: var(--diff-remove-bg); color: var(--diff-remove-text); }
+.diff-hunk { background: var(--diff-hunk-bg); color: var(--diff-hunk-text); padding: 4px 16px; margin: 4px 0; }
+.diff-meta { color: var(--text-muted); font-style: italic; }
+
+.diff-content {
+  padding: 12px 16px;
+  font-family: "SF Mono", Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* --- Summary --- */
+
+.summary-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  margin-bottom: 8px;
+}
+
+.summary-stats {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* --- Actions --- */
+
+.actions-container {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.feedback-group {
+  margin-bottom: 12px;
+}
+
+.feedback-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+}
+
+.feedback-group textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.feedback-group textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.3);
+}
+
+.actions-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 8px 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.btn:hover:not(:disabled) { filter: brightness(1.2); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-approve { background: #238636; border-color: #2ea043; color: #fff; }
+.btn-reject { background: #da3633; border-color: #f85149; color: #fff; }
+.btn-default { background: var(--bg-tertiary); border-color: var(--border); }
+
+.response-sent {
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.check-small { color: var(--success); font-weight: bold; }
+
+.muted { color: var(--text-muted); font-size: 13px; }
+.error { color: var(--danger); }
