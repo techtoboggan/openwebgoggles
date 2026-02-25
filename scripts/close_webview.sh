@@ -10,11 +10,11 @@
 # Options:
 #   --message   Message shown to user before closing (default: "Session complete.")
 #   --delay-ms  Milliseconds before window closes after message (default: 1500)
-#   --data-dir  Path to .opencode/webview directory (default: .opencode/webview)
+#   --data-dir  Path to .openwebgoggles directory (default: .openwebgoggles)
 
 set -euo pipefail
 
-DATA_DIR=".opencode/webview"
+DATA_DIR=".openwebgoggles"
 CLOSE_MESSAGE="Session complete."
 DELAY_MS=1500
 

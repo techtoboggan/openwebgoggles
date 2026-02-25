@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Stop the OpenCode Webview server.
+# Stop the OpenWebGoggles server.
 #
 # Usage:
 #   bash scripts/stop_webview.sh [--data-dir <path>]
 
 set -euo pipefail
 
-DATA_DIR=".opencode/webview"
+DATA_DIR=".openwebgoggles"
 
 while [[ $# -gt 0 ]]; do
     case $1 in

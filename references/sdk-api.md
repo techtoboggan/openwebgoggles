@@ -1,22 +1,22 @@
 # Client SDK API Reference
 
-`opencode-webview-sdk.js` — Vanilla JS, zero dependencies.
+`openwebgoggles-sdk.js` — Vanilla JS, zero dependencies.
 
 ## Loading
 
 ```html
-<script src="/sdk/opencode-webview-sdk.js"></script>
+<script src="/sdk/openwebgoggles-sdk.js"></script>
 ```
 
 Or as ES module:
 ```js
-import OpenCodeWebview from './opencode-webview-sdk.js';
+import OpenWebGoggles from './openwebgoggles-sdk.js';
 ```
 
 ## Constructor
 
 ```js
-const wv = new OpenCodeWebview(options?)
+const wv = new OpenWebGoggles(options?)
 ```
 
 | Option | Type | Default | Description |
@@ -77,7 +77,7 @@ unsub(); // unsubscribe
 
 | Method | Description |
 |--------|-------------|
-| `OpenCodeWebview.formatTimestamp(iso)` | Format ISO string to locale |
+| `OpenWebGoggles.formatTimestamp(iso)` | Format ISO string to locale |
 
 ## Connection Behavior
 

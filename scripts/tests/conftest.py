@@ -1,5 +1,5 @@
 """
-Shared fixtures for the opencode-webview security test suite.
+Shared fixtures for the openwebgoggles security test suite.
 """
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from security_gate import SecurityGate
 from crypto_utils import (
-    generate_session_keys,
     NonceTracker,
+    generate_session_keys,
 )
+from security_gate import SecurityGate
 
 
 @pytest.fixture

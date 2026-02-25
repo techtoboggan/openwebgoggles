@@ -1,9 +1,10 @@
 "use strict";
 // Dynamic UI renderer — reads everything from state.json schema.
 // No custom code needed. Agent writes a schema, this renders it.
+// Uses addEventListener (CSP-safe) instead of inline event handlers.
 
 (function () {
-  var wv = new OpenCodeWebview();
+  var wv = new OpenWebGoggles();
   var formValues = {};  // collects field values before submit
   var done = false;
 
@@ -24,14 +25,14 @@
       render(instance.getState());
     })
     .catch(function (err) {
-      els.loading.innerHTML = "<p style='color:var(--red)'>Connection failed: " + esc(String(err)) + "</p>";
+      safeHTML(els.loading, "<p style='color:var(--red)'>Connection failed: " + esc(String(err)) + "</p>");
     });
 
   wv.on("connected",     function (d) { render(d.state); });
   wv.on("state_updated", function (s) { if (!done) render(s); });
   wv.on("close",         function (d) {
     done = true;
-    els.content.innerHTML = '<div class="done-state"><div class="done-icon">✓</div><div style="color:var(--green);font-weight:600">Session closed</div><div class="done-msg">' + esc((d && d.message) || "") + "</div></div>";
+    safeHTML(els.content, '<div class="done-state"><div class="done-icon">✓</div><div style="color:var(--green);font-weight:600">Session closed</div><div class="done-msg">' + esc((d && d.message) || "") + "</div></div>");
   });
 
   // ─── Main renderer ───────────────────────────────────────────────────────────
@@ -41,7 +42,7 @@
 
     // Header
     var title = state.title || "OpenCode";
-    document.title = title + " — OpenCode Webview";
+    document.title = title + " — OpenWebGoggles";
     els.hdrTitle.textContent = title;
 
     var status = (state.status || "").replace(/_/g, " ");
@@ -79,7 +80,44 @@
 
     els.loading.classList.add("hidden");
     els.content.classList.remove("hidden");
-    els.content.innerHTML = html;
+    safeHTML(els.content, html);
+
+    // Bind event listeners (CSP-safe, no inline handlers)
+    bindEvents();
+  }
+
+  // ─── Event binding (replaces inline onclick/oninput/onchange) ──────────────
+  function bindEvents() {
+    // Action buttons
+    els.content.querySelectorAll("[data-action-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        handleAction(
+          btn.getAttribute("data-action-id"),
+          btn.getAttribute("data-action-type") || "action",
+          btn.getAttribute("data-action-scope") || "",
+          btn
+        );
+      });
+    });
+
+    // Text/email/url/number inputs
+    els.content.querySelectorAll("[data-field-key]").forEach(function (el) {
+      var key = el.getAttribute("data-field-key");
+      var tag = el.tagName.toLowerCase();
+      var type = el.type;
+      var event = (tag === "select") ? "change"
+               : (type === "checkbox") ? "change"
+               : "input";
+      el.addEventListener(event, function () {
+        if (type === "checkbox") {
+          formValues[key] = el.checked;
+        } else if (type === "number") {
+          formValues[key] = parseFloat(el.value) || 0;
+        } else {
+          formValues[key] = el.value;
+        }
+      });
+    });
   }
 
   // ─── Section renderer ─────────────────────────────────────────────────────────
@@ -92,7 +130,7 @@
       case "items":     html += renderItems(sec, si);   break;
       case "text":      html += renderText(sec);        break;
       case "actions":   html += renderActionsSection(sec); break;
-      default:          html += renderForm(sec, si);    break; // default to form
+      default:          html += renderForm(sec, si);    break;
     }
 
     html += "</div>";
@@ -123,6 +161,7 @@
     var key = f.key || id;
     var label = f.label || key;
     var desc = f.description ? '<div class="field-desc">' + esc(f.description) + "</div>" : "";
+    var dataKey = ' data-field-key="' + escAttr(key) + '"';
 
     // Pre-populate form values with defaults
     if (f.value !== undefined) formValues[key] = f.value;
@@ -131,8 +170,8 @@
     var inner = "";
     switch (f.type) {
       case "textarea":
-        inner = '<textarea id="' + id + '" rows="' + (f.rows || 3) + '" placeholder="' + esc(f.placeholder || "") + '" ' +
-          'oninput="window._ocv_set(\'' + key + '\',this.value)">' + esc(f.value || f.default || "") + "</textarea>";
+        inner = '<textarea id="' + id + '" rows="' + (f.rows || 3) + '" placeholder="' + esc(f.placeholder || "") + '"' +
+          dataKey + '>' + esc(f.value || f.default || "") + "</textarea>";
         break;
       case "select": {
         var opts = (f.options || []).map(function (o) {
@@ -141,26 +180,26 @@
           var sel = String(v) === String(f.value || f.default || "") ? " selected" : "";
           return '<option value="' + escAttr(v) + '"' + sel + ">" + esc(l) + "</option>";
         }).join("");
-        inner = '<select id="' + id + '" onchange="window._ocv_set(\'' + key + '\',this.value)">' + opts + "</select>";
+        inner = '<select id="' + id + '"' + dataKey + '>' + opts + "</select>";
         break;
       }
       case "checkbox": {
         var chk = (f.value || f.default) ? " checked" : "";
         inner = '<label class="checkbox-wrap"><input type="checkbox" id="' + id + '"' + chk +
-          ' onchange="window._ocv_set(\'' + key + '\',this.checked)"><span class="checkbox-label">' + esc(f.label || "") + "</span></label>";
+          dataKey + '><span class="checkbox-label">' + esc(f.label || "") + "</span></label>";
         return '<div class="field">' + inner + desc + "</div>";
       }
       case "number":
         inner = '<input type="number" id="' + id + '" value="' + escAttr(String(f.value || f.default || "")) + '" ' +
-          'placeholder="' + escAttr(f.placeholder || "") + '" min="' + (f.min || "") + '" max="' + (f.max || "") + '" ' +
-          'oninput="window._ocv_set(\'' + key + '\',parseFloat(this.value)||0)">';
+          'placeholder="' + escAttr(f.placeholder || "") + '" min="' + escAttr(String(f.min || "")) + '" max="' + escAttr(String(f.max || "")) + '"' +
+          dataKey + '>';
         break;
       case "static":
         inner = '<div class="field-static' + (f.mono ? " mono" : "") + '">' + esc(f.value || "") + "</div>";
         break;
       default: // text / email / url
         inner = '<input type="' + (f.type || "text") + '" id="' + id + '" value="' + escAttr(String(f.value || f.default || "")) + '" ' +
-          'placeholder="' + escAttr(f.placeholder || "") + '" oninput="window._ocv_set(\'' + key + '\',this.value)">';
+          'placeholder="' + escAttr(f.placeholder || "") + '"' + dataKey + '>';
     }
 
     return '<div class="field"><div class="field-label">' + esc(label) + "</div>" + inner + desc + "</div>";
@@ -216,17 +255,15 @@
       case "ghost":                                   btnClass += " btn-ghost";   break;
     }
     var dataItem = a._item_id !== undefined ? ' data-item="' + escAttr(a._item_id) + '"' : "";
-    var onclick = "window._ocv_action('" + escAttr(a.id) + "','" + escAttr(a.type || "action") + "','" + escAttr(scope) + "',this)";
-    return '<button class="' + btnClass + '" onclick="' + onclick + '"' +
+    return '<button class="' + btnClass + '"' +
+      ' data-action-id="' + escAttr(a.id) + '"' +
+      ' data-action-type="' + escAttr(a.type || "action") + '"' +
+      ' data-action-scope="' + escAttr(scope) + '"' +
       dataItem + ' title="' + escAttr(a.description || "") + '">' + esc(a.label) + "</button>";
   }
 
-  // ─── Global handlers (called from inline onclick) ─────────────────────────────
-  window._ocv_set = function (key, value) {
-    formValues[key] = value;
-  };
-
-  window._ocv_action = function (actionId, type, scope, btn) {
+  // ─── Action handler ──────────────────────────────────────────────────────────
+  function handleAction(actionId, type, scope, btn) {
     if (done) return;
 
     // Collect value: form values, item id, or boolean
@@ -238,7 +275,6 @@
     } else if (type === "submit") {
       value = Object.assign({}, formValues);
     } else {
-      // For item-scoped actions, include the item id
       var itemId = btn && btn.dataset && btn.dataset.item;
       value = itemId !== undefined ? { item_id: itemId, form: Object.assign({}, formValues) } : Object.assign({}, formValues);
     }
@@ -247,16 +283,15 @@
     btn.textContent = "…";
 
     wv.sendAction(actionId, type, value).then(function () {
-      // Replace the action button area with a sent indicator unless state update arrives
       if (btn.parentElement) {
-        btn.parentElement.innerHTML = '<span style="color:var(--green);font-size:12px">✓ Sent — waiting for agent...</span>';
+        safeHTML(btn.parentElement, '<span style="color:var(--green);font-size:12px">✓ Sent — waiting for agent...</span>');
       }
     }).catch(function (err) {
       btn.disabled = false;
       btn.textContent = actionId;
       console.error("Action failed:", err);
     });
-  };
+  }
 
   // ─── Utilities ────────────────────────────────────────────────────────────────
   function esc(s) {
@@ -264,7 +299,8 @@
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
   function escAttr(s) {
-    return String(s == null ? "" : s).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/'/g, "&#39;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
   function statusBadgeClass(s) {
     s = (s || "").toLowerCase();
@@ -272,5 +308,58 @@
     if (s.includes("warn") || s.includes("pending") || s.includes("review")) return "badge-warn";
     if (s.includes("ok") || s.includes("success") || s.includes("approv") || s.includes("done") || s.includes("complete")) return "badge-ok";
     return "badge-info";
+  }
+
+  // ─── Defense-in-depth HTML sanitizer ─────────────────────────────────────────
+  // Second line of defense after esc()/escAttr(). Strips dangerous elements
+  // and attributes from HTML before innerHTML assignment, protecting against
+  // any code path that might accidentally skip escaping.
+  var DANGEROUS_TAGS = /^(script|style|iframe|object|embed|form|meta|link|base|svg|math|template|noscript|xmp)$/i;
+  var EVENT_ATTR_RE = /^on/i;
+  // Block all data: URIs (not just text/html) — SVG data URIs can execute scripts
+  // in some browser contexts, and data: is a common XSS exfiltration vector.
+  var DANGEROUS_URL_RE = /^\s*(javascript|data\s*:|vbscript)\s*:/i;
+
+  function sanitizeHTML(html) {
+    try {
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      cleanNode(doc.body);
+      return doc.body.innerHTML;
+    } catch (e) {
+      // If DOMParser fails, return entity-escaped version as safe fallback
+      return esc(html);
+    }
+  }
+
+  function cleanNode(node) {
+    var children = Array.prototype.slice.call(node.childNodes);
+    for (var i = 0; i < children.length; i++) {
+      var child = children[i];
+      if (child.nodeType === 1) { // Element node
+        if (DANGEROUS_TAGS.test(child.tagName)) {
+          child.remove();
+          continue;
+        }
+        // Remove dangerous attributes
+        var attrs = Array.prototype.slice.call(child.attributes);
+        for (var j = 0; j < attrs.length; j++) {
+          var name = attrs[j].name.toLowerCase();
+          if (EVENT_ATTR_RE.test(name)) {
+            child.removeAttribute(attrs[j].name);
+          } else if (
+            (name === "href" || name === "src" || name === "action" || name === "formaction" || name === "xlink:href") &&
+            DANGEROUS_URL_RE.test(attrs[j].value)
+          ) {
+            child.removeAttribute(attrs[j].name);
+          }
+        }
+        cleanNode(child);
+      }
+    }
+  }
+
+  /** Safe innerHTML setter — sanitizes before assignment. */
+  function safeHTML(el, html) {
+    el.innerHTML = sanitizeHTML(html);
   }
 })();

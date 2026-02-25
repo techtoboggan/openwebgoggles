@@ -70,7 +70,7 @@ actions = {
         'value': value
     }]
 }
-with open('.opencode/webview/actions.json', 'w') as f:
+with open('.openwebgoggles/actions.json', 'w') as f:
     json.dump(actions, f, indent=2)
 print(f'[sim] injected action: {action_id} ({action_type})', flush=True)
 PYEOF

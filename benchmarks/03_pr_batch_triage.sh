@@ -56,7 +56,7 @@ for action_id, action_type in items:
         'value': True if action_type == 'approve' else (False if action_type == 'reject' else 'hold')
     })
 
-with open('.opencode/webview/actions.json', 'w') as f:
+with open('.openwebgoggles/actions.json', 'w') as f:
     json.dump({'version': len(actions), 'actions': actions}, f, indent=2)
 
 print(f'[sim] injected {len(actions)} actions', flush=True)

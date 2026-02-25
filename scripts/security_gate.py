@@ -58,6 +58,11 @@ class SecurityGate:
         "processing", "completed", "error",
     })
 
+    # --- Zero-width characters that can bypass pattern matching ---
+    # These invisible chars can be inserted between keywords (e.g. java[ZWS]script:)
+    # to bypass regex-based XSS detection while still being rendered by browsers.
+    ZERO_WIDTH_CHARS = re.compile(r"[\u200b\u200c\u200d\u200e\u200f\ufeff\u00ad\u2060\u180e]")
+
     # --- XSS detection patterns (case-insensitive) ---
     XSS_PATTERNS = [
         re.compile(r"<\s*script", re.IGNORECASE),
@@ -69,13 +74,19 @@ class SecurityGate:
         re.compile(r"<\s*form\b", re.IGNORECASE),
         re.compile(r"<\s*meta\b", re.IGNORECASE),
         re.compile(r"<\s*link\b", re.IGNORECASE),
+        re.compile(r"<\s*base\b", re.IGNORECASE),           # base tag can redirect relative URLs
         re.compile(r"<\s*svg[^>]*\bon", re.IGNORECASE),     # SVG with event handlers
+        re.compile(r"<\s*math\b", re.IGNORECASE),           # MathML can be used for XSS
         re.compile(r"expression\s*\(", re.IGNORECASE),       # CSS expression()
+        re.compile(r"-moz-binding\s*:", re.IGNORECASE),      # Firefox CSS binding
+        re.compile(r"behavior\s*:\s*url\s*\(", re.IGNORECASE),  # IE CSS behavior
         re.compile(r"url\s*\(\s*[\"']?\s*javascript:", re.IGNORECASE),
         re.compile(r"data\s*:\s*text/html", re.IGNORECASE),
         re.compile(r"\\u003c\s*script", re.IGNORECASE),      # Unicode-escaped
         re.compile(r"&#x0*3c;?\s*script", re.IGNORECASE),      # HTML hex entity &#x3c;
         re.compile(r"&#0*60;?\s*script", re.IGNORECASE),       # HTML decimal entity &#60;
+        re.compile(r"vbscript\s*:", re.IGNORECASE),          # VBScript protocol
+        re.compile(r"<\s*style\b", re.IGNORECASE),           # Style tag injection
     ]
 
     # --- Key name validation (for form field keys used in data attributes) ---
@@ -183,8 +194,15 @@ class SecurityGate:
             if len(obj) > self.MAX_STRING_LENGTH:
                 warnings.append(f"{path}: string too long ({len(obj)} chars)")
                 return warnings
+            # Check for zero-width characters (used to bypass pattern matching)
+            if self.ZERO_WIDTH_CHARS.search(obj):
+                snippet = repr(obj[:80]) + ("..." if len(obj) > 80 else "")
+                warnings.append(f"{path}: contains zero-width characters (potential filter bypass) in {snippet}")
+                return warnings
+            # Strip zero-width chars before pattern matching (defense-in-depth)
+            clean = self.ZERO_WIDTH_CHARS.sub("", obj)
             for pattern in self.XSS_PATTERNS:
-                if pattern.search(obj):
+                if pattern.search(clean):
                     # Truncate the match for the warning message
                     snippet = obj[:80] + ("..." if len(obj) > 80 else "")
                     warnings.append(f"{path}: matched {pattern.pattern!r} in {snippet!r}")

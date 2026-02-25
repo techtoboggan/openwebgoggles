@@ -1,12 +1,12 @@
 /**
- * {{APP_NAME}} — OpenCode Webview App
+ * {{APP_NAME}} — OpenWebGoggles App
  *
  * This is a template app. Customize the render functions below to build your UI.
  */
 (function () {
   "use strict";
 
-  var wv = new OpenCodeWebview();
+  var wv = new OpenWebGoggles();
 
   var els = {
     loading: document.getElementById("loading"),

@@ -1,6 +1,6 @@
 # Data Contract Reference
 
-All files live in `.opencode/webview/` within the current working directory.
+All files live in `.openwebgoggles/` within the current working directory.
 
 ## manifest.json
 

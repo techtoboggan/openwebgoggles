@@ -1,5 +1,5 @@
 /**
- * Approval Review — OpenCode Webview Example App
+ * Approval Review — OpenWebGoggles Example App
  *
  * A rich code review UI for approving/rejecting proposed changes.
  * Renders diffs, file summaries, and provides approve/reject/feedback actions.
@@ -7,7 +7,7 @@
 (function () {
   "use strict";
 
-  var wv = new OpenCodeWebview();
+  var wv = new OpenWebGoggles();
 
   var els = {
     loading: document.getElementById("loading"),

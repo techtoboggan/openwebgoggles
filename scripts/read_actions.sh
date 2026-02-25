@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-DATA_DIR=".opencode/webview"
+DATA_DIR=".openwebgoggles"
 CLEAR=false
 COUNT_ONLY=false
 

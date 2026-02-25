@@ -13,8 +13,12 @@ MITRE T1185 — Browser Session Hijacking
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
+
+# Resolve project root so tests work regardless of CWD
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # ---------------------------------------------------------------------------
 # Python mirrors of the JS escape functions (must match the implementations
@@ -322,8 +326,8 @@ class TestCombinedEscaping:
         """Simulates class="sev-select sev-SEVERITY" with injected severity."""
         malicious_sev = '" onclick="alert(1)" class="x'
         safe = esc_attr(malicious_sev)
-        class_str = f'sev-select sev-{safe}'
         assert '"' not in safe
+        assert f'sev-select sev-{safe}'  # verify interpolation is safe
 
     @pytest.mark.llm02
     def test_llm_generated_state_with_xss(self):
@@ -371,7 +375,8 @@ class TestSourceCodePatterns:
 
     @staticmethod
     def _read_js(path: str) -> str:
-        with open(path) as f:
+        full_path = _PROJECT_ROOT / path
+        with open(full_path) as f:
             return f.read()
 
     @pytest.mark.owasp_a03

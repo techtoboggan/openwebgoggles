@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Start the OpenCode Webview server and open the browser.
+# Start the OpenWebGoggles server and open the browser.
 #
 # Usage:
 #   bash scripts/start_webview.sh --app <app-name> [--port <http-port>] [--ws-port <ws-port>] [--no-browser]
 #
 # The app must exist in assets/template/ (built-in) or examples/ (demo apps).
-# Creates .opencode/webview/ in the current working directory.
+# Creates .openwebgoggles/ in the current working directory.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(dirname "$SCRIPT_DIR")"
-DATA_DIR=".opencode/webview"
+DATA_DIR=".openwebgoggles"
 HTTP_PORT=18420
 WS_PORT=18421
 OPEN_BROWSER=true
@@ -92,9 +92,9 @@ rm -rf "$DATA_DIR/apps/$APP_NAME"
 cp -r "$APP_SRC" "$DATA_DIR/apps/$APP_NAME"
 
 # Copy SDK into app directory
-SDK_PATH="$SKILL_DIR/assets/sdk/opencode-webview-sdk.js"
+SDK_PATH="$SKILL_DIR/assets/sdk/openwebgoggles-sdk.js"
 if [[ -f "$SDK_PATH" ]]; then
-    cp "$SDK_PATH" "$DATA_DIR/apps/$APP_NAME/opencode-webview-sdk.js"
+    cp "$SDK_PATH" "$DATA_DIR/apps/$APP_NAME/openwebgoggles-sdk.js"
 fi
 
 # Generate session token
@@ -268,7 +268,7 @@ if [[ "$OPEN_BROWSER" == "true" ]]; then
 fi
 
 echo ""
-echo "=== OpenCode Webview ==="
+echo "=== OpenWebGoggles ==="
 echo "  HTTP:      $URL"
 echo "  WebSocket: ws://127.0.0.1:$WS_PORT"
 echo "  App:       $APP_NAME"

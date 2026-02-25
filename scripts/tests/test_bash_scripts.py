@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import re
-import stat
 import subprocess
 import tempfile
 
@@ -394,7 +393,7 @@ class TestInitWebviewAppValidation:
     @pytest.mark.owasp_a03
     def test_sed_injection_blocked_by_validation(self):
         """App names with / would cause sed delimiter injection, but validation blocks them."""
-        src = _read_script("init_webview_app.sh")
+        _read_script("init_webview_app.sh")  # verify script exists
         # The regex ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ blocks /
         pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
         bad_names = [
@@ -484,7 +483,7 @@ class TestCrossCuttingBashSecurity:
             # Check for common unquoted variable patterns in dangerous positions
             # This is a heuristic — look for kill $VAR (should be kill "$VAR")
             lines = src.split("\n")
-            for i, line in enumerate(lines, 1):
+            for _i, line in enumerate(lines, 1):
                 stripped = line.strip()
                 if stripped.startswith("#"):
                     continue

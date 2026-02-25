@@ -1,4 +1,4 @@
-# OpenCode Webview — Benchmark Demos
+# OpenWebGoggles — Benchmark Demos
 
 Six end-to-end demos that exercise different capability dimensions of the framework.
 Each is a self-contained bash script you can run directly from the repo root.

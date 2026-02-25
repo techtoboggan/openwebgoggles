@@ -36,21 +36,17 @@ import hashlib
 import hmac as hmac_module
 import json
 import os
-import socket
-import struct
 import time
 
 import pytest
-
 from crypto_utils import (
+    NonceTracker,
+    _lazy_nacl,
+    generate_nonce,
     generate_session_keys,
     sign_message,
     verify_hmac,
-    generate_nonce,
-    NonceTracker,
-    _lazy_nacl,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. CHANNEL BINDING — Proving the server is the genuine agent
@@ -264,6 +260,7 @@ class TestNetworkIsolation:
     def test_server_binds_loopback_only(self):
         """Verify that the server code binds to 127.0.0.1 (not 0.0.0.0)."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server.WebviewServer.start)
         # The asyncio.start_server call should use "127.0.0.1"
@@ -275,6 +272,7 @@ class TestNetworkIsolation:
     def test_ws_server_binds_loopback_only(self):
         """WebSocket server must also bind to 127.0.0.1."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server.WebviewServer.start)
         # Count 127.0.0.1 occurrences — should appear for both HTTP and WS
@@ -301,6 +299,7 @@ class TestNetworkIsolation:
         """The session token should NOT be passed as a URL query parameter
         (visible in logs, referrer headers, browser history)."""
         import inspect
+
         import webview_server
         # Check the SDK connector: should use first-message auth
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
@@ -359,7 +358,6 @@ class TestMITMPrevention:
         """Swapping the nonce from one message onto another is detectable."""
         token = os.urandom(32).hex()
         payload_a = '{"type":"action","data":{"action_id":"a"}}'
-        payload_b = '{"type":"action","data":{"action_id":"b"}}'
         nonce_a = generate_nonce()
         nonce_b = generate_nonce()
 
@@ -462,7 +460,6 @@ class TestReplayPrevention:
         """Browser-side nonce tracking rejects replayed server messages.
         We simulate the browser's nonce check."""
         seen_nonces = {}
-        nonce_window_ms = 300_000
 
         nonce = generate_nonce()
 
@@ -532,6 +529,7 @@ class TestTokenExposure:
         """Server print statements should not contain full tokens.
         The server only logs pub key prefix, not the session token."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server.WebviewServer.__init__)
         # Look for print statements — they should use [:16] truncation for key
@@ -583,8 +581,9 @@ class TestSupplyChainIntegrity:
     @pytest.mark.mitre_t1195
     def test_crypto_uses_standard_libraries(self):
         """Cryptographic operations should use well-known libraries."""
-        import crypto_utils
         import inspect
+
+        import crypto_utils
         source = inspect.getsource(crypto_utils)
 
         # Should use PyNaCl for Ed25519
@@ -603,6 +602,7 @@ class TestSupplyChainIntegrity:
     def test_no_eval_or_exec_in_server(self):
         """Server code should not use eval() or exec()."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server)
         # Remove string literals to avoid false positives
@@ -614,6 +614,7 @@ class TestSupplyChainIntegrity:
     @pytest.mark.llm03
     def test_no_eval_or_exec_in_security_gate(self):
         import inspect
+
         from security_gate import SecurityGate
         source = inspect.getsource(SecurityGate)
         assert "eval(" not in source
@@ -624,6 +625,7 @@ class TestSupplyChainIntegrity:
     def test_no_pickle_or_marshal_in_server(self):
         """No use of pickle/marshal (deserialization attacks)."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server)
         assert "pickle" not in source
@@ -644,6 +646,7 @@ class TestWebSocketAuthentication:
     def test_ws_auth_protocol_requires_first_message(self):
         """The WS handler should expect an auth message as the first message."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
         assert "first_msg" in source or "auth" in source
@@ -653,6 +656,7 @@ class TestWebSocketAuthentication:
     def test_ws_auth_timeout_exists(self):
         """WS auth should have a timeout to prevent hanging connections."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
         assert "timeout" in source
@@ -663,6 +667,7 @@ class TestWebSocketAuthentication:
     def test_ws_unauthorized_close_code(self):
         """Unauthorized WS connections should close with 4001."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
         assert "4001" in source
@@ -672,6 +677,7 @@ class TestWebSocketAuthentication:
     def test_ws_signed_messages_have_envelope(self):
         """Server→browser WS messages should be wrapped in {nonce, sig, p} envelope."""
         import inspect
+
         import webview_server
         source = inspect.getsource(webview_server.WebviewServer._send_ws_signed)
         assert '"nonce"' in source or "'nonce'" in source
@@ -744,6 +750,7 @@ class TestCrossCuttingSecurity:
 
         # Layer 1: Network isolation
         import inspect
+
         import webview_server
         start_source = inspect.getsource(webview_server.WebviewServer.start)
         assert "127.0.0.1" in start_source
@@ -781,6 +788,7 @@ class TestCrossCuttingSecurity:
     def test_key_material_never_on_disk(self):
         """Verify that the server stores keys in memory only (no file writes)."""
         import inspect
+
         import webview_server
         init_source = inspect.getsource(webview_server.WebviewServer.__init__)
         # Private key should be stored in self._private_key (memory)
@@ -793,6 +801,7 @@ class TestCrossCuttingSecurity:
     def test_key_zeroed_on_shutdown(self):
         """Server must zero key material when shutting down."""
         import inspect
+
         import webview_server
         start_source = inspect.getsource(webview_server.WebviewServer.start)
         assert "zero_key" in start_source

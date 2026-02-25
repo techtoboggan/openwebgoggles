@@ -1,7 +1,7 @@
 "use strict";
 
 (function () {
-  var wv = new OpenCodeWebview();
+  var wv = new OpenWebGoggles();
   var findings = [];
   var currentIndex = 0;
   var submitted = false;

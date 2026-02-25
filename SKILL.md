@@ -1,5 +1,5 @@
 ---
-name: opencode-webview
+name: openwebgoggles
 description: >
   Runtime framework for launching interactive browser-based webview UIs that communicate
   bidirectionally with the CLI agent via structured JSON data contracts. Use when:
@@ -11,7 +11,7 @@ description: >
   a client-side SDK, and bash helper scripts for agent integration.
 ---
 
-# OpenCode Webview
+# OpenWebGoggles
 
 Launch browser-based interactive UIs from OpenCode skills with bidirectional agent communication.
 
@@ -23,7 +23,7 @@ Launch browser-based interactive UIs from OpenCode skills with bidirectional age
 bash scripts/start_webview.sh --app approval-review
 ```
 
-This creates `.opencode/webview/` in the CWD, starts the server, and opens the browser.
+This creates `.openwebgoggles/` in the CWD, starts the server, and opens the browser.
 
 ### 2. Write state for the webview to render
 
@@ -47,7 +47,7 @@ bash scripts/stop_webview.sh
 ## Architecture
 
 ```
-Agent (bash) ←→ .opencode/webview/*.json ←→ Server (Python) ←→ Browser (SDK + App)
+Agent (bash) ←→ .openwebgoggles/*.json ←→ Server (Python) ←→ Browser (SDK + App)
 ```
 
 - **Files are the source of truth**: `state.json` (agent→webview), `actions.json` (webview→agent), `manifest.json` (session metadata)
@@ -57,7 +57,7 @@ Agent (bash) ←→ .opencode/webview/*.json ←→ Server (Python) ←→ Brows
 
 ## Data Contract
 
-All files live in `.opencode/webview/` within the current working directory.
+All files live in `.openwebgoggles/` within the current working directory.
 
 | File | Direction | Purpose |
 |------|-----------|---------|
@@ -181,9 +181,9 @@ RESULT=$(bash scripts/wait_for_action.sh --timeout 120)
 3. Use the SDK in your app:
 
 ```html
-<script src="/sdk/opencode-webview-sdk.js"></script>
+<script src="/sdk/openwebgoggles-sdk.js"></script>
 <script>
-  const wv = new OpenCodeWebview();
+  const wv = new OpenWebGoggles();
   wv.connect().then(() => {
     wv.onStateUpdate((state) => {
       // Render your UI based on state.data

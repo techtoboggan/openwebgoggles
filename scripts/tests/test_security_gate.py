@@ -22,10 +22,8 @@ Coverage mapping:
 from __future__ import annotations
 
 import json
-import string
 
 import pytest
-
 from helpers import make_state
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -460,7 +458,7 @@ class TestPayloadSizeLimits:
         nested = {"status": "ready"}
         inner = nested
         # Build exactly MAX_NESTING_DEPTH levels (starting from root=0)
-        for i in range(gate.MAX_NESTING_DEPTH - 1):
+        for _i in range(gate.MAX_NESTING_DEPTH - 1):
             inner["d"] = {}
             inner = inner["d"]
         inner["leaf"] = "ok"
@@ -904,3 +902,183 @@ class TestEdgeCases:
         # <user might not match any XSS pattern (no script/iframe/etc after <)
         # This is a valid behavior test
         assert ok, f"Benign content triggered false positive: {err}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. ZERO-WIDTH CHARACTER DETECTION — OWASP A03; LLM01
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestZeroWidthCharDetection:
+    """Zero-width characters can bypass XSS pattern matching by inserting
+    invisible characters between keywords (e.g., java[ZWS]script:)."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    @pytest.mark.parametrize("char,name", [
+        ("\u200b", "zero-width space"),
+        ("\u200c", "zero-width non-joiner"),
+        ("\u200d", "zero-width joiner"),
+        ("\u200e", "left-to-right mark"),
+        ("\u200f", "right-to-left mark"),
+        ("\ufeff", "zero-width no-break space / BOM"),
+        ("\u00ad", "soft hyphen"),
+        ("\u2060", "word joiner"),
+        ("\u180e", "mongolian vowel separator"),
+    ])
+    def test_zero_width_chars_in_string_rejected(self, gate, char, name):
+        """Any zero-width character in a string value should be rejected."""
+        raw = json.dumps({"status": "ready", "message": f"hello{char}world"})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, f"Zero-width char ({name}) should be blocked"
+        assert "zero-width" in err.lower()
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    def test_zwc_bypass_javascript_protocol(self, gate):
+        """java[ZWS]script: should be caught even with zero-width char."""
+        payload = "java\u200bscript:alert(1)"
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "ZWC-split javascript: protocol should be caught"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    def test_zwc_bypass_script_tag(self, gate):
+        """<scr[ZWS]ipt> should be caught even with zero-width char."""
+        payload = "<scr\u200bipt>alert(1)</script>"
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "ZWC-split <script> tag should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_zwc_bypass_event_handler(self, gate):
+        """on[ZWS]click should be caught even with zero-width char."""
+        payload = '<div on\u200dclick="evil()">test</div>'
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "ZWC-split event handler should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_zwc_in_nested_field(self, gate):
+        """Zero-width chars in nested field values should be caught."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{
+                "type": "form",
+                "fields": [{"key": "f1", "type": "text", "label": "x",
+                             "value": "safe\u200btext"}]
+            }]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_multiple_zwc_chars(self, gate):
+        """Multiple different zero-width chars should be caught."""
+        payload = "te\u200b\u200c\u200dst"
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. NEW XSS PATTERNS — base, math, style, vbscript, CSS injection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNewXSSPatterns:
+    """Tests for newly added XSS detection patterns."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.parametrize("payload", [
+        '<base href="http://evil.com/">',
+        '<BASE href="http://evil.com/">',
+        '< base href="http://evil.com/">',
+    ])
+    def test_base_tag_injection(self, gate, payload):
+        """<base> tag can redirect all relative URLs to attacker-controlled domain."""
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, f"Should block base tag: {payload!r}"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.parametrize("payload", [
+        '<math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert(1)>',
+        '<math href="javascript:alert(1)">click</math>',
+        '<MATH><mi>test</mi></MATH>',
+    ])
+    def test_math_tag_injection(self, gate, payload):
+        """MathML can be used for XSS via namespace confusion."""
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, f"Should block math tag: {payload!r}"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.parametrize("payload", [
+        '<style>body{background:url("javascript:alert(1)")}</style>',
+        '<STYLE>@import "http://evil.com/evil.css";</STYLE>',
+        '< style>*{display:none}</style>',
+    ])
+    def test_style_tag_injection(self, gate, payload):
+        """<style> tag injection can deface UI or exfiltrate data via CSS."""
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, f"Should block style tag: {payload!r}"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.parametrize("payload", [
+        'vbscript:MsgBox("XSS")',
+        'VBSCRIPT:alert',
+        'vbscript :alert',
+    ])
+    def test_vbscript_protocol(self, gate, payload):
+        """VBScript protocol handler (IE-specific but worth blocking)."""
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, f"Should block vbscript: protocol: {payload!r}"
+
+    @pytest.mark.owasp_a03
+    def test_moz_binding_css_injection(self, gate):
+        """-moz-binding CSS property can execute arbitrary XBL."""
+        payload = '-moz-binding: url("http://evil.com/evil.xml#xss")'
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_behavior_css_injection(self, gate):
+        """IE behavior CSS property can execute HTC components."""
+        payload = 'behavior: url(evil.htc)'
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_moz_binding_case_insensitive(self, gate):
+        payload = '-MOZ-BINDING: url("evil")'
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_benign_math_text_not_blocked(self, gate):
+        """The word 'math' in normal text should NOT trigger false positive."""
+        state = {"status": "ready", "message": "The math equation is 2+2=4"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        # "math" without < prefix should pass
+        assert ok, f"Benign 'math' text triggered false positive: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_benign_style_text_not_blocked(self, gate):
+        """The word 'style' in normal text should NOT trigger false positive."""
+        state = {"status": "ready", "message": "This has a nice coding style"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Benign 'style' text triggered false positive: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_benign_base_text_not_blocked(self, gate):
+        """The word 'base' in normal text should NOT trigger false positive."""
+        state = {"status": "ready", "message": "The base case for recursion"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Benign 'base' text triggered false positive: {err}"

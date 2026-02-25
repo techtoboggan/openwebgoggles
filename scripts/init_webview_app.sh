@@ -51,9 +51,9 @@ echo "Scaffolding webview app '$APP_NAME'..."
 cp -r "$TEMPLATE_DIR" "$DEST_DIR"
 
 # Copy SDK into the app directory
-SDK_PATH="$SKILL_DIR/assets/sdk/opencode-webview-sdk.js"
+SDK_PATH="$SKILL_DIR/assets/sdk/openwebgoggles-sdk.js"
 if [[ -f "$SDK_PATH" ]]; then
-    cp "$SDK_PATH" "$DEST_DIR/opencode-webview-sdk.js"
+    cp "$SDK_PATH" "$DEST_DIR/openwebgoggles-sdk.js"
 fi
 
 # Replace placeholder app name in files

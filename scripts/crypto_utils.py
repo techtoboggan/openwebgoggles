@@ -1,5 +1,5 @@
 """
-Ephemeral cryptographic utilities for OpenCode Webview session security.
+Ephemeral cryptographic utilities for OpenWebGoggles session security.
 
 Provides Ed25519 signing for server→browser messages and HMAC-SHA256
 verification for browser→server messages. All key material is held
@@ -17,8 +17,8 @@ import time
 def _lazy_nacl():
     """Import nacl on demand so the module can be imported even without PyNaCl."""
     try:
-        import nacl.signing
         import nacl.encoding
+        import nacl.signing
         return nacl
     except ImportError:
         return None

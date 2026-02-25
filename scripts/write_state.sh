@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-DATA_DIR=".opencode/webview"
+DATA_DIR=".openwebgoggles"
 STATE_FILE="$DATA_DIR/state.json"
 JSON_INPUT=""
 FROM_FILE=""

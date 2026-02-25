@@ -1,13 +1,13 @@
 /**
- * OpenCode Webview SDK
+ * OpenWebGoggles SDK
  *
  * Vanilla JS client library for connecting browser-based webview apps
  * to the OpenCode CLI agent via WebSocket (primary) and HTTP polling (fallback).
  *
  * Usage:
- *   <script src="/sdk/opencode-webview-sdk.js"></script>
+ *   <script src="/sdk/openwebgoggles-sdk.js"></script>
  *   <script>
- *     const wv = new OpenCodeWebview();
+ *     const wv = new OpenWebGoggles();
  *     wv.connect().then(() => {
  *       wv.onStateUpdate((state) => renderUI(state));
  *     });
@@ -19,7 +19,7 @@
   } else if (typeof module === "object" && module.exports) {
     module.exports = factory();
   } else {
-    root.OpenCodeWebview = factory();
+    root.OpenWebGoggles = factory();
   }
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
@@ -31,7 +31,7 @@
     });
   }
 
-  function OpenCodeWebview(options) {
+  function OpenWebGoggles(options) {
     options = options || {};
 
     this._httpUrl = options.httpUrl || window.location.origin;
@@ -50,14 +50,16 @@
     this._listeners = {};
     this._actionQueue = [];
     this._publicKey = null;       // Ed25519 public key hex from bootstrap
+    this._verifyKey = null;       // CryptoKey for Ed25519 verification (async import)
     this._seenNonces = {};        // replay protection
     this._nonceWindowMs = 300000; // 5 minute nonce window
     this._cryptoReady = false;    // whether SubtleCrypto HMAC is available
+    this._maxMessageSize = 1048576; // 1MB max WS message size
   }
 
   // --- Event system ---
 
-  OpenCodeWebview.prototype.on = function (event, callback) {
+  OpenWebGoggles.prototype.on = function (event, callback) {
     if (!this._listeners[event]) this._listeners[event] = [];
     this._listeners[event].push(callback);
     var self = this;
@@ -68,30 +70,30 @@
     };
   };
 
-  OpenCodeWebview.prototype._emit = function (event, data) {
+  OpenWebGoggles.prototype._emit = function (event, data) {
     var cbs = this._listeners[event] || [];
     for (var i = 0; i < cbs.length; i++) {
       try {
         cbs[i](data);
       } catch (e) {
-        console.error("OpenCodeWebview: Error in " + event + " handler:", e);
+        console.error("OpenWebGoggles: Error in " + event + " handler:", e);
       }
     }
   };
 
   // --- Convenience event subscribers ---
 
-  OpenCodeWebview.prototype.onStateUpdate = function (callback) {
+  OpenWebGoggles.prototype.onStateUpdate = function (callback) {
     return this.on("state_updated", callback);
   };
 
-  OpenCodeWebview.prototype.onManifestUpdate = function (callback) {
+  OpenWebGoggles.prototype.onManifestUpdate = function (callback) {
     return this.on("manifest_updated", callback);
   };
 
   // --- Connection ---
 
-  OpenCodeWebview.prototype.connect = function () {
+  OpenWebGoggles.prototype.connect = function () {
     var self = this;
 
     // Use server-injected bootstrap data if available (avoids a fetch round-trip)
@@ -104,9 +106,17 @@
     return manifestPromise.then(function (manifest) {
       self._manifest = manifest;
       self._token = manifest.session.token;
-      // Read public key from bootstrap for signature verification
+      // Read public key from bootstrap for Ed25519 signature verification
       if (bootstrap && bootstrap.publicKey) {
         self._publicKey = bootstrap.publicKey;
+        // Best-effort async import — Ed25519 requires Chrome 130+/Firefox 130+/Safari 17+
+        if (typeof crypto !== "undefined" && crypto.subtle && crypto.subtle.importKey) {
+          self._importEdPublicKey(bootstrap.publicKey).then(function (key) {
+            self._verifyKey = key;
+          }).catch(function () {
+            // Browser doesn't support Ed25519 yet — nonce replay still guards against replay
+          });
+        }
       }
 
       var server = manifest.server || {};
@@ -133,7 +143,7 @@
     });
   };
 
-  OpenCodeWebview.prototype.disconnect = function () {
+  OpenWebGoggles.prototype.disconnect = function () {
     this._connected = false;
     if (this._ws) {
       this._ws.close();
@@ -150,29 +160,29 @@
     this._emit("disconnected");
   };
 
-  OpenCodeWebview.prototype.isConnected = function () {
+  OpenWebGoggles.prototype.isConnected = function () {
     return this._connected;
   };
 
   // --- State accessors ---
 
-  OpenCodeWebview.prototype.getState = function () {
+  OpenWebGoggles.prototype.getState = function () {
     return this._state;
   };
 
-  OpenCodeWebview.prototype.getStatus = function () {
+  OpenWebGoggles.prototype.getStatus = function () {
     return this._state ? this._state.status : null;
   };
 
-  OpenCodeWebview.prototype.getData = function () {
+  OpenWebGoggles.prototype.getData = function () {
     return this._state ? this._state.data : null;
   };
 
-  OpenCodeWebview.prototype.getRequestedActions = function () {
+  OpenWebGoggles.prototype.getRequestedActions = function () {
     return this._state ? this._state.actions_requested || [] : [];
   };
 
-  OpenCodeWebview.prototype.getManifest = function () {
+  OpenWebGoggles.prototype.getManifest = function () {
     return this._manifest;
   };
 
@@ -180,7 +190,7 @@
 
   // --- Crypto helpers ---
 
-  OpenCodeWebview.prototype._pruneNonces = function () {
+  OpenWebGoggles.prototype._pruneNonces = function () {
     var cutoff = Date.now() - this._nonceWindowMs;
     var nonces = this._seenNonces;
     for (var n in nonces) {
@@ -190,7 +200,7 @@
     }
   };
 
-  OpenCodeWebview.prototype._generateNonce = function () {
+  OpenWebGoggles.prototype._generateNonce = function () {
     // Timestamp + random for uniqueness
     var ts = Date.now().toString(16);
     var rand = "";
@@ -200,7 +210,7 @@
     return ts + rand;
   };
 
-  OpenCodeWebview.prototype._sendWsSigned = function (message) {
+  OpenWebGoggles.prototype._sendWsSigned = function (message) {
     if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
     var self = this;
     var payload = JSON.stringify(message);
@@ -222,16 +232,18 @@
         }
         self._ws.send(JSON.stringify({ nonce: nonce, sig: sigHex, p: message }));
       }).catch(function () {
-        // Fallback: send unsigned
+        // Fallback: send unsigned (degraded security)
+        console.warn("OpenWebGoggles: HMAC signing failed, sending unsigned message");
         self._ws.send(JSON.stringify(message));
       });
     } else {
-      // No SubtleCrypto: send unsigned
+      // No SubtleCrypto: send unsigned (degraded security)
+      console.warn("OpenWebGoggles: SubtleCrypto unavailable, sending unsigned message (HMAC disabled)");
       this._ws.send(JSON.stringify(message));
     }
   };
 
-  OpenCodeWebview.prototype.sendAction = function (actionId, type, value, metadata) {
+  OpenWebGoggles.prototype.sendAction = function (actionId, type, value, metadata) {
     var action = {
       action_id: actionId,
       type: type,
@@ -248,41 +260,41 @@
     }
   };
 
-  OpenCodeWebview.prototype.approve = function (actionId, metadata) {
+  OpenWebGoggles.prototype.approve = function (actionId, metadata) {
     return this.sendAction(actionId, "approve", true, metadata);
   };
 
-  OpenCodeWebview.prototype.reject = function (actionId, metadata) {
+  OpenWebGoggles.prototype.reject = function (actionId, metadata) {
     return this.sendAction(actionId, "reject", false, metadata);
   };
 
-  OpenCodeWebview.prototype.submitInput = function (actionId, value, metadata) {
+  OpenWebGoggles.prototype.submitInput = function (actionId, value, metadata) {
     return this.sendAction(actionId, "input", value, metadata);
   };
 
-  OpenCodeWebview.prototype.selectOption = function (actionId, value, metadata) {
+  OpenWebGoggles.prototype.selectOption = function (actionId, value, metadata) {
     return this.sendAction(actionId, "select", value, metadata);
   };
 
-  OpenCodeWebview.prototype.confirm = function (actionId, metadata) {
+  OpenWebGoggles.prototype.confirm = function (actionId, metadata) {
     return this.sendAction(actionId, "confirm", true, metadata);
   };
 
   // --- HTTP methods ---
 
-  OpenCodeWebview.prototype._fetchManifest = function () {
+  OpenWebGoggles.prototype._fetchManifest = function () {
     return this._httpGet("/_api/manifest");
   };
 
-  OpenCodeWebview.prototype._fetchState = function () {
+  OpenWebGoggles.prototype._fetchState = function () {
     return this._httpGet("/_api/state");
   };
 
-  OpenCodeWebview.prototype._postAction = function (action) {
+  OpenWebGoggles.prototype._postAction = function (action) {
     return this._httpPost("/_api/actions", action);
   };
 
-  OpenCodeWebview.prototype._httpGet = function (path) {
+  OpenWebGoggles.prototype._httpGet = function (path) {
     var self = this;
     return fetch(this._httpUrl + path, {
       headers: this._authHeaders(),
@@ -293,7 +305,7 @@
     });
   };
 
-  OpenCodeWebview.prototype._httpPost = function (path, data) {
+  OpenWebGoggles.prototype._httpPost = function (path, data) {
     return fetch(this._httpUrl + path, {
       method: "POST",
       headers: Object.assign({ "Content-Type": "application/json" }, this._authHeaders()),
@@ -304,16 +316,43 @@
     });
   };
 
-  OpenCodeWebview.prototype._authHeaders = function () {
+  OpenWebGoggles.prototype._authHeaders = function () {
     if (this._token) {
       return { Authorization: "Bearer " + this._token };
     }
     return {};
   };
 
+  // --- Ed25519 signature verification (server → browser) ---
+
+  /**
+   * Import an Ed25519 public key from a hex string for use with SubtleCrypto.verify().
+   * Requires Chrome 130+, Firefox 130+, or Safari 17+. Returns a Promise<CryptoKey>.
+   */
+  OpenWebGoggles.prototype._importEdPublicKey = function (hexKey) {
+    var bytes = new Uint8Array(hexKey.match(/.{1,2}/g).map(function (b) {
+      return parseInt(b, 16);
+    }));
+    return crypto.subtle.importKey("raw", bytes, { name: "Ed25519" }, false, ["verify"]);
+  };
+
+  /**
+   * Verify an Ed25519 signature over (nonce + payloadStr).
+   * payloadStr must be the exact compact-JSON string that the server signed (raw.ps).
+   * Returns a Promise<boolean>.
+   */
+  OpenWebGoggles.prototype._verifyEdDSA = function (verifyKey, nonce, payloadStr, sigHex) {
+    var encoder = new TextEncoder();
+    var message = encoder.encode(nonce + payloadStr);
+    var sigBytes = new Uint8Array(sigHex.match(/.{1,2}/g).map(function (b) {
+      return parseInt(b, 16);
+    }));
+    return crypto.subtle.verify("Ed25519", verifyKey, sigBytes, message);
+  };
+
   // --- WebSocket ---
 
-  OpenCodeWebview.prototype._connectWebSocket = function () {
+  OpenWebGoggles.prototype._connectWebSocket = function () {
     if (!this._useWebSocket) {
       this._startPolling();
       return;
@@ -326,7 +365,7 @@
     try {
       this._ws = new WebSocket(url);
     } catch (e) {
-      console.warn("OpenCodeWebview: WebSocket not available, falling back to polling");
+      console.warn("OpenWebGoggles: WebSocket not available, falling back to polling");
       this._useWebSocket = false;
       this._startPolling();
       return;
@@ -350,24 +389,46 @@
 
     this._ws.onmessage = function (event) {
       try {
+        // Payload size guard — reject oversized messages
+        if (typeof event.data === "string" && event.data.length > self._maxMessageSize) {
+          console.error("OpenWebGoggles: Rejected oversized WS message (" + event.data.length + " bytes, max " + self._maxMessageSize + ")");
+          return;
+        }
         var raw = JSON.parse(event.data);
         // Unwrap signed envelope if present
         var msg;
         if (raw.p && raw.nonce && raw.sig) {
-          // Signed message from server — check nonce for replay
+          // Signed message from server — check nonce for replay first (cheap, synchronous)
           if (self._seenNonces[raw.nonce]) {
-            console.warn("OpenCodeWebview: Replayed nonce, ignoring message");
+            console.warn("OpenWebGoggles: Replayed nonce, ignoring message");
             return;
           }
+          // Record nonce before async verification to prevent replay during the await
           self._seenNonces[raw.nonce] = Date.now();
           self._pruneNonces();
+
+          // Ed25519 signature verification — requires _verifyKey (imported async at connect)
+          // and ps (compact payload string included by server alongside parsed p).
+          if (self._verifyKey && raw.ps) {
+            self._verifyEdDSA(self._verifyKey, raw.nonce, raw.ps, raw.sig).then(function (valid) {
+              if (!valid) {
+                console.error("OpenWebGoggles: Invalid Ed25519 signature — message rejected");
+                return;
+              }
+              self._handleWsMessage(raw.p);
+            }).catch(function (e) {
+              console.error("OpenWebGoggles: Ed25519 verification error:", e);
+            });
+            return; // handled asynchronously above
+          }
+          // No verify key or no ps field: nonce already recorded, accept message
           msg = raw.p;
         } else {
           msg = raw;
         }
         self._handleWsMessage(msg);
       } catch (e) {
-        console.error("OpenCodeWebview: Invalid WS message:", e);
+        console.error("OpenWebGoggles: Invalid WS message:", e);
       }
     };
 
@@ -389,7 +450,7 @@
     };
   };
 
-  OpenCodeWebview.prototype._handleWsMessage = function (msg) {
+  OpenWebGoggles.prototype._handleWsMessage = function (msg) {
     switch (msg.type) {
       case "connected":
         if (msg.state) {
@@ -427,7 +488,7 @@
 
   // --- HTTP Polling fallback ---
 
-  OpenCodeWebview.prototype._startPolling = function () {
+  OpenWebGoggles.prototype._startPolling = function () {
     if (this._pollTimer) return;
 
     var self = this;
@@ -461,11 +522,11 @@
 
   // --- Utility helpers ---
 
-  OpenCodeWebview.formatTimestamp = function (isoString) {
+  OpenWebGoggles.formatTimestamp = function (isoString) {
     if (!isoString) return "";
     var d = new Date(isoString);
     return d.toLocaleString();
   };
 
-  return OpenCodeWebview;
+  return OpenWebGoggles;
 });

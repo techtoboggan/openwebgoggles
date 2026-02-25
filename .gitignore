@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 
 # Runtime data
+.openwebgoggles/
 .opencode/webview/
 
 # OS
@@ -16,3 +17,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Claude Code — dev-only permission overrides (not safe to commit)
+.claude/settings.local.json

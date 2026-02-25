@@ -1,11 +1,11 @@
 # Integration Guide
 
-How to use opencode-webview from other OpenCode skills.
+How to use openwebgoggles from other OpenCode skills.
 
 ## Basic HITL Pattern
 
 ```bash
-SKILL_DIR="$HOME/.config/opencode/skills/opencode-webview"
+SKILL_DIR="$HOME/.config/opencode/skills/openwebgoggles"
 
 # 1. Start webview with the approval-review app
 bash "$SKILL_DIR/scripts/start_webview.sh" --app approval-review

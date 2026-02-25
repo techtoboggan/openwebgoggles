@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-DATA_DIR=".opencode/webview"
+DATA_DIR=".openwebgoggles"
 TIMEOUT=0  # 0 = no timeout
 ACTION_TYPE=""
 CLEAR=false

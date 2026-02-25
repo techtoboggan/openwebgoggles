@@ -1,0 +1,126 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openwebgoggles"
+version = "0.1.0"
+description = "Browser-based human-in-the-loop UIs for AI coding agents"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    { name = "Techtoboggan" },
+]
+keywords = ["webview", "hitl", "human-in-the-loop", "cli", "agent", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: User Interfaces",
+]
+dependencies = [
+    "websockets>=12.0,<17",
+    "PyNaCl>=1.5.0,<2",
+    "mcp>=1.0.0,<2",
+]
+
+[project.scripts]
+openwebgoggles = "scripts.mcp_server:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0,<10",
+    "pytest-asyncio>=1.0,<2",
+    "ruff>=0.9",
+]
+
+[project.urls]
+Repository = "https://github.com/techtoboggan/openwebgoggles"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+    "S",     # flake8-bandit (security)
+]
+ignore = [
+    "S101",  # assert used (fine in tests)
+    "S603",  # subprocess without shell=True (fine for our scripts)
+    "S607",  # partial executable path (fine for our scripts)
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/tests/*" = [
+    "S101",  # assert in tests
+    "S104",  # binding to 0.0.0.0 (testing that we DON'T)
+    "S105",  # hardcoded passwords (test fixtures)
+    "S106",  # hardcoded password arguments (test fixtures)
+    "S108",  # /tmp usage (testing injection prevention)
+    "S110",  # try-except-pass (acceptable in test helpers)
+    "S310",  # localhost-only urlopen in integration tests
+    "I001",  # import order after sys.path.insert
+    "B017",  # pytest.raises(Exception) (acceptable for nacl errors)
+    "E741",  # ambiguous variable name l (list comprehension convention)
+]
+"scripts/crypto_utils.py" = ["S110"]  # best-effort key zeroing
+"scripts/webview_server.py" = ["S110"]  # best-effort cleanup on shutdown
+"scripts/mcp_server.py" = ["S110", "S310"]  # best-effort cleanup; localhost-only urlopen
+
+[tool.pytest.ini_options]
+testpaths = ["scripts/tests"]
+asyncio_mode = "auto"
+markers = [
+    "owasp_a01: OWASP Top 10 A01 Broken Access Control",
+    "owasp_a02: OWASP Top 10 A02 Cryptographic Failures",
+    "owasp_a03: OWASP Top 10 A03 Injection",
+    "owasp_a04: OWASP Top 10 A04 Insecure Design",
+    "owasp_a05: OWASP Top 10 A05 Security Misconfiguration",
+    "owasp_a07: OWASP Top 10 A07 Identification and Authentication Failures",
+    "owasp_a08: OWASP Top 10 A08 Software and Data Integrity Failures",
+    "owasp_a09: OWASP Top 10 A09 Security Logging and Monitoring Failures",
+    "owasp_a10: OWASP Top 10 A10 Server-Side Request Forgery",
+    "llm01: OWASP LLM Top 10 2025 LLM01 Prompt Injection",
+    "llm02: OWASP LLM Top 10 2025 LLM02 Sensitive Information Disclosure",
+    "llm03: OWASP LLM Top 10 2025 LLM03 Supply Chain Vulnerabilities",
+    "llm04: OWASP LLM Top 10 2025 LLM04 Data and Model Poisoning",
+    "llm05: OWASP LLM Top 10 2025 LLM05 Improper Output Handling",
+    "llm06: OWASP LLM Top 10 2025 LLM06 Excessive Agency",
+    "llm10: OWASP LLM Top 10 2025 LLM10 Unbounded Consumption",
+    "mitre_t1040: MITRE ATT&CK T1040 Network Sniffing",
+    "mitre_t1059: MITRE ATT&CK T1059 Command and Scripting Interpreter",
+    "mitre_t1059_007: MITRE ATT&CK T1059.007 JavaScript",
+    "mitre_t1071: MITRE ATT&CK T1071 Application Layer Protocol",
+    "mitre_t1078: MITRE ATT&CK T1078 Valid Accounts",
+    "mitre_t1134: MITRE ATT&CK T1134 Access Token Manipulation",
+    "mitre_t1185: MITRE ATT&CK T1185 Browser Session Hijacking",
+    "mitre_t1190: MITRE ATT&CK T1190 Exploit Public-Facing Application",
+    "mitre_t1195: MITRE ATT&CK T1195 Supply Chain Compromise",
+    "mitre_t1499: MITRE ATT&CK T1499 Endpoint Denial of Service",
+    "mitre_t1539: MITRE ATT&CK T1539 Steal Web Session Cookie",
+    "mitre_t1550: MITRE ATT&CK T1550 Use Alternate Authentication Material",
+    "mitre_t1557: MITRE ATT&CK T1557 Adversary-in-the-Middle",
+    "mitre_t1565: MITRE ATT&CK T1565 Data Manipulation",
+    "mitre_t1568: MITRE ATT&CK T1568 Dynamic Resolution",
+    "secure_comms: Secure communications between webview and agent",
+    "slow: Integration tests that start real subprocesses",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"assets" = "scripts/assets"
