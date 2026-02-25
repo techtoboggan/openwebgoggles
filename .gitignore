@@ -6,7 +6,7 @@ __pycache__/
 
 # Runtime data
 .openwebgoggles/
-.opencode/webview/
+.opencode/
 
 # OS
 .DS_Store
@@ -18,5 +18,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Claude Code — dev-only permission overrides (not safe to commit)
-.claude/settings.local.json
+# Editor / tool config
+.claude/
+.mcp.json

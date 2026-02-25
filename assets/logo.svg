@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400" width="800" height="400">
+  <defs>
+    <!-- Neon green glow -->
+    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur2"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="16" result="blur3"/>
+      <feMerge>
+        <feMergeNode in="blur3"/>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Subtle inner glow for lenses -->
+    <filter id="lensGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Scanline pattern for lenses -->
+    <pattern id="scanlines" patternUnits="userSpaceOnUse" width="4" height="4">
+      <rect width="4" height="2" fill="#00ff4120"/>
+      <rect y="2" width="4" height="2" fill="transparent"/>
+    </pattern>
+
+    <!-- Grid pattern for lens reflection -->
+    <pattern id="grid" patternUnits="userSpaceOnUse" width="20" height="20">
+      <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#00ff4118" stroke-width="0.5"/>
+    </pattern>
+
+    <!-- Lens gradient -->
+    <radialGradient id="lensLeft" cx="35%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#00ff41" stop-opacity="0.15"/>
+      <stop offset="50%" stop-color="#00cc33" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#001a00" stop-opacity="0.9"/>
+    </radialGradient>
+
+    <radialGradient id="lensRight" cx="65%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#00ff41" stop-opacity="0.15"/>
+      <stop offset="50%" stop-color="#00cc33" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#001a00" stop-opacity="0.9"/>
+    </radialGradient>
+
+    <!-- Strap gradient -->
+    <linearGradient id="strapGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ff41" stop-opacity="0"/>
+      <stop offset="15%" stop-color="#00ff41" stop-opacity="0.6"/>
+      <stop offset="30%" stop-color="#00ff41" stop-opacity="0.15"/>
+      <stop offset="70%" stop-color="#00ff41" stop-opacity="0.15"/>
+      <stop offset="85%" stop-color="#00ff41" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#00ff41" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="400" fill="#0a0a0a"/>
+
+  <!-- Subtle background grid (perspective) -->
+  <g opacity="0.12">
+    <line x1="400" y1="200" x2="0" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="400" y1="200" x2="800" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="400" y1="200" x2="100" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="400" y1="200" x2="700" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="400" y1="200" x2="200" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="400" y1="200" x2="600" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="400" y1="200" x2="300" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="400" y1="200" x2="500" y2="400" stroke="#00ff41" stroke-width="0.5"/>
+    <!-- Horizontal grid lines -->
+    <line x1="150" y1="280" x2="650" y2="280" stroke="#00ff41" stroke-width="0.5"/>
+    <line x1="50" y1="340" x2="750" y2="340" stroke="#00ff41" stroke-width="0.5"/>
+  </g>
+
+  <!-- === GOGGLES === -->
+  <g transform="translate(400, 155)">
+
+    <!-- Strap (behind goggles) -->
+    <rect x="-300" y="-8" width="600" height="16" rx="8" fill="url(#strapGrad)" opacity="0.5"/>
+    <rect x="-300" y="-8" width="600" height="16" rx="8" fill="none" stroke="#00ff41" stroke-width="0.5" opacity="0.2"/>
+
+    <!-- Goggle frame - outer shape -->
+    <g filter="url(#neonGlow)">
+      <!-- Left lens frame -->
+      <rect x="-185" y="-55" width="160" height="110" rx="30" ry="30"
+            fill="none" stroke="#00ff41" stroke-width="3"/>
+      <!-- Right lens frame -->
+      <rect x="25" y="-55" width="160" height="110" rx="30" ry="30"
+            fill="none" stroke="#00ff41" stroke-width="3"/>
+      <!-- Bridge -->
+      <path d="M -25,-15 Q 0,-30 25,-15" fill="none" stroke="#00ff41" stroke-width="3"/>
+    </g>
+
+    <!-- Lens fills (dark with subtle green tint) -->
+    <rect x="-185" y="-55" width="160" height="110" rx="30" ry="30" fill="url(#lensLeft)"/>
+    <rect x="25" y="-55" width="160" height="110" rx="30" ry="30" fill="url(#lensRight)"/>
+
+    <!-- Scanline overlay on lenses -->
+    <rect x="-185" y="-55" width="160" height="110" rx="30" ry="30" fill="url(#scanlines)"/>
+    <rect x="25" y="-55" width="160" height="110" rx="30" ry="30" fill="url(#scanlines)"/>
+
+    <!-- Grid overlay on lenses -->
+    <rect x="-185" y="-55" width="160" height="110" rx="30" ry="30" fill="url(#grid)"/>
+    <rect x="25" y="-55" width="160" height="110" rx="30" ry="30" fill="url(#grid)"/>
+
+    <!-- Code/data reflections in left lens -->
+    <g opacity="0.35" filter="url(#lensGlow)">
+      <text x="-165" y="-20" font-family="monospace" font-size="9" fill="#00ff41">&lt;div&gt;</text>
+      <text x="-155" y="-8" font-family="monospace" font-size="9" fill="#00ff41">  state:</text>
+      <text x="-150" y="4" font-family="monospace" font-size="9" fill="#00ff41">  ready</text>
+      <text x="-165" y="16" font-family="monospace" font-size="9" fill="#00ff41">&lt;/div&gt;</text>
+      <text x="-145" y="32" font-family="monospace" font-size="8" fill="#00ff41" opacity="0.5">approve_</text>
+    </g>
+
+    <!-- Code/data reflections in right lens -->
+    <g opacity="0.35" filter="url(#lensGlow)">
+      <text x="45" y="-20" font-family="monospace" font-size="9" fill="#00ff41">{"action":</text>
+      <text x="55" y="-8" font-family="monospace" font-size="9" fill="#00ff41"> "approve",</text>
+      <text x="55" y="4" font-family="monospace" font-size="9" fill="#00ff41"> "value":</text>
+      <text x="60" y="16" font-family="monospace" font-size="9" fill="#00ff41"> true }</text>
+      <text x="50" y="32" font-family="monospace" font-size="8" fill="#00ff41" opacity="0.5">confirmed_</text>
+    </g>
+
+    <!-- Lens highlight / reflection streak -->
+    <line x1="-170" y1="-40" x2="-100" y2="-42" stroke="#00ff41" stroke-width="1" opacity="0.3" stroke-linecap="round"/>
+    <line x1="40" y1="-40" x2="110" y2="-42" stroke="#00ff41" stroke-width="1" opacity="0.3" stroke-linecap="round"/>
+
+    <!-- Frame detail - top ridge -->
+    <g filter="url(#neonGlow)" opacity="0.4">
+      <line x1="-175" y1="-55" x2="-35" y2="-55" stroke="#00ff41" stroke-width="1"/>
+      <line x1="35" y1="-55" x2="175" y2="-55" stroke="#00ff41" stroke-width="1"/>
+    </g>
+
+    <!-- Small detail dots on frame -->
+    <circle cx="-185" cy="0" r="2" fill="#00ff41" opacity="0.6"/>
+    <circle cx="185" cy="0" r="2" fill="#00ff41" opacity="0.6"/>
+
+  </g>
+
+  <!-- === TEXT === -->
+  <!-- Main title -->
+  <g filter="url(#neonGlow)">
+    <text x="400" y="290" text-anchor="middle" font-family="'Courier New', Courier, monospace"
+          font-size="42" font-weight="bold" fill="#00ff41" letter-spacing="6">
+      OPENWEBGOGGLES
+    </text>
+  </g>
+
+  <!-- Tagline -->
+  <text x="400" y="325" text-anchor="middle" font-family="'Courier New', Courier, monospace"
+        font-size="13" fill="#00ff41" opacity="0.5" letter-spacing="4">
+    BROWSER UIS FOR AI AGENTS
+  </text>
+
+  <!-- Decorative horizontal lines -->
+  <line x1="120" y1="345" x2="340" y2="345" stroke="#00ff41" stroke-width="0.5" opacity="0.25"/>
+  <line x1="460" y1="345" x2="680" y2="345" stroke="#00ff41" stroke-width="0.5" opacity="0.25"/>
+  <circle cx="400" cy="345" r="2" fill="#00ff41" opacity="0.4"/>
+
+</svg>
