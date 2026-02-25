@@ -41,6 +41,8 @@ dev = [
 
 [project.urls]
 Repository = "https://github.com/techtoboggan/openwebgoggles"
+Issues = "https://github.com/techtoboggan/openwebgoggles/issues"
+Changelog = "https://github.com/techtoboggan/openwebgoggles/blob/main/CHANGELOG.md"
 
 [tool.ruff]
 target-version = "py311"
