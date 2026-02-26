@@ -61,7 +61,11 @@
 
     // Message
     if (state.message) {
-      html += '<div class="message-box">' + esc(state.message) + "</div>";
+      if (state.message_format === "markdown") {
+        html += '<div class="message-box">' + markdownBlock(state.message) + "</div>";
+      } else {
+        html += '<div class="message-box">' + esc(state.message) + "</div>";
+      }
     }
 
     // Sections
@@ -160,7 +164,12 @@
     var id = "f-" + si + "-" + fi;
     var key = f.key || id;
     var label = f.label || key;
-    var desc = f.description ? '<div class="field-desc">' + esc(f.description) + "</div>" : "";
+    var desc = "";
+    if (f.description) {
+      desc = f.description_format === "markdown"
+        ? '<div class="field-desc">' + markdownBlock(f.description) + "</div>"
+        : '<div class="field-desc">' + esc(f.description) + "</div>";
+    }
     var dataKey = ' data-field-key="' + escAttr(key) + '"';
 
     // Pre-populate form values with defaults
@@ -195,7 +204,11 @@
           dataKey + '>';
         break;
       case "static":
-        inner = '<div class="field-static' + (f.mono ? " mono" : "") + '">' + esc(f.value || "") + "</div>";
+        if (f.format === "markdown") {
+          inner = '<div class="field-static">' + markdownBlock(f.value || "") + "</div>";
+        } else {
+          inner = '<div class="field-static' + (f.mono ? " mono" : "") + '">' + esc(f.value || "") + "</div>";
+        }
         break;
       default: { // text / email / url
         var ALLOWED_INPUT_TYPES = {text:1, email:1, url:1, tel:1, search:1, password:1, date:1, time:1, color:1};
@@ -215,8 +228,16 @@
     items.forEach(function (item, ii) {
       html += '<div class="item-row">';
       html += '<div class="item-content">';
-      if (item.title) html += '<div class="item-title">' + esc(item.title) + "</div>";
-      if (item.subtitle) html += '<div class="item-subtitle">' + esc(item.subtitle) + "</div>";
+      if (item.title) {
+        html += item.format === "markdown"
+          ? '<div class="item-title">' + markdownBlock(item.title) + "</div>"
+          : '<div class="item-title">' + esc(item.title) + "</div>";
+      }
+      if (item.subtitle) {
+        html += item.format === "markdown"
+          ? '<div class="item-subtitle">' + markdownBlock(item.subtitle) + "</div>"
+          : '<div class="item-subtitle">' + esc(item.subtitle) + "</div>";
+      }
       html += "</div>";
       if (item.actions && item.actions.length) {
         html += '<div class="item-actions">';
@@ -234,6 +255,9 @@
 
   // ─── Text block ───────────────────────────────────────────────────────────────
   function renderText(sec) {
+    if (sec.format === "markdown") {
+      return '<div class="message-box">' + markdownBlock(sec.content || "") + "</div>";
+    }
     return '<div class="message-box">' + esc(sec.content || "") + "</div>";
   }
 
@@ -311,6 +335,56 @@
     if (s.includes("warn") || s.includes("pending") || s.includes("review")) return "badge-warn";
     if (s.includes("ok") || s.includes("success") || s.includes("approv") || s.includes("done") || s.includes("complete")) return "badge-ok";
     return "badge-info";
+  }
+
+  // ─── Markdown rendering (opt-in) ──────────────────────────────────────────────
+  // Requires marked.js + DOMPurify loaded via <script> tags. Falls back to esc()
+  // if either library is missing. Pipeline: marked.parse → DOMPurify → sanitizeHTML.
+  var PURIFY_CONFIG = {
+    ALLOWED_TAGS: [
+      "h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr",
+      "ul", "ol", "li", "strong", "em", "b", "i", "code", "pre",
+      "blockquote", "a", "table", "thead", "tbody", "tr", "th", "td",
+      "del", "sup", "sub", "span", "div", "details", "summary"
+    ],
+    ALLOWED_ATTR: ["href", "class"],
+    ALLOW_DATA_ATTR: false,
+    RETURN_TRUSTED_TYPE: false
+  };
+
+  // Install DOMPurify hook to force safe link targets (runs once on first call)
+  var _purifyHookInstalled = false;
+  function _ensurePurifyHook() {
+    if (_purifyHookInstalled || typeof DOMPurify === "undefined") return;
+    DOMPurify.addHook("afterSanitizeAttributes", function (node) {
+      if (node.tagName === "A") {
+        node.setAttribute("target", "_blank");
+        node.setAttribute("rel", "noopener noreferrer");
+      }
+    });
+    _purifyHookInstalled = true;
+  }
+
+  /**
+   * Convert markdown text to sanitized HTML string.
+   * Returns escaped plain text if libraries are unavailable.
+   */
+  function renderMarkdown(text) {
+    if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+      return esc(text);
+    }
+    _ensurePurifyHook();
+    var rawHTML = marked.parse(String(text || ""));
+    return DOMPurify.sanitize(rawHTML, PURIFY_CONFIG);
+  }
+
+  /**
+   * Return HTML for a markdown-formatted content string wrapped in a
+   * .markdown-content container. The output still passes through
+   * sanitizeHTML() as defense-in-depth when assigned via safeHTML().
+   */
+  function markdownBlock(text) {
+    return '<div class="markdown-content">' + renderMarkdown(text) + "</div>";
   }
 
   // ─── Defense-in-depth HTML sanitizer ─────────────────────────────────────────

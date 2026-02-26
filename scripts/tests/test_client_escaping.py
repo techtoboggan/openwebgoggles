@@ -451,3 +451,162 @@ class TestSourceCodePatterns:
             src = self._read_js(path)
             assert f"function {html_fn}" in src, f"{path} missing {html_fn}"
             assert f"function {attr_fn}" in src, f"{path} missing {attr_fn}"
+
+
+class TestMarkdownRendering:
+    """Verify markdown rendering infrastructure in the dynamic app."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _read_html(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    # ── app.js function existence ─────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_render_markdown_function_exists(self):
+        """app.js must define a renderMarkdown function."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "function renderMarkdown" in src, "renderMarkdown function not found"
+
+    @pytest.mark.owasp_a03
+    def test_markdown_block_function_exists(self):
+        """app.js must define a markdownBlock function."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "function markdownBlock" in src, "markdownBlock function not found"
+
+    # ── Graceful fallback when libraries are missing ──────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_markdown_graceful_fallback(self):
+        """renderMarkdown must check for library availability before use."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        # Must check that marked and DOMPurify are available
+        assert "typeof marked" in src, "renderMarkdown must check for marked availability"
+        assert "typeof DOMPurify" in src, "renderMarkdown must check for DOMPurify availability"
+
+    # ── DOMPurify configuration security ──────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_purify_config_allowlist_present(self):
+        """PURIFY_CONFIG must define ALLOWED_TAGS and ALLOWED_ATTR."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "ALLOWED_TAGS" in src, "DOMPurify ALLOWED_TAGS config missing"
+        assert "ALLOWED_ATTR" in src, "DOMPurify ALLOWED_ATTR config missing"
+
+    @pytest.mark.owasp_a03
+    def test_purify_config_no_script_tag(self):
+        """PURIFY_CONFIG ALLOWED_TAGS must NOT include 'script'."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        # Find the PURIFY_CONFIG block
+        config_start = src.find("PURIFY_CONFIG")
+        assert config_start != -1, "PURIFY_CONFIG not found"
+        config_block = src[config_start : config_start + 800]
+        # script, iframe, img should NOT be in allowed tags
+        assert '"script"' not in config_block, "PURIFY_CONFIG must not allow script tags"
+        assert '"iframe"' not in config_block, "PURIFY_CONFIG must not allow iframe tags"
+        assert '"img"' not in config_block, "PURIFY_CONFIG must not allow img tags"
+        assert '"style"' not in config_block, "PURIFY_CONFIG must not allow style tags"
+
+    @pytest.mark.owasp_a03
+    def test_purify_config_no_dangerous_attrs(self):
+        """PURIFY_CONFIG ALLOWED_ATTR must not include event handlers or src."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        config_start = src.find("PURIFY_CONFIG")
+        assert config_start != -1
+        config_block = src[config_start : config_start + 800]
+        assert '"onclick"' not in config_block, "PURIFY_CONFIG must not allow onclick"
+        assert '"onerror"' not in config_block, "PURIFY_CONFIG must not allow onerror"
+        assert '"src"' not in config_block, "PURIFY_CONFIG must not allow src attribute"
+
+    @pytest.mark.owasp_a03
+    def test_purify_data_attrs_disabled(self):
+        """ALLOW_DATA_ATTR must be false to prevent data-* exfiltration."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "ALLOW_DATA_ATTR: false" in src or "ALLOW_DATA_ATTR:false" in src, (
+            "DOMPurify ALLOW_DATA_ATTR must be explicitly set to false"
+        )
+
+    # ── Link safety ───────────────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_links_get_target_blank(self):
+        """DOMPurify hook must force target='_blank' on links."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "target" in src and "_blank" in src, "Links must be forced to target=_blank"
+        assert "noopener" in src, "Links must include rel=noopener"
+        assert "noreferrer" in src, "Links must include rel=noreferrer"
+
+    # ── Markdown CSS ──────────────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_markdown_css_classes_defined(self):
+        """index.html must define .markdown-content CSS styles."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".markdown-content" in html, "Markdown CSS class not found in index.html"
+        # Check key markdown element styles exist
+        assert ".markdown-content h1" in html, "Markdown h1 style missing"
+        assert ".markdown-content code" in html, "Markdown code style missing"
+        assert ".markdown-content pre" in html, "Markdown pre style missing"
+        assert ".markdown-content blockquote" in html, "Markdown blockquote style missing"
+        assert ".markdown-content table" in html, "Markdown table style missing"
+        assert ".markdown-content a" in html, "Markdown link style missing"
+
+    # ── Script tags for vendored libraries ────────────────────────────────
+
+    def test_marked_script_tag_present(self):
+        """index.html must include a script tag for marked.min.js."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert 'src="marked.min.js"' in html, "marked.min.js script tag missing"
+
+    def test_purify_script_tag_present(self):
+        """index.html must include a script tag for purify.min.js."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert 'src="purify.min.js"' in html, "purify.min.js script tag missing"
+
+    def test_script_load_order(self):
+        """Libraries must load before app.js."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        marked_pos = html.find('src="marked.min.js"')
+        purify_pos = html.find('src="purify.min.js"')
+        app_pos = html.find('src="app.js"')
+        assert marked_pos < app_pos, "marked.min.js must load before app.js"
+        assert purify_pos < app_pos, "purify.min.js must load before app.js"
+
+    # ── Opt-in checks in render paths ─────────────────────────────────────
+
+    def test_message_format_check_in_render(self):
+        """render() must check state.message_format for markdown opt-in."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "message_format" in src, "message_format check missing from render()"
+
+    def test_section_format_check_in_render(self):
+        """renderText() must check sec.format for markdown opt-in."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "sec.format" in src, "sec.format check missing from renderText()"
+
+    def test_field_format_check_in_render(self):
+        """renderField() must check f.format for static field markdown."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "f.format" in src, "f.format check missing from renderField()"
+
+    def test_item_format_check_in_render(self):
+        """renderItems() must check item.format for markdown opt-in."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "item.format" in src, "item.format check missing from renderItems()"
+
+    def test_description_format_check_in_render(self):
+        """renderField() must check f.description_format for markdown opt-in."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "description_format" in src, "description_format check missing from renderField()"
+
+    # ── Defense in depth ──────────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_markdown_output_wraps_in_container(self):
+        """markdownBlock() must wrap output in .markdown-content div."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "markdown-content" in src, "Markdown output must use .markdown-content wrapper"

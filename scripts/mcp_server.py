@@ -281,10 +281,12 @@ class WebviewSession:
             shutil.rmtree(dest)
         shutil.copytree(app_src, dest)
 
-        # Copy SDK into the app directory
-        sdk_src = assets_dir / "sdk" / "openwebgoggles-sdk.js"
-        if sdk_src.is_file():
-            shutil.copy2(sdk_src, dest / "openwebgoggles-sdk.js")
+        # Copy all SDK files (.js) into the app directory
+        sdk_dir = assets_dir / "sdk"
+        if sdk_dir.is_dir():
+            for sdk_file in sdk_dir.iterdir():
+                if sdk_file.suffix == ".js":
+                    shutil.copy2(sdk_file, dest / sdk_file.name)
 
     def _write_manifest(self, app_name: str) -> None:
         """Write manifest.json with session metadata."""
@@ -873,6 +875,24 @@ webview({
   "actions_requested": [{"id": "submit", "label": "Submit", "type": "approve"}]
 })
 ```
+
+## Markdown support
+
+Any text content can be rendered as formatted markdown instead of plain text. \
+Add a `format: "markdown"` flag to opt in:
+
+- **Top-level message**: add `"message_format": "markdown"` to the state object
+- **Text sections**: add `"format": "markdown"` to the section object
+- **Static fields**: add `"format": "markdown"` to the field object
+- **Field descriptions**: add `"description_format": "markdown"` to the field object
+- **Item titles/subtitles**: add `"format": "markdown"` to the item object
+
+Without the flag, content renders as plain escaped text (default).
+
+Example — text section with markdown:
+```
+{"type": "text", "content": "## Summary\\n\\n- **Fixed** auth bug\\n- Added `retry` logic\\n\\n```python\\ndef retry(fn):\\n    ...\\n```", "format": "markdown"}
+```
 """,
     lifespan=lifespan,
 )
@@ -894,10 +914,12 @@ async def webview(
     The state object schema:
       - title (str): Header title
       - message (str, optional): Description/instructions shown to the user
+      - message_format (str, optional): Set to "markdown" to render message as markdown
       - status (str, optional): Badge text (e.g. "pending_review", "waiting_input")
       - data (dict): UI layout with optional "sections" array. Each section has:
           - type: "form" | "items" | "text" | "actions"
           - title (str, optional): Section heading
+          - format (str, optional): Set to "markdown" for markdown rendering
           - fields (list): For "form" sections — input fields
           - items (list): For "items" sections — list rows
           - content (str): For "text" sections
@@ -908,7 +930,7 @@ async def webview(
           - type/style: "approve"|"reject"|"submit"|"primary"|"danger"|"success"|"warning"|"ghost"
 
     Field types: text, textarea, number, select, checkbox, email, url, static
-    Each field: {key, label, type, value?, default?, placeholder?, description?, options?}
+    Each field: {key, label, type, value?, default?, placeholder?, description?, options?, format?}
 
     Returns the user's response with an "actions" array, where each action has:
       - action_id: Which button was clicked

@@ -93,6 +93,36 @@
     .done-state { text-align: center; padding: 40px 20px; }
     .done-icon { font-size: 32px; margin-bottom: 12px; }
     .done-msg { color: var(--text2); margin-top: 6px; }
+
+    /* Markdown rendered content */
+    .markdown-content { line-height: 1.7; color: var(--text); }
+    .markdown-content h1 { font-size: 1.6em; font-weight: 600; margin: 0 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+    .markdown-content h2 { font-size: 1.35em; font-weight: 600; margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+    .markdown-content h3 { font-size: 1.15em; font-weight: 600; margin: 14px 0 6px; }
+    .markdown-content h4 { font-size: 1em; font-weight: 600; margin: 12px 0 4px; }
+    .markdown-content h5 { font-size: .9em; font-weight: 600; margin: 10px 0 4px; }
+    .markdown-content h6 { font-size: .85em; font-weight: 600; margin: 10px 0 4px; color: var(--text2); }
+    .markdown-content p { margin: 0 0 10px; }
+    .markdown-content p:last-child { margin-bottom: 0; }
+    .markdown-content ul, .markdown-content ol { margin: 0 0 10px; padding-left: 24px; }
+    .markdown-content li { margin-bottom: 4px; }
+    .markdown-content li > ul, .markdown-content li > ol { margin-top: 4px; margin-bottom: 0; }
+    .markdown-content code { font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; background: var(--bg3); padding: 2px 6px; border-radius: 3px; }
+    .markdown-content pre { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin: 0 0 12px; overflow-x: auto; }
+    .markdown-content pre code { background: none; padding: 0; border-radius: 0; font-size: 13px; line-height: 1.5; }
+    .markdown-content blockquote { border-left: 3px solid var(--border); padding: 4px 0 4px 14px; margin: 0 0 10px; color: var(--text2); }
+    .markdown-content blockquote p:last-child { margin-bottom: 0; }
+    .markdown-content table { border-collapse: collapse; width: 100%; margin: 0 0 12px; }
+    .markdown-content th, .markdown-content td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+    .markdown-content th { background: var(--bg3); font-weight: 600; }
+    .markdown-content hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+    .markdown-content a { color: var(--blue); text-decoration: none; }
+    .markdown-content a:hover { text-decoration: underline; }
+    .markdown-content strong { font-weight: 600; }
+    .markdown-content del { color: var(--text2); }
+    .markdown-content details { margin: 0 0 10px; }
+    .markdown-content summary { cursor: pointer; font-weight: 500; }
+    .markdown-content details[open] summary { margin-bottom: 6px; }
   </style>
 </head>
 <body>
@@ -111,6 +141,8 @@
     <div id="content" class="hidden"></div>
   </div>
   <script src="openwebgoggles-sdk.js"></script>
+  <script src="marked.min.js"></script>
+  <script src="purify.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

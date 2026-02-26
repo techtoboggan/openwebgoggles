@@ -101,6 +101,13 @@ class SecurityGate:
             "error",
         }
     )
+    ALLOWED_FORMATS = frozenset(
+        {
+            "markdown",
+            "plain",
+            "text",
+        }
+    )
 
     # --- Zero-width characters that can bypass pattern matching ---
     # These invisible chars can be inserted between keywords (e.g. java[ZWS]script:)
@@ -173,6 +180,11 @@ class SecurityGate:
         status = state.get("status", "")
         if status and status not in self.ALLOWED_STATUS_VALUES:
             return False, f"Invalid status: {status!r}", {}
+
+        # 4b. Validate message_format
+        msg_fmt = state.get("message_format", "")
+        if msg_fmt and msg_fmt not in self.ALLOWED_FORMATS:
+            return False, f"Invalid message_format: {msg_fmt!r}", {}
 
         # 5. Scan all strings for XSS patterns
         xss_warnings = self._scan_xss(state)
@@ -291,6 +303,11 @@ class SecurityGate:
             if sec_type not in self.ALLOWED_SECTION_TYPES:
                 return False, f"sections[{i}].type: invalid type {sec_type!r}"
 
+            # Validate section format
+            sec_fmt = sec.get("format", "")
+            if sec_fmt and sec_fmt not in self.ALLOWED_FORMATS:
+                return False, f"sections[{i}].format: invalid format {sec_fmt!r}"
+
             # Validate fields
             fields = sec.get("fields", [])
             if isinstance(fields, list):
@@ -308,6 +325,16 @@ class SecurityGate:
                             False,
                             f"sections[{i}].fields[{j}].key: invalid key {key!r} (must match {self.KEY_PATTERN.pattern})",
                         )
+                    # Check field format
+                    field_fmt = f.get("format", "")
+                    if field_fmt and field_fmt not in self.ALLOWED_FORMATS:
+                        return False, f"sections[{i}].fields[{j}].format: invalid format {field_fmt!r}"
+                    desc_fmt = f.get("description_format", "")
+                    if desc_fmt and desc_fmt not in self.ALLOWED_FORMATS:
+                        return (
+                            False,
+                            f"sections[{i}].fields[{j}].description_format: invalid format {desc_fmt!r}",
+                        )
                     # Check options count
                     options = f.get("options", [])
                     if isinstance(options, list) and len(options) > self.MAX_OPTIONS_PER_FIELD:
@@ -315,8 +342,14 @@ class SecurityGate:
 
             # Validate items
             items = sec.get("items", [])
-            if isinstance(items, list) and len(items) > self.MAX_ITEMS_PER_SECTION:
-                return False, f"sections[{i}]: too many items ({len(items)})"
+            if isinstance(items, list):
+                if len(items) > self.MAX_ITEMS_PER_SECTION:
+                    return False, f"sections[{i}]: too many items ({len(items)})"
+                for k, item in enumerate(items):
+                    if isinstance(item, dict):
+                        item_fmt = item.get("format", "")
+                        if item_fmt and item_fmt not in self.ALLOWED_FORMATS:
+                            return False, f"sections[{i}].items[{k}].format: invalid format {item_fmt!r}"
 
             # Validate section-level actions
             sec_actions = sec.get("actions", [])

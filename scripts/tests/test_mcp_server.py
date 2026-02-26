@@ -595,3 +595,57 @@ class TestAppNameSecurity:
 
         session._copy_app("dynamic")  # Should not raise
         assert (session.data_dir / "apps" / "dynamic" / "index.html").is_file()
+
+
+class TestMarkdownAssetCopy:
+    """Verify that markdown libraries are copied alongside the SDK."""
+
+    def test_marked_js_copied(self, session):
+        """marked.min.js must be copied into the app directory."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        (session.data_dir / "apps").mkdir(exist_ok=True)
+
+        session._copy_app("dynamic")
+
+        app_dir = session.data_dir / "apps" / "dynamic"
+        assert (app_dir / "marked.min.js").is_file(), "marked.min.js not found in deployed app"
+
+    def test_purify_js_copied(self, session):
+        """purify.min.js (DOMPurify) must be copied into the app directory."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        (session.data_dir / "apps").mkdir(exist_ok=True)
+
+        session._copy_app("dynamic")
+
+        app_dir = session.data_dir / "apps" / "dynamic"
+        assert (app_dir / "purify.min.js").is_file(), "purify.min.js not found in deployed app"
+
+    def test_all_sdk_js_files_copied(self, session):
+        """Every .js file in assets/sdk/ must be copied to the app directory."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        (session.data_dir / "apps").mkdir(exist_ok=True)
+
+        session._copy_app("dynamic")
+
+        app_dir = session.data_dir / "apps" / "dynamic"
+        assets_dir = session._find_assets_dir()
+        sdk_dir = assets_dir / "sdk"
+        assert sdk_dir.is_dir(), f"SDK directory not found: {sdk_dir}"
+
+        sdk_files = [f.name for f in sdk_dir.iterdir() if f.suffix == ".js"]
+        assert len(sdk_files) >= 3, f"Expected at least 3 SDK JS files, found: {sdk_files}"
+        for name in sdk_files:
+            assert (app_dir / name).is_file(), f"SDK file {name} not copied to app dir"
+
+    def test_sdk_copy_idempotent(self, session):
+        """Repeated _copy_app calls should overwrite cleanly."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        (session.data_dir / "apps").mkdir(exist_ok=True)
+
+        session._copy_app("dynamic")
+        session._copy_app("dynamic")  # Second call
+
+        app_dir = session.data_dir / "apps" / "dynamic"
+        assert (app_dir / "marked.min.js").is_file()
+        assert (app_dir / "purify.min.js").is_file()
+        assert (app_dir / "openwebgoggles-sdk.js").is_file()

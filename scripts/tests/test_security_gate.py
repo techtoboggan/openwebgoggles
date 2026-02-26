@@ -1178,3 +1178,307 @@ class TestNewXSSPatterns:
         state = {"status": "ready", "message": "The base case for recursion"}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert ok, f"Benign 'base' text triggered false positive: {err}"
+
+
+# ── Format validation (markdown opt-in) ─────────────────────────────────────
+
+
+class TestFormatValidation:
+    """Validate the format/message_format fields for markdown support."""
+
+    @pytest.mark.llm05
+    def test_message_format_markdown_allowed(self, gate):
+        """message_format: 'markdown' must pass validation."""
+        state = {"status": "ready", "message": "# Hello", "message_format": "markdown"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"markdown message_format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_message_format_plain_allowed(self, gate):
+        """message_format: 'plain' must pass validation."""
+        state = {"status": "ready", "message": "Hello", "message_format": "plain"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"plain message_format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_message_format_text_allowed(self, gate):
+        """message_format: 'text' must pass validation."""
+        state = {"status": "ready", "message": "Hello", "message_format": "text"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"text message_format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_message_format_unknown_rejected(self, gate):
+        """Unknown message_format values must be rejected."""
+        state = {"status": "ready", "message": "Hello", "message_format": "evil"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Unknown message_format should be rejected"
+        assert "message_format" in err
+
+    @pytest.mark.llm05
+    def test_message_format_empty_allowed(self, gate):
+        """Empty message_format is allowed (falsy, no validation needed)."""
+        state = {"status": "ready", "message": "Hello", "message_format": ""}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty message_format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_section_format_markdown_allowed(self, gate):
+        """Section format: 'markdown' must pass."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {"type": "text", "content": "# Hello", "format": "markdown"},
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"markdown section format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_section_format_unknown_rejected(self, gate):
+        """Unknown section format values must be rejected."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {"type": "text", "content": "Hello", "format": "html"},
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "Unknown section format should be rejected"
+        assert "format" in err
+
+    @pytest.mark.llm05
+    def test_field_format_markdown_allowed(self, gate):
+        """Field format: 'markdown' on a static field must pass."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "form",
+                                "fields": [
+                                    {
+                                        "key": "info",
+                                        "type": "static",
+                                        "label": "Info",
+                                        "value": "**bold**",
+                                        "format": "markdown",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"markdown field format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_field_format_unknown_rejected(self, gate):
+        """Unknown field format values must be rejected."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "form",
+                                "fields": [
+                                    {
+                                        "key": "info",
+                                        "type": "static",
+                                        "label": "Info",
+                                        "value": "x",
+                                        "format": "richtext",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "Unknown field format should be rejected"
+        assert "format" in err
+
+    @pytest.mark.llm05
+    def test_field_description_format_markdown_allowed(self, gate):
+        """description_format: 'markdown' on a field must pass."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "form",
+                                "fields": [
+                                    {
+                                        "key": "name",
+                                        "type": "text",
+                                        "label": "Name",
+                                        "description": "**required** field",
+                                        "description_format": "markdown",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"markdown description_format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_field_description_format_unknown_rejected(self, gate):
+        """Unknown description_format values must be rejected."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "form",
+                                "fields": [
+                                    {
+                                        "key": "name",
+                                        "type": "text",
+                                        "label": "Name",
+                                        "description": "x",
+                                        "description_format": "latex",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "Unknown description_format should be rejected"
+        assert "description_format" in err
+
+    @pytest.mark.llm05
+    def test_item_format_markdown_allowed(self, gate):
+        """Item format: 'markdown' must pass."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [
+                                    {
+                                        "title": "**bold title**",
+                                        "subtitle": "_italic_",
+                                        "format": "markdown",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"markdown item format rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_item_format_unknown_rejected(self, gate):
+        """Unknown item format values must be rejected."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [
+                                    {
+                                        "title": "Hello",
+                                        "format": "custom_html",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "Unknown item format should be rejected"
+        assert "format" in err
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm05
+    def test_markdown_content_xss_still_blocked(self, gate):
+        """Markdown content with embedded <script> must still be rejected by XSS scan."""
+        state = {
+            "status": "ready",
+            "message": "# Hello <script>alert(1)</script>",
+            "message_format": "markdown",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in markdown content should be blocked"
+        assert "XSS" in err
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm05
+    def test_markdown_content_img_xss_blocked(self, gate):
+        """Markdown content with embedded <img> must still be rejected."""
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "text",
+                                "content": '# Hello <img onerror="alert(1)">',
+                                "format": "markdown",
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "XSS via img in markdown should be blocked"
+
+    @pytest.mark.llm05
+    def test_clean_markdown_passes(self, gate):
+        """Clean markdown with standard formatting must pass."""
+        content = "# Hello\n\n**bold** and _italic_\n\n```python\nprint('hi')\n```\n\n- item 1\n- item 2"
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {"type": "text", "content": content, "format": "markdown"},
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"Clean markdown rejected: {err}"
+
+    @pytest.mark.llm05
+    def test_no_format_field_is_valid(self, gate):
+        """State without any format fields must still pass (backwards-compatible)."""
+        state = {"status": "ready", "message": "Hello"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"State without format fields rejected: {err}"
