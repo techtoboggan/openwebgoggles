@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-26
+
+### Added
+
+- Dependabot monitoring for pip dependencies and GitHub Actions (weekly)
+- Dedicated security workflow (`security.yml`) with pip-audit (SCA) and bandit (SAST)
+- pip-audit dependency vulnerability scanning in CI test matrix
+- Pre-commit hooks for pip-audit (SCA) and detect-secrets (secret scanning)
+- `.secrets.baseline` for detect-secrets false positive tracking
+
+### Changed
+
+- GitHub Actions updated to v6 (checkout, setup-python, upload-artifact, download-artifact)
+- Added `# nosec B310` markers to localhost-only urlopen calls for bandit compatibility
+
 ## [0.2.0] - 2026-02-26
 
 ### Added
