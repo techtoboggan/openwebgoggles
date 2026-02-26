@@ -55,13 +55,33 @@ Structured data in, structured data out. The browser is just the rendering layer
 
 ## Quick Start
 
-Install from PyPI (pipx recommended — isolates dependencies and puts the binary on PATH):
+Install from PyPI:
 
 ```bash
+# Recommended — isolates dependencies, puts binary on PATH
 pipx install openwebgoggles
+
+# Alternative — works fine, but shares dependencies with your Python environment
+pip install openwebgoggles
 ```
 
-> **Don't have pipx?** Install it first: `brew install pipx && pipx ensurepath` (macOS) or `pip install --user pipx && pipx ensurepath` (Linux). Or use plain `pip install openwebgoggles` if you prefer.
+<details>
+<summary><strong>Don't have pipx?</strong></summary>
+
+pipx installs Python CLI tools in isolated environments. Install it once:
+
+```bash
+# macOS (Homebrew)
+brew install pipx && pipx ensurepath
+
+# Linux / macOS (without Homebrew)
+python3 -m pip install --user pipx && pipx ensurepath
+
+# Then restart your terminal
+```
+
+See [pipx.pypa.io](https://pipx.pypa.io) for more options.
+</details>
 
 Then bootstrap for your editor:
 
@@ -106,13 +126,13 @@ Four MCP tools — that's the entire API surface:
 
 ### Manual Setup
 
-If you'd rather configure things by hand, add to your project's `.mcp.json`:
+The `init` command is recommended — it resolves the absolute path to the binary so editors don't depend on PATH. But if you'd rather configure by hand, use the full path to the binary in your project's `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "openwebgoggles": {
-      "command": "openwebgoggles"
+      "command": "/full/path/to/openwebgoggles"
     }
   }
 }
@@ -125,12 +145,14 @@ Or for OpenCode, add to `opencode.json`:
   "mcp": {
     "openwebgoggles": {
       "type": "local",
-      "command": ["openwebgoggles"],
+      "command": ["/full/path/to/openwebgoggles"],
       "enabled": true
     }
   }
 }
 ```
+
+> **Tip:** Find your binary path with `which openwebgoggles` or `pipx list`.
 
 ### Bash Scripts (for shell-based agents)
 

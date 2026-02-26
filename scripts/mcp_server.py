@@ -6,11 +6,9 @@ Agents call webview_ask() to show an interactive UI and block until the user
 responds.  The MCP server manages the full lifecycle: data directory setup,
 subprocess launch, browser opening, state updates, and cleanup.
 
-Usage (stdio transport, for Claude Code):
-    python scripts/mcp_server.py
-
-Configure in .mcp.json:
-    {"mcpServers": {"openwebgoggles": {"command": "python", "args": ["scripts/mcp_server.py"]}}}
+Install & configure:
+    pipx install openwebgoggles
+    openwebgoggles init claude      # or: openwebgoggles init opencode
 """
 
 import asyncio
@@ -986,7 +984,7 @@ def main():
     # Init commands don't need mcp, but the server does.
     if _mcp_import_error is not None:
         print(f"Error: failed to load mcp library: {_mcp_import_error}", file=sys.stderr)
-        print("Install with: pip install openwebgoggles", file=sys.stderr)
+        print("Install with: pipx install openwebgoggles  (or: pip install openwebgoggles)", file=sys.stderr)
         sys.exit(1)
 
     logging.basicConfig(
