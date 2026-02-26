@@ -129,7 +129,7 @@ class WebviewSession:
                 str(sdk_path),
             ],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
 
@@ -137,7 +137,10 @@ class WebviewSession:
             stderr = ""
             if self.process.stderr:
                 try:
-                    stderr = self.process.stderr.read().decode(errors="replace")[:500]
+                    import select
+
+                    if select.select([self.process.stderr], [], [], 0)[0]:
+                        stderr = self.process.stderr.read(500).decode(errors="replace")
                 except Exception:
                     pass
             self.process.kill()
@@ -145,6 +148,9 @@ class WebviewSession:
             raise RuntimeError(f"Webview server failed to start: {stderr}")
 
         self._started = True
+        # Close stderr pipe to prevent buffer deadlock (errors already reported via health check)
+        if self.process and self.process.stderr:
+            self.process.stderr.close()
         atexit.register(self._atexit_cleanup)
 
         if self._open_browser_on_start:
@@ -334,7 +340,12 @@ class WebviewSession:
             pass  # Windows doesn't support Unix permissions
 
     def _find_free_ports(self) -> tuple[int, int]:
-        """Find two consecutive free ports, starting from defaults."""
+        """Find two consecutive free ports, starting from defaults.
+
+        Note: There is a TOCTOU race between checking port availability and the
+        subprocess binding to it. This is mitigated by the health check in
+        ensure_started(), which will detect a bind failure and raise RuntimeError.
+        """
         http_port = self.DEFAULT_HTTP_PORT
         for _ in range(self.MAX_PORT_ATTEMPTS):
             ws_port = http_port + 1
@@ -496,6 +507,16 @@ class WebviewSession:
                 if os.path.isfile(c):
                     return c
 
+        if platform.system() == "Windows":
+            candidates = [
+                os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+            ]
+            for c in candidates:
+                if os.path.isfile(c):
+                    return c
+
         # Linux / PATH-based detection
         for name in ("google-chrome-stable", "google-chrome", "chromium-browser", "chromium"):
             path = shutil.which(name)
@@ -551,14 +572,16 @@ class WebviewSession:
 # ---------------------------------------------------------------------------
 
 _session: WebviewSession | None = None
+_session_lock = asyncio.Lock()
 
 
-def _get_session() -> WebviewSession:
+async def _get_session() -> WebviewSession:
     """Get or create the global WebviewSession."""
     global _session
-    if _session is None:
-        _session = WebviewSession(open_browser=True)
-    return _session
+    async with _session_lock:
+        if _session is None:
+            _session = WebviewSession(open_browser=True)
+        return _session
 
 
 @asynccontextmanager
@@ -748,7 +771,7 @@ async def webview_ask(
             ]
         })
     """
-    session = _get_session()
+    session = await _get_session()
     try:
         await session.ensure_started(app)
     except Exception as e:
@@ -777,7 +800,7 @@ async def webview_show(
     Same state schema as webview_ask. The webview opens automatically on
     first call; subsequent calls update the displayed content in real-time.
     """
-    session = _get_session()
+    session = await _get_session()
     try:
         await session.ensure_started(app)
     except Exception as e:
@@ -796,7 +819,7 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
 
     Set clear=True to clear actions after reading so the next read starts fresh.
     """
-    session = _get_session()
+    session = await _get_session()
     if not session._started:
         return {"version": 0, "actions": []}
 

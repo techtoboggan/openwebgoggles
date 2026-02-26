@@ -131,6 +131,12 @@ class SecurityGate:
         re.compile(r"&#0*60;?\s*script", re.IGNORECASE),  # HTML decimal entity &#60;
         re.compile(r"vbscript\s*:", re.IGNORECASE),  # VBScript protocol
         re.compile(r"<\s*style\b", re.IGNORECASE),  # Style tag injection
+        re.compile(r"<\s*img\b", re.IGNORECASE),
+        re.compile(r"<\s*video\b", re.IGNORECASE),
+        re.compile(r"<\s*audio\b", re.IGNORECASE),
+        re.compile(r"<\s*details\b[^>]*\bon", re.IGNORECASE),
+        re.compile(r"<\s*marquee\b", re.IGNORECASE),
+        re.compile(r"<\s*source\b", re.IGNORECASE),
     ]
 
     # --- Key name validation (for form field keys used in data attributes) ---
@@ -146,8 +152,9 @@ class SecurityGate:
             not mutation).
         """
         # 1. Size check
-        if len(raw_json) > self.MAX_PAYLOAD_SIZE:
-            return False, f"Payload too large: {len(raw_json)} bytes (max {self.MAX_PAYLOAD_SIZE})", {}
+        payload_bytes = len(raw_json.encode("utf-8"))
+        if payload_bytes > self.MAX_PAYLOAD_SIZE:
+            return False, f"Payload too large: {payload_bytes} bytes (max {self.MAX_PAYLOAD_SIZE})", {}
 
         # 2. Parse JSON
         try:
@@ -214,7 +221,10 @@ class SecurityGate:
         # Value size limit
         value = action.get("value")
         if value is not None:
-            value_json = json.dumps(value)
+            try:
+                value_json = json.dumps(value)
+            except (TypeError, ValueError):
+                return False, "Action value is not JSON-serializable"
             if len(value_json) > 100_000:
                 return False, f"Action value too large: {len(value_json)} bytes (max 100000)"
 
@@ -253,6 +263,9 @@ class SecurityGate:
                     return warnings  # one warning per value is enough
         elif isinstance(obj, dict):
             for k, v in obj.items():
+                warnings.extend(self._scan_xss(k, f"{path}.<key:{k[:20]}>"))
+                if warnings:
+                    return warnings
                 warnings.extend(self._scan_xss(v, f"{path}.{k}"))
                 if warnings:
                     return warnings

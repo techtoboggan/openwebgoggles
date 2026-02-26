@@ -41,7 +41,7 @@ if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [[ "$POLL_INTERVAL" -lt 1 ]]; then
 fi
 
 ACTIONS_FILE="$DATA_DIR/actions.json"
-ELAPSED=0
+START_TIME=$(date +%s)
 
 while true; do
     if [[ -f "$ACTIONS_FILE" ]]; then
@@ -76,12 +76,15 @@ PYEOF
         fi
     fi
 
-    # Check timeout
-    if [[ "$TIMEOUT" -gt 0 ]] && [[ "$ELAPSED" -ge "$TIMEOUT" ]]; then
-        echo "Timeout: No actions received within ${TIMEOUT}s" >&2
-        exit 1
+    # Check timeout using wall-clock time
+    if [[ "$TIMEOUT" -gt 0 ]]; then
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - START_TIME))
+        if [[ "$ELAPSED" -ge "$TIMEOUT" ]]; then
+            echo "Timeout: No actions received within ${TIMEOUT}s" >&2
+            exit 1
+        fi
     fi
 
     sleep "$POLL_INTERVAL"
-    ELAPSED=$((ELAPSED + POLL_INTERVAL))
 done

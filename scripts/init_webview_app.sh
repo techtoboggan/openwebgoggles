@@ -56,15 +56,14 @@ if [[ -f "$SDK_PATH" ]]; then
     cp "$SDK_PATH" "$DEST_DIR/openwebgoggles-sdk.js"
 fi
 
-# Replace placeholder app name in files
+# Replace placeholder app name in files (use | delimiter since APP_NAME is validated
+# to only contain [a-zA-Z0-9._-] — no risk of delimiter collision)
 if [[ "$(uname)" == "Darwin" ]]; then
-    find "$DEST_DIR" -type f -name "*.html" -exec sed -i '' "s/{{APP_NAME}}/$APP_NAME/g" {} +
-    find "$DEST_DIR" -type f -name "*.js" -exec sed -i '' "s/{{APP_NAME}}/$APP_NAME/g" {} +
-    find "$DEST_DIR" -type f -name "*.json" -exec sed -i '' "s/{{APP_NAME}}/$APP_NAME/g" {} +
+    find "$DEST_DIR" -type f \( -name "*.html" -o -name "*.js" -o -name "*.json" \) \
+        -exec sed -i '' "s|{{APP_NAME}}|$APP_NAME|g" {} +
 else
-    find "$DEST_DIR" -type f -name "*.html" -exec sed -i "s/{{APP_NAME}}/$APP_NAME/g" {} +
-    find "$DEST_DIR" -type f -name "*.js" -exec sed -i "s/{{APP_NAME}}/$APP_NAME/g" {} +
-    find "$DEST_DIR" -type f -name "*.json" -exec sed -i "s/{{APP_NAME}}/$APP_NAME/g" {} +
+    find "$DEST_DIR" -type f \( -name "*.html" -o -name "*.js" -o -name "*.json" \) \
+        -exec sed -i "s|{{APP_NAME}}|$APP_NAME|g" {} +
 fi
 
 echo ""

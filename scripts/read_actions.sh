@@ -33,12 +33,20 @@ if [[ "$COUNT_ONLY" == "true" ]]; then
     exit 0
 fi
 
-# Print current actions
-cat "$ACTIONS_FILE"
-
-# Clear if requested
+# Print current actions and optionally clear atomically
 if [[ "$CLEAR" == "true" ]]; then
-    TMP_FILE="${ACTIONS_FILE}.tmp"
-    echo '{"version": 0, "actions": []}' > "$TMP_FILE"
-    mv "$TMP_FILE" "$ACTIONS_FILE"
+    # Read and clear in a single Python process to minimize the race window
+    python3 -c "
+import json, sys, os
+path = sys.argv[1]
+with open(path) as f:
+    data = f.read()
+print(data, end='')
+tmp = path + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump({'version': 0, 'actions': []}, f)
+os.replace(tmp, path)
+" "$ACTIONS_FILE"
+else
+    cat "$ACTIONS_FILE"
 fi

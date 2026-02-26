@@ -39,8 +39,8 @@ if [[ -z "$JSON_INPUT" ]]; then
     exit 1
 fi
 
-# Validate JSON
-if ! python3 -c "import json,sys; json.loads(sys.argv[1])" "$JSON_INPUT" 2>/dev/null; then
+# Validate JSON via stdin to avoid argv length limits
+if ! echo "$JSON_INPUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
     echo "Error: Invalid JSON" >&2
     exit 1
 fi
@@ -50,6 +50,7 @@ mkdir -p "$DATA_DIR"
 
 # Atomic write: write to temp file, then rename
 TMP_FILE="${STATE_FILE}.tmp"
+trap "rm -f \"$TMP_FILE\"" EXIT ERR
 echo "$JSON_INPUT" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)

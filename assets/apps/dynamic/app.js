@@ -197,9 +197,12 @@
       case "static":
         inner = '<div class="field-static' + (f.mono ? " mono" : "") + '">' + esc(f.value || "") + "</div>";
         break;
-      default: // text / email / url
-        inner = '<input type="' + (f.type || "text") + '" id="' + id + '" value="' + escAttr(String(f.value || f.default || "")) + '" ' +
+      default: { // text / email / url
+        var ALLOWED_INPUT_TYPES = {text:1, email:1, url:1, tel:1, search:1, password:1, date:1, time:1, color:1};
+        var inputType = (f.type && ALLOWED_INPUT_TYPES[f.type]) ? f.type : "text";
+        inner = '<input type="' + inputType + '" id="' + id + '" value="' + escAttr(String(f.value || f.default || "")) + '" ' +
           'placeholder="' + escAttr(f.placeholder || "") + '"' + dataKey + '>';
+      }
     }
 
     return '<div class="field"><div class="field-label">' + esc(label) + "</div>" + inner + desc + "</div>";

@@ -387,10 +387,10 @@ class TestSourceCodePatterns:
 
     @pytest.mark.owasp_a03
     def test_template_escapes_action_id(self):
-        """template/app.js must use escAttr on action.id in onclick."""
+        """template/app.js must use DOM API (addEventListener) instead of inline onclick."""
         src = self._read_js("assets/template/app.js")
-        assert "escAttr(action.id)" in src
-        assert "escAttr(action.type)" in src
+        assert "addEventListener" in src, "template/app.js should use addEventListener instead of inline onclick"
+        assert "onclick" not in src, "template/app.js should not use inline onclick handlers"
 
     @pytest.mark.owasp_a03
     def test_security_qa_escapes_key_in_oninput(self):

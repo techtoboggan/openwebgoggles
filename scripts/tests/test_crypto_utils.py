@@ -111,9 +111,9 @@ class TestNonceGeneration:
 
     @pytest.mark.owasp_a02
     def test_nonce_length(self):
-        """Nonce = 8 (timestamp) + 8 (random) + 4 (counter) = 20 bytes = 40 hex chars."""
+        """Nonce = 8 (timestamp) + 8 (random) + 8 (counter) = 24 bytes = 48 hex chars."""
         nonce = generate_nonce()
-        assert len(nonce) == 40
+        assert len(nonce) == 48
 
     @pytest.mark.owasp_a02
     @pytest.mark.mitre_t1185
@@ -137,8 +137,8 @@ class TestNonceGeneration:
         """Counter portion should increment monotonically."""
         n1 = generate_nonce()
         n2 = generate_nonce()
-        c1 = struct.unpack(">I", bytes.fromhex(n1[32:40]))[0]
-        c2 = struct.unpack(">I", bytes.fromhex(n2[32:40]))[0]
+        c1 = struct.unpack(">Q", bytes.fromhex(n1[32:48]))[0]
+        c2 = struct.unpack(">Q", bytes.fromhex(n2[32:48]))[0]
         assert c2 > c1
 
 

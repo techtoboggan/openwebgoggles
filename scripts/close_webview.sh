@@ -40,8 +40,9 @@ if [[ -f "$DATA_DIR/manifest.json" ]]; then
 
     if [[ -n "$TOKEN" ]]; then
         PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'message': sys.argv[1], 'delay_ms': int(sys.argv[2])}))" "$CLOSE_MESSAGE" "$DELAY_MS")
-        RESPONSE=$(curl -s -X POST "http://127.0.0.1:$HTTP_PORT/_api/close" \
-            -H "Authorization: Bearer $TOKEN" \
+        # Use --config with process substitution to keep token out of ps output
+        RESPONSE=$(curl --config <(printf 'header = "Authorization: Bearer %s"\n' "$TOKEN") \
+            -s -X POST "http://127.0.0.1:$HTTP_PORT/_api/close" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" 2>/dev/null || echo "")
         if [[ -n "$RESPONSE" ]]; then

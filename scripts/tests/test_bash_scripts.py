@@ -418,7 +418,7 @@ class TestReadActionsValidation:
         """Actions clear must use atomic write pattern."""
         src = _read_script("read_actions.sh")
         assert ".tmp" in src, "read_actions.sh should use tmp file for atomic clear"
-        assert "mv " in src, "read_actions.sh should use mv for atomic rename"
+        assert "os.replace" in src or "mv " in src, "read_actions.sh should use atomic rename (os.replace or mv)"
 
     @pytest.mark.owasp_a03
     def test_missing_file_handled(self):

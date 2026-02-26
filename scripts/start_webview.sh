@@ -171,7 +171,7 @@ if command -v uv > /dev/null 2>&1; then
 else
     # uv not available — fall back to system python3 with pip
     echo "Warning: uv not found. Using system python3 (consider installing uv for isolation)."
-    PYTHON="$(command -v python3 || command -v python)"
+    PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo '')"
     if [[ -z "$PYTHON" ]]; then
         echo "Error: No Python found. Install uv or python3."
         exit 1
@@ -191,6 +191,7 @@ OCV_SESSION_TOKEN="$SESSION_TOKEN" "$PYTHON" "$SCRIPT_DIR/webview_server.py" \
     --sdk-path "$SDK_PATH" &
 
 SERVER_PID=$!
+echo "$SERVER_PID" > "$DATA_DIR/.server.pid"
 
 # Wait for server to be ready (poll the health endpoint)
 echo "Waiting for server to be ready..."
@@ -217,8 +218,8 @@ URL="http://127.0.0.1:$HTTP_PORT"
 if [[ "$OPEN_BROWSER" == "true" ]]; then
     # Use a per-session sandboxed Chrome app window (no profile, no address bar, no tabs)
     CHROME_PROFILE_DIR=$(mktemp -d)
-    # Clean up the temp profile when the server stops
-    trap "rm -rf '$CHROME_PROFILE_DIR'" EXIT
+    # Clean up the temp profile on exit or interruption
+    trap "rm -rf \"$CHROME_PROFILE_DIR\"" EXIT INT TERM
 
     # Detect Chromium-based browser
     CHROME_BIN=""
@@ -248,7 +249,6 @@ if [[ "$OPEN_BROWSER" == "true" ]]; then
             --no-first-run \
             --disable-default-apps \
             --window-size=960,800 \
-            --remote-debugging-port=9222 \
             2>/dev/null &
         CHROME_PID=$!
         # Track Chrome PID for lifecycle management (close_webview.sh)

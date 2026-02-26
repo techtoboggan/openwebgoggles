@@ -123,7 +123,7 @@ class DataContract:
 
     def clear_actions(self) -> int:
         actions = self.get_actions()
-        count = len(actions["actions"]) if actions else 0
+        count = len(actions["actions"]) if actions and "actions" in actions else 0
         self.write_json(self.actions_path, {"version": 0, "actions": []})
         return count
 
@@ -168,6 +168,7 @@ class WebviewHTTPHandler:
         self.start_time = time.time()
         self.ws_clients: set = set()
         self._csp_nonce: str | None = None  # set per-HTML-response
+        self._public_key_hex: str = ""
         self._rate_limiter = RateLimiter(max_actions=30, window_seconds=60.0)
 
     async def _broadcast(self, message: dict, exclude=None):
@@ -378,7 +379,7 @@ class WebviewHTTPHandler:
                 opts = json.loads(body) if body else {}
             except json.JSONDecodeError:
                 opts = {}
-            delay_ms = opts.get("delay_ms", 1500)
+            delay_ms = max(0, min(int(opts.get("delay_ms", 1500)), 10000))
             message = opts.get("message", "Session complete.")
             await self._broadcast({"type": "close", "data": {"message": message, "delay_ms": delay_ms}})
             await self._send_response(writer, 200, {"ok": True, "clients_notified": len(self.ws_clients)})
@@ -460,9 +461,10 @@ class WebviewHTTPHandler:
 
         injection = f'<script nonce="{csp_nonce}">window.__OCV__ = {bootstrap};</script>\n'
 
-        # Add nonce to existing script tags in the HTML
-        html = html.replace('<script src="', f'<script nonce="{csp_nonce}" src="')
-        html = html.replace("<script>", f'<script nonce="{csp_nonce}">')
+        # Add nonce to existing script tags in the HTML (skip tags that already have a nonce)
+        import re as _re
+
+        html = _re.sub(r"<script(?![^>]*\bnonce=)", f'<script nonce="{csp_nonce}"', html)
 
         # Inject just before </head> — falls back to injecting at top of <body> or start of file
         if "</head>" in html:
@@ -536,6 +538,7 @@ class WebviewServer:
         self.contract = DataContract(data_dir)
         self._running = True
         self._ws_clients: set = set()
+        self._ws_server = None
 
         # Read session token — prefer environment variable (secure), fall back to manifest (legacy)
         env_token = os.environ.get("OCV_SESSION_TOKEN", "")
@@ -589,7 +592,7 @@ class WebviewServer:
 
         # Start WebSocket server if available
         if HAS_WEBSOCKETS:
-            await websockets.serve(
+            self._ws_server = await websockets.serve(
                 self._handle_ws,
                 "127.0.0.1",
                 self.ws_port,
@@ -618,6 +621,10 @@ class WebviewServer:
                     )
                 except Exception:
                     logger.debug("Failed to broadcast shutdown message", exc_info=True)
+            # Close WebSocket server
+            if self._ws_server:
+                self._ws_server.close()
+                await self._ws_server.wait_closed()
             # Zero out cryptographic key material
             if HAS_CRYPTO and self._private_key:
                 zero_key(self._private_key)
@@ -648,29 +655,16 @@ class WebviewServer:
 
     async def _handle_ws(self, websocket):
         # First-message authentication: client must send {type: "auth", token: "..."}
-        # Also accept legacy query-param auth for backwards compatibility
         authenticated = False
 
-        # Check legacy query-param auth
         try:
-            ws_path = str(websocket.request.path) if hasattr(websocket, "request") and websocket.request else ""
-        except Exception:
-            ws_path = getattr(websocket, "path", "")
-        query = parse_qs(urlparse(ws_path).query)
-        legacy_token = query.get("token", [""])[0] if query else ""
-        if legacy_token and hmac.compare_digest(legacy_token, self.session_token):
-            authenticated = True
-
-        # If not authenticated via query param, wait for auth message
-        if not authenticated:
-            try:
-                first_msg_raw = await asyncio.wait_for(websocket.recv(), timeout=5)
-                first_msg = json.loads(first_msg_raw)
-                msg_token = first_msg.get("token", "")
-                if first_msg.get("type") == "auth" and msg_token and hmac.compare_digest(msg_token, self.session_token):
-                    authenticated = True
-            except (TimeoutError, json.JSONDecodeError, websockets.exceptions.ConnectionClosed):
-                pass
+            first_msg_raw = await asyncio.wait_for(websocket.recv(), timeout=5)
+            first_msg = json.loads(first_msg_raw)
+            msg_token = first_msg.get("token", "")
+            if first_msg.get("type") == "auth" and msg_token and hmac.compare_digest(msg_token, self.session_token):
+                authenticated = True
+        except (TimeoutError, json.JSONDecodeError, websockets.exceptions.ConnectionClosed):
+            pass
 
         if not authenticated:
             await websocket.close(4001, "Unauthorized")
@@ -755,11 +749,11 @@ class WebviewServer:
 
     async def _broadcast(self, message: dict, exclude=None):
         """Broadcast a signed message to all connected WebSocket clients."""
-        payload_str = json.dumps(message)
+        payload_str = json.dumps(message, separators=(",", ":"))
         if HAS_CRYPTO and self._private_key:
             nonce = generate_nonce()
             sig = sign_message(self._private_key, payload_str, nonce)
-            envelope = json.dumps({"nonce": nonce, "sig": sig, "p": message})
+            envelope = json.dumps({"nonce": nonce, "sig": sig, "p": message, "ps": payload_str})
         else:
             envelope = payload_str
         for client in list(self._ws_clients):
@@ -837,8 +831,11 @@ def main():
             task.cancel()
         logger.info("Shutting down...")
 
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, shutdown)
+        except (OSError, ValueError):
+            pass  # Windows doesn't support SIGTERM
 
     try:
         loop.run_until_complete(server.start())

@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import os
 import struct
+import threading
 import time
 
 
@@ -44,7 +45,9 @@ def generate_session_keys() -> tuple[bytes, str, str]:
     if nacl is None:
         # Fallback: HMAC-only mode (no asymmetric signing)
         seed = os.urandom(32)
-        return seed, seed.hex(), seed.hex()
+        hmac_key = hashlib.sha256(b"hmac-signing-key:" + seed).digest()
+        verify_hex = hashlib.sha256(b"browser-verify-key:" + seed).hexdigest()
+        return hmac_key, verify_hex, verify_hex
 
     signing_key = nacl.signing.SigningKey.generate()
     seed = bytes(signing_key)  # 32-byte seed
@@ -56,20 +59,23 @@ def generate_session_keys() -> tuple[bytes, str, str]:
 # Nonce generation
 # ---------------------------------------------------------------------------
 
+_NONCE_LOCK = threading.Lock()
 _NONCE_COUNTER = 0
 
 
 def generate_nonce() -> str:
     """Generate a unique nonce combining timestamp + random + counter.
 
-    Format: hex(timestamp_ms || random_8_bytes || counter_4_bytes)
+    Format: hex(timestamp_ms || random_8_bytes || counter_8_bytes)
     This ensures uniqueness even under high-frequency calls.
     """
     global _NONCE_COUNTER
-    _NONCE_COUNTER += 1
+    with _NONCE_LOCK:
+        _NONCE_COUNTER += 1
+        ctr_val = _NONCE_COUNTER
     ts = struct.pack(">Q", int(time.time() * 1000))
     rand = os.urandom(8)
-    ctr = struct.pack(">I", _NONCE_COUNTER & 0xFFFFFFFF)
+    ctr = struct.pack(">Q", ctr_val & 0xFFFFFFFFFFFFFFFF)
     return (ts + rand + ctr).hex()
 
 
@@ -141,6 +147,8 @@ class NonceTracker:
     Nonces older than `window_seconds` are automatically pruned.
     """
 
+    MAX_NONCE_COUNT = 100_000
+
     def __init__(self, window_seconds: int = 300):
         self._seen: dict[str, float] = {}
         self._window = window_seconds
@@ -152,6 +160,9 @@ class NonceTracker:
         self._prune(now)
 
         if nonce in self._seen:
+            return False
+
+        if len(self._seen) >= self.MAX_NONCE_COUNT:
             return False
 
         self._seen[nonce] = now
@@ -173,15 +184,21 @@ class NonceTracker:
 # ---------------------------------------------------------------------------
 
 
-def zero_key(key_bytes: bytes) -> None:
-    """Best-effort zeroing of key material in memory.
-
-    Note: Python's memory model doesn't guarantee this is effective
-    (the GC may have copies), but it reduces the window of exposure.
-    """
+def zero_key(key_bytes: bytes | bytearray) -> None:
+    """Best-effort zeroing of key material in memory."""
+    if isinstance(key_bytes, bytearray):
+        for i in range(len(key_bytes)):
+            key_bytes[i] = 0
+        return
     try:
         import ctypes
+        import sys
 
-        ctypes.memset(id(key_bytes) + 32, 0, len(key_bytes))
+        if sys.implementation.name != "cpython":
+            return
+        ctypes.pythonapi.PyBytes_AsString.restype = ctypes.c_char_p
+        ctypes.pythonapi.PyBytes_AsString.argtypes = [ctypes.py_object]
+        ptr = ctypes.pythonapi.PyBytes_AsString(key_bytes)
+        ctypes.memset(ptr, 0, len(key_bytes))
     except Exception:
         pass

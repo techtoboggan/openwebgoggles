@@ -33,8 +33,11 @@
       if (state) renderState(state);
     })
     .catch(function (err) {
-      els.loading.innerHTML =
-        '<p class="error">Failed to connect: ' + err.message + "</p>";
+      els.loading.textContent = "";
+      var p = document.createElement("p");
+      p.className = "error";
+      p.textContent = "Failed to connect: " + err.message;
+      els.loading.appendChild(p);
     });
 
   // --- Listen for state updates ---
@@ -85,62 +88,66 @@
   }
 
   function renderActions(actions) {
-    if (actions.length === 0) {
-      els.actionsArea.innerHTML = "";
-      return;
-    }
+    els.actionsArea.textContent = "";
+    if (actions.length === 0) return;
 
-    var html = '<div class="actions-bar">';
+    var bar = document.createElement("div");
+    bar.className = "actions-bar";
+
     actions.forEach(function (action) {
-      var btnClass = "btn";
-      if (action.type === "approve") btnClass += " btn-approve";
-      else if (action.type === "reject") btnClass += " btn-reject";
-      else btnClass += " btn-default";
-
       if (action.type === "input") {
-        html +=
-          '<div class="input-group">' +
-          '<label for="input-' + escAttr(action.id) + '">' + escapeHtml(action.label) + "</label>" +
-          '<input type="text" id="input-' + escAttr(action.id) + '" placeholder="' +
-          escapeHtml(action.description || "") + '">' +
-          '<button class="btn btn-default" onclick="submitInput(\'' +
-          escAttr(action.id) + "')\">" + "Submit</button>" +
-          "</div>";
+        var group = document.createElement("div");
+        group.className = "input-group";
+        var label = document.createElement("label");
+        label.setAttribute("for", "input-" + action.id);
+        label.textContent = action.label;
+        var input = document.createElement("input");
+        input.type = "text";
+        input.id = "input-" + action.id;
+        input.placeholder = action.description || "";
+        var btn = document.createElement("button");
+        btn.className = "btn btn-default";
+        btn.textContent = "Submit";
+        btn.addEventListener("click", (function (aid) {
+          return function () {
+            var inp = document.getElementById("input-" + aid);
+            if (!inp) return;
+            var val = inp.value.trim();
+            if (!val) return;
+            wv.submitInput(aid, val).then(function () { inp.disabled = true; });
+          };
+        })(action.id));
+        group.appendChild(label);
+        group.appendChild(input);
+        group.appendChild(btn);
+        bar.appendChild(group);
       } else {
-        html +=
-          '<button class="' + btnClass + '" onclick="handleAction(\'' +
-          escAttr(action.id) + "', '" + escAttr(action.type) + "')\">" +
-          escapeHtml(action.label) + "</button>";
+        var btnClass = "btn";
+        if (action.type === "approve") btnClass += " btn-approve";
+        else if (action.type === "reject") btnClass += " btn-reject";
+        else btnClass += " btn-default";
+        var actionBtn = document.createElement("button");
+        actionBtn.className = btnClass;
+        actionBtn.textContent = action.label;
+        actionBtn.addEventListener("click", (function (aid, atype) {
+          return function () {
+            var value = atype === "approve" || atype === "confirm" ? true : false;
+            wv.sendAction(aid, atype, value).then(function () {
+              var buttons = els.actionsArea.querySelectorAll("button");
+              buttons.forEach(function (b) { b.disabled = true; });
+              var p = document.createElement("p");
+              p.className = "muted";
+              p.textContent = "Response sent. Waiting for agent...";
+              els.actionsArea.appendChild(p);
+            });
+          };
+        })(action.id, action.type));
+        bar.appendChild(actionBtn);
       }
     });
-    html += "</div>";
-    els.actionsArea.innerHTML = html;
+
+    els.actionsArea.appendChild(bar);
   }
-
-  // --- Action handlers (exposed globally for onclick) ---
-
-  window.handleAction = function (actionId, type) {
-    var value = type === "approve" || type === "confirm" ? true : false;
-    wv.sendAction(actionId, type, value).then(function () {
-      // Disable buttons after action
-      var buttons = els.actionsArea.querySelectorAll("button");
-      buttons.forEach(function (btn) {
-        btn.disabled = true;
-      });
-      els.actionsArea.innerHTML +=
-        '<p class="muted">Response sent. Waiting for agent...</p>';
-    });
-  };
-
-  window.submitInput = function (actionId) {
-    var input = document.getElementById("input-" + actionId);
-    if (!input) return;
-    var value = input.value.trim();
-    if (!value) return;
-    wv.submitInput(actionId, value).then(function () {
-      input.disabled = true;
-    });
-  };
 
   // --- Helpers ---
 

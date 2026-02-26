@@ -25,6 +25,15 @@
   "use strict";
 
   function uuid() {
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      var buf = new Uint8Array(16);
+      crypto.getRandomValues(buf);
+      buf[6] = (buf[6] & 0x0f) | 0x40;
+      buf[8] = (buf[8] & 0x3f) | 0x80;
+      var hex = "";
+      for (var i = 0; i < 16; i++) hex += ("0" + buf[i].toString(16)).slice(-2);
+      return hex.slice(0,8)+"-"+hex.slice(8,12)+"-"+hex.slice(12,16)+"-"+hex.slice(16,20)+"-"+hex.slice(20);
+    }
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
       var r = (Math.random() * 16) | 0;
       return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
@@ -201,11 +210,14 @@
   };
 
   OpenWebGoggles.prototype._generateNonce = function () {
-    // Timestamp + random for uniqueness
     var ts = Date.now().toString(16);
     var rand = "";
-    for (var i = 0; i < 16; i++) {
-      rand += Math.floor(Math.random() * 16).toString(16);
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      var buf = new Uint8Array(8);
+      crypto.getRandomValues(buf);
+      for (var i = 0; i < buf.length; i++) rand += ("0" + buf[i].toString(16)).slice(-2);
+    } else {
+      for (var j = 0; j < 16; j++) rand += Math.floor(Math.random() * 16).toString(16);
     }
     return ts + rand;
   };
@@ -231,10 +243,8 @@
           sigHex += ("0" + sigArr[i].toString(16)).slice(-2);
         }
         self._ws.send(JSON.stringify({ nonce: nonce, sig: sigHex, p: message }));
-      }).catch(function () {
-        // Fallback: send unsigned (degraded security)
-        console.warn("OpenWebGoggles: HMAC signing failed, sending unsigned message");
-        self._ws.send(JSON.stringify(message));
+      }).catch(function (err) {
+        console.error("OpenWebGoggles: HMAC signing failed, message NOT sent:", err);
       });
     } else {
       // No SubtleCrypto: send unsigned (degraded security)
@@ -421,7 +431,10 @@
             });
             return; // handled asynchronously above
           }
-          // No verify key or no ps field: nonce already recorded, accept message
+          // No verify key or no ps field — if envelope has sig, log a warning
+          if (raw.sig) {
+            console.warn("OpenWebGoggles: Signed message received but verify key unavailable; accepting with nonce-only protection");
+          }
           msg = raw.p;
         } else {
           msg = raw;
@@ -476,6 +489,7 @@
         this._emit("close", msg.data || {});
         // Auto-close the window after a short delay so the app can show a farewell state
         var delay = (msg.data && msg.data.delay_ms) ? msg.data.delay_ms : 1500;
+        delay = Math.max(0, Math.min(delay, 10000));
         setTimeout(function () { window.close(); }, delay);
         break;
       case "heartbeat_ack":
