@@ -704,9 +704,9 @@ async def webview_ask(
 ) -> dict[str, Any]:
     """Show an interactive webview UI and wait for the user to respond.
 
-    This is the primary tool for human-in-the-loop interactions. Pass a state
-    object describing the UI and this tool blocks until the user clicks an
-    action button.
+    This is the primary tool for human-in-the-loop interactions and the ONLY
+    way to present action buttons to the user. Pass a state object describing
+    the UI and this tool blocks until the user clicks an action button.
 
     The state object schema:
       - title (str): Header title
@@ -799,6 +799,11 @@ async def webview_show(
 
     Same state schema as webview_ask. The webview opens automatically on
     first call; subsequent calls update the displayed content in real-time.
+
+    IMPORTANT: Action buttons (actions_requested) are automatically stripped.
+    This tool is non-blocking — the agent would never receive button clicks.
+    Use webview_ask() for any interactive UI that needs user responses.
+    webview_show should always be followed by webview_ask or webview_close.
     """
     session = await _get_session()
     try:
@@ -806,8 +811,27 @@ async def webview_show(
     except Exception as e:
         return {"error": f"Failed to start webview: {e}"}
 
+    # Strip action buttons — webview_show is non-blocking so nobody would
+    # be polling for the response.  Use webview_ask for interactive UIs.
+    had_actions = bool(state.pop("actions_requested", None))
+    data = state.get("data")
+    if isinstance(data, dict):
+        had_actions = bool(data.pop("actions", None)) or had_actions
+
     session.write_state(state)
-    return {"status": "ok", "url": session.url, "message": "Webview updated."}
+
+    result: dict[str, Any] = {
+        "status": "ok",
+        "url": session.url,
+        "message": "Webview updated.",
+    }
+    if had_actions:
+        result["warning"] = (
+            "actions_requested were stripped — webview_show is non-blocking "
+            "so the agent would never receive the response. "
+            "Use webview_ask() for interactive UIs with buttons."
+        )
+    return result
 
 
 @mcp.tool()
@@ -834,8 +858,9 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
 async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
     """Close the webview session and stop the server.
 
-    Shows a farewell message to the user before closing. Idempotent — safe
-    to call even if no session is active.
+    Shows a farewell message to the user before closing. Blocks until the
+    browser window is confirmed closed. Idempotent — safe to call even if
+    no session is active. Always call this when done with the webview.
     """
     global _session
     if _session is None or not _session._started:

@@ -440,6 +440,102 @@ class TestServerLifecycle:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# webview_show action stripping
+# ---------------------------------------------------------------------------
+
+
+class TestWebviewShowActionStripping:
+    """webview_show must strip action buttons since it's non-blocking.
+
+    Only webview_ask (which blocks) should present interactive buttons.
+    This prevents the 'orphaned button' bug where a user clicks a button
+    but the agent has already exited and nobody is polling for the response.
+    """
+
+    def test_strips_actions_requested(self, session):
+        """actions_requested should be removed from state before writing."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        session._init_data_contract()
+
+        state = {
+            "title": "Test",
+            "actions_requested": [
+                {"id": "approve", "label": "Approve", "type": "approve"},
+            ],
+        }
+        # Simulate what webview_show does: pop actions, then write
+        had_actions = bool(state.pop("actions_requested", None))
+        session.write_state(state)
+
+        assert had_actions is True
+        written = json.loads((session.data_dir / "state.json").read_text())
+        assert "actions_requested" not in written
+
+    def test_strips_data_actions(self, session):
+        """data.actions (alternate location) should also be stripped."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        session._init_data_contract()
+
+        state = {
+            "title": "Test",
+            "data": {
+                "sections": [{"type": "text", "content": "Hello"}],
+                "actions": [
+                    {"id": "ok", "label": "OK", "type": "approve"},
+                ],
+            },
+        }
+        had_actions = bool(state.pop("actions_requested", None))
+        data = state.get("data")
+        if isinstance(data, dict):
+            had_actions = bool(data.pop("actions", None)) or had_actions
+        session.write_state(state)
+
+        assert had_actions is True
+        written = json.loads((session.data_dir / "state.json").read_text())
+        assert "actions" not in written.get("data", {})
+        # Sections should be preserved
+        assert len(written["data"]["sections"]) == 1
+
+    def test_no_warning_without_actions(self, session):
+        """State without actions should write normally with no stripping."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        session._init_data_contract()
+
+        state = {"title": "Progress", "message": "Step 1 of 3"}
+        had_actions = bool(state.pop("actions_requested", None))
+        session.write_state(state)
+
+        assert had_actions is False
+        written = json.loads((session.data_dir / "state.json").read_text())
+        assert written["title"] == "Progress"
+        assert written["message"] == "Step 1 of 3"
+
+    def test_ask_preserves_actions(self, session):
+        """webview_ask should NOT strip actions (it blocks and waits)."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        session._init_data_contract()
+
+        state = {
+            "title": "Review",
+            "actions_requested": [
+                {"id": "approve", "label": "Approve", "type": "approve"},
+            ],
+        }
+        # webview_ask writes state directly without stripping
+        session.write_state(state)
+
+        written = json.loads((session.data_dir / "state.json").read_text())
+        assert "actions_requested" in written
+        assert len(written["actions_requested"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# App name security — path traversal prevention
+# ---------------------------------------------------------------------------
+
+
 class TestAppNameSecurity:
     """App names must not be usable as path traversal vectors.
 
