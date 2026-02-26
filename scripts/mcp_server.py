@@ -835,13 +835,26 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
 
 _EDITORS = ["claude", "opencode"]
 
-_MCP_CONFIG = {
-    "mcpServers": {
-        "openwebgoggles": {
-            "command": "openwebgoggles",
-        }
-    }
-}
+
+def _resolve_binary() -> str:
+    """Find the absolute path to the openwebgoggles binary.
+
+    Since this function runs *inside* the openwebgoggles process, we can
+    resolve it reliably without depending on PATH at runtime.
+    """
+    # Best: shutil.which finds us in the current PATH
+    found = shutil.which("openwebgoggles")
+    if found:
+        return str(Path(found).resolve())
+
+    # Fallback: we're running as a console_script, so sys.argv[0] is the binary
+    argv0 = Path(sys.argv[0])
+    if argv0.exists():
+        return str(argv0.resolve())
+
+    # Last resort: bare name (will need PATH at runtime)
+    return "openwebgoggles"
+
 
 _CLAUDE_SETTINGS = {
     "permissions": {
@@ -854,21 +867,14 @@ _CLAUDE_SETTINGS = {
     }
 }
 
-_OPENCODE_CONFIG = {
-    "$schema": "https://opencode.ai/config.json",
-    "mcp": {
-        "openwebgoggles": {
-            "type": "local",
-            "command": ["openwebgoggles"],
-            "enabled": True,
-        }
-    },
-}
-
 
 def _init_claude(root: Path) -> None:
     """Set up .mcp.json and .claude/settings.json for Claude Code."""
     root.mkdir(parents=True, exist_ok=True)
+    binary = _resolve_binary()
+    print(f"  binary: {binary}")
+    mcp_config = {"mcpServers": {"openwebgoggles": {"command": binary}}}
+
     # --- .mcp.json ---
     mcp_path = root / ".mcp.json"
     if mcp_path.exists():
@@ -877,11 +883,11 @@ def _init_claude(root: Path) -> None:
         if "openwebgoggles" in servers:
             print(f"  {mcp_path}: openwebgoggles already configured, skipping.")
         else:
-            servers["openwebgoggles"] = _MCP_CONFIG["mcpServers"]["openwebgoggles"]
+            servers["openwebgoggles"] = mcp_config["mcpServers"]["openwebgoggles"]
             mcp_path.write_text(json.dumps(existing, indent=2) + "\n")
             print(f"  {mcp_path}: added openwebgoggles server.")
     else:
-        mcp_path.write_text(json.dumps(_MCP_CONFIG, indent=2) + "\n")
+        mcp_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
         print(f"  {mcp_path}: created.")
 
     # --- .claude/settings.json ---
@@ -911,6 +917,14 @@ def _init_claude(root: Path) -> None:
 def _init_opencode(root: Path) -> None:
     """Set up opencode.json for OpenCode."""
     root.mkdir(parents=True, exist_ok=True)
+    binary = _resolve_binary()
+    print(f"  binary: {binary}")
+    server_entry = {"type": "local", "command": [binary], "enabled": True}
+    opencode_config = {
+        "$schema": "https://opencode.ai/config.json",
+        "mcp": {"openwebgoggles": server_entry},
+    }
+
     config_path = root / "opencode.json"
     if config_path.exists():
         existing = json.loads(config_path.read_text())
@@ -918,11 +932,11 @@ def _init_opencode(root: Path) -> None:
         if "openwebgoggles" in mcp_servers:
             print(f"  {config_path}: openwebgoggles already configured, skipping.")
         else:
-            mcp_servers["openwebgoggles"] = _OPENCODE_CONFIG["mcp"]["openwebgoggles"]
+            mcp_servers["openwebgoggles"] = server_entry
             config_path.write_text(json.dumps(existing, indent=2) + "\n")
             print(f"  {config_path}: added openwebgoggles server.")
     else:
-        config_path.write_text(json.dumps(_OPENCODE_CONFIG, indent=2) + "\n")
+        config_path.write_text(json.dumps(opencode_config, indent=2) + "\n")
         print(f"  {config_path}: created.")
 
     print("\nDone! Restart OpenCode to pick up the new MCP server.")

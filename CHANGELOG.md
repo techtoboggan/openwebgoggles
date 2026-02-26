@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-25
+
+### Added
+
+- Init commands now embed the **absolute path** to the `openwebgoggles` binary in generated configs, so editors don't depend on PATH at runtime
+- `_resolve_binary()` — resolves via `shutil.which()`, then `sys.argv[0]`, with bare name as last resort
+
+### Changed
+
+- Recommended install method changed from `pip` to `pipx` (isolates dependencies, keeps binary on PATH)
+- README and CONTRIBUTING.md updated to lead with `pipx install openwebgoggles`
+- Init output now prints the resolved binary path for transparency
+
 ## [0.3.1] - 2026-02-26
 
 ### Fixed

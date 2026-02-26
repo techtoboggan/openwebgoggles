@@ -55,11 +55,13 @@ Structured data in, structured data out. The browser is just the rendering layer
 
 ## Quick Start
 
-Install from PyPI:
+Install from PyPI (pipx recommended — isolates dependencies and puts the binary on PATH):
 
 ```bash
-pip install openwebgoggles
+pipx install openwebgoggles
 ```
+
+> **Don't have pipx?** Install it first: `brew install pipx && pipx ensurepath` (macOS) or `pip install --user pipx && pipx ensurepath` (Linux). Or use plain `pip install openwebgoggles` if you prefer.
 
 Then bootstrap for your editor:
 

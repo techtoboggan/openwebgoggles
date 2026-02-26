@@ -7,7 +7,7 @@ Thank you for your interest in contributing.
 If you just want to use it — not develop on it:
 
 ```bash
-pip install openwebgoggles
+pipx install openwebgoggles   # or: pip install openwebgoggles
 openwebgoggles init claude    # or: openwebgoggles init opencode
 ```
 
@@ -47,7 +47,7 @@ The editable install (`-e`) lets you run `openwebgoggles` as a CLI command that 
 pre-commit install
 ```
 
-4. Verify everything works:
+5. Verify everything works:
 
 ```bash
 cd ..  # back to repo root
