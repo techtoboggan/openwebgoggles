@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-02-26
+
+### Fixed
+
+- Remove `from __future__ import annotations` that caused `issubclass()` crash on Python 3.12 when `@mcp.tool()` decorator inspected string-ified type annotations
+
 ## [0.3.0] - 2026-02-26
 
 ### Added

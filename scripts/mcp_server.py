@@ -13,8 +13,6 @@ Configure in .mcp.json:
     {"mcpServers": {"openwebgoggles": {"command": "python", "args": ["scripts/mcp_server.py"]}}}
 """
 
-from __future__ import annotations
-
 import asyncio
 import atexit
 import json
