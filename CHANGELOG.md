@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-02-25
+
+### Fixed
+
+- `openwebgoggles init opencode` now defaults to `~/.config/opencode/` (global config) instead of the current directory — MCP server available in all projects without per-project setup
+- Handle `opencode.jsonc` files (JSON with Comments) — state machine parser strips `//` and `/* */` comments while preserving URLs like `https://...`
+- Standardized installation docs across README, CONTRIBUTING, integration guide, and mcp_server.py docstring/error messages
+
 ## [0.4.0] - 2026-02-25
 
 ### Added
