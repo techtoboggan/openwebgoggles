@@ -11,6 +11,7 @@ OWASP A08 — Software and Data Integrity Failures (atomic writes)
 MITRE T1059 — Command and Scripting Interpreter
 MITRE T1190 — Exploit Public-Facing Application
 """
+
 from __future__ import annotations
 
 import os
@@ -53,6 +54,7 @@ def _read_script(name: str) -> str:
 # Source code static checks — all scripts
 # ===================================================================
 
+
 class TestScriptDefensivePatterns:
     """Verify that all bash scripts use defensive coding patterns."""
 
@@ -78,8 +80,7 @@ class TestScriptDefensivePatterns:
     def test_has_shebang(self, script):
         """Every script must have a proper shebang line."""
         src = _read_script(script)
-        assert src.startswith("#!/usr/bin/env bash") or src.startswith("#!/bin/bash"), \
-            f"{script} missing bash shebang"
+        assert src.startswith("#!/usr/bin/env bash") or src.startswith("#!/bin/bash"), f"{script} missing bash shebang"
 
     @pytest.mark.owasp_a03
     @pytest.mark.parametrize("script", SCRIPTS)
@@ -87,8 +88,7 @@ class TestScriptDefensivePatterns:
         """No script should use eval (command injection risk)."""
         src = _read_script(script)
         # Match 'eval ' at start of line or after ; or &&
-        assert not re.search(r'(?:^|[;&|]\s*)eval\s', src, re.MULTILINE), \
-            f"{script} uses eval"
+        assert not re.search(r"(?:^|[;&|]\s*)eval\s", src, re.MULTILINE), f"{script} uses eval"
 
     @pytest.mark.owasp_a03
     @pytest.mark.parametrize("script", SCRIPTS)
@@ -110,6 +110,7 @@ class TestScriptDefensivePatterns:
 # start_webview.sh — port validation, app name validation
 # ===================================================================
 
+
 class TestStartWebviewValidation:
     """Test input validation in start_webview.sh."""
 
@@ -118,9 +119,9 @@ class TestStartWebviewValidation:
         """Port must be an integer, not arbitrary text."""
         src = _read_script("start_webview.sh")
         # The validation regex should be present
-        assert re.search(r'\$HTTP_PORT.*\^?\[0-9\]', src) or \
-               re.search(r'HTTP_PORT.*=~.*\[0-9\]', src), \
+        assert re.search(r"\$HTTP_PORT.*\^?\[0-9\]", src) or re.search(r"HTTP_PORT.*=~.*\[0-9\]", src), (
             "start_webview.sh must validate HTTP_PORT as numeric"
+        )
 
     @pytest.mark.owasp_a03
     def test_port_range_validation(self):
@@ -132,8 +133,7 @@ class TestStartWebviewValidation:
     def test_ws_port_validation(self):
         """WS port must also be validated."""
         src = _read_script("start_webview.sh")
-        assert re.search(r'WS_PORT.*=~.*\[0-9\]', src), \
-            "start_webview.sh must validate WS_PORT as numeric"
+        assert re.search(r"WS_PORT.*=~.*\[0-9\]", src), "start_webview.sh must validate WS_PORT as numeric"
 
     @pytest.mark.owasp_a03
     @pytest.mark.mitre_t1059
@@ -150,14 +150,13 @@ class TestStartWebviewValidation:
     def test_app_name_validation(self):
         """APP_NAME must be validated to prevent path traversal and injection."""
         src = _read_script("start_webview.sh")
-        assert re.search(r'APP_NAME.*=~.*\^?\[a-zA-Z0-9\]', src), \
-            "start_webview.sh must validate APP_NAME characters"
+        assert re.search(r"APP_NAME.*=~.*\^?\[a-zA-Z0-9\]", src), "start_webview.sh must validate APP_NAME characters"
 
     @pytest.mark.owasp_a03
     def test_app_name_rejects_path_traversal(self):
         """APP_NAME like '../../../etc' should be rejected by the regex."""
         # The regex ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ blocks .. and /
-        pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+        pattern = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
         bad_names = [
             "../../../etc/passwd",
             "../../root",
@@ -174,7 +173,7 @@ class TestStartWebviewValidation:
     @pytest.mark.owasp_a03
     def test_app_name_allows_valid_names(self):
         """Valid app names should pass the validation regex."""
-        pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+        pattern = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
         good_names = [
             "my-app",
             "approval-review",
@@ -222,21 +221,19 @@ class TestStartWebviewValidation:
 # close_webview.sh — delay validation, PID validation
 # ===================================================================
 
-class TestCloseWebviewValidation:
 
+class TestCloseWebviewValidation:
     @pytest.mark.owasp_a03
     def test_delay_ms_validation(self):
         """DELAY_MS must be validated as a non-negative integer."""
         src = _read_script("close_webview.sh")
-        assert re.search(r'DELAY_MS.*=~.*\[0-9\]', src), \
-            "close_webview.sh must validate DELAY_MS as numeric"
+        assert re.search(r"DELAY_MS.*=~.*\[0-9\]", src), "close_webview.sh must validate DELAY_MS as numeric"
 
     @pytest.mark.owasp_a03
     def test_chrome_pid_validation(self):
         """PIDs read from .chrome.pids file must be validated as integers."""
         src = _read_script("close_webview.sh")
-        assert re.search(r'cpid.*=~.*\[0-9\]', src), \
-            "close_webview.sh must validate chrome PIDs as numeric"
+        assert re.search(r"cpid.*=~.*\[0-9\]", src), "close_webview.sh must validate chrome PIDs as numeric"
 
     @pytest.mark.owasp_a03
     def test_close_message_passed_safely(self):
@@ -250,22 +247,20 @@ class TestCloseWebviewValidation:
 # stop_webview.sh — PID file validation
 # ===================================================================
 
-class TestStopWebviewValidation:
 
+class TestStopWebviewValidation:
     @pytest.mark.owasp_a03
     @pytest.mark.mitre_t1059
     def test_pid_validation(self):
         """PID read from .server.pid must be validated as a positive integer."""
         src = _read_script("stop_webview.sh")
-        assert re.search(r'PID.*=~.*\[0-9\]', src), \
-            "stop_webview.sh must validate PID as numeric"
+        assert re.search(r"PID.*=~.*\[0-9\]", src), "stop_webview.sh must validate PID as numeric"
 
     @pytest.mark.owasp_a03
     def test_chrome_pid_validation(self):
         """Chrome PIDs from file must be validated."""
         src = _read_script("stop_webview.sh")
-        assert re.search(r'cpid.*=~.*\[0-9\]', src), \
-            "stop_webview.sh must validate chrome PIDs as numeric"
+        assert re.search(r"cpid.*=~.*\[0-9\]", src), "stop_webview.sh must validate chrome PIDs as numeric"
 
     @pytest.mark.owasp_a03
     def test_corrupted_pid_file_handled(self):
@@ -278,36 +273,37 @@ class TestStopWebviewValidation:
 # wait_for_action.sh — timeout/interval validation
 # ===================================================================
 
-class TestWaitForActionValidation:
 
+class TestWaitForActionValidation:
     @pytest.mark.owasp_a03
     def test_timeout_validation(self):
         """TIMEOUT must be validated as a non-negative integer."""
         src = _read_script("wait_for_action.sh")
-        assert re.search(r'TIMEOUT.*=~.*\[0-9\]', src), \
-            "wait_for_action.sh must validate TIMEOUT as numeric"
+        assert re.search(r"TIMEOUT.*=~.*\[0-9\]", src), "wait_for_action.sh must validate TIMEOUT as numeric"
 
     @pytest.mark.owasp_a03
     def test_poll_interval_validation(self):
         """POLL_INTERVAL must be validated as a positive integer."""
         src = _read_script("wait_for_action.sh")
-        assert re.search(r'POLL_INTERVAL.*=~.*\[0-9\]', src), \
+        assert re.search(r"POLL_INTERVAL.*=~.*\[0-9\]", src), (
             "wait_for_action.sh must validate POLL_INTERVAL as numeric"
+        )
 
     @pytest.mark.owasp_a03
     def test_poll_interval_minimum(self):
         """POLL_INTERVAL must be at least 1 to prevent busy-looping."""
         src = _read_script("wait_for_action.sh")
-        assert "POLL_INTERVAL.*-lt 1" in src or re.search(r'POLL_INTERVAL.*-lt\s+1', src), \
+        assert "POLL_INTERVAL.*-lt 1" in src or re.search(r"POLL_INTERVAL.*-lt\s+1", src), (
             "POLL_INTERVAL should have a minimum of 1"
+        )
 
 
 # ===================================================================
 # write_state.sh — atomic writes, JSON validation
 # ===================================================================
 
-class TestWriteStateValidation:
 
+class TestWriteStateValidation:
     @pytest.mark.owasp_a08
     def test_atomic_write_pattern(self):
         """State writes must be atomic (write to tmp, then mv)."""
@@ -335,15 +331,14 @@ class TestWriteStateValidation:
             os.makedirs(data_dir)
 
             json_input = '{"version": 1, "status": "test"}'
-            result = _run(
-                ["bash", _script("write_state.sh"), "--data-dir", data_dir, json_input]
-            )
+            result = _run(["bash", _script("write_state.sh"), "--data-dir", data_dir, json_input])
             assert result.returncode == 0, f"write_state.sh failed: {result.stderr}"
 
             state_file = os.path.join(data_dir, "state.json")
             assert os.path.exists(state_file)
             with open(state_file) as f:
                 import json
+
                 data = json.load(f)
             assert data["version"] == 1
             assert data["status"] == "test"
@@ -355,9 +350,7 @@ class TestWriteStateValidation:
             data_dir = os.path.join(tmpdir, "webview")
             os.makedirs(data_dir)
 
-            result = _run(
-                ["bash", _script("write_state.sh"), "--data-dir", data_dir, "not valid json"]
-            )
+            result = _run(["bash", _script("write_state.sh"), "--data-dir", data_dir, "not valid json"])
             assert result.returncode != 0, "write_state.sh should fail on invalid JSON"
 
     @pytest.mark.owasp_a03
@@ -370,9 +363,7 @@ class TestWriteStateValidation:
 
             # JSON is valid but contains shell-dangerous content
             json_input = '{"version": 1, "status": "$(touch /tmp/pwned)"}'
-            result = _run(
-                ["bash", _script("write_state.sh"), "--data-dir", data_dir, json_input]
-            )
+            result = _run(["bash", _script("write_state.sh"), "--data-dir", data_dir, json_input])
             assert result.returncode == 0
             assert not os.path.exists("/tmp/pwned"), "Command injection via JSON value!"
 
@@ -381,21 +372,20 @@ class TestWriteStateValidation:
 # init_webview_app.sh — app name injection, sed injection
 # ===================================================================
 
-class TestInitWebviewAppValidation:
 
+class TestInitWebviewAppValidation:
     @pytest.mark.owasp_a03
     def test_app_name_validation_exists(self):
         """init_webview_app.sh must validate app names."""
         src = _read_script("init_webview_app.sh")
-        assert re.search(r'APP_NAME.*=~.*\^?\[a-zA-Z0-9\]', src), \
-            "init_webview_app.sh must validate APP_NAME"
+        assert re.search(r"APP_NAME.*=~.*\^?\[a-zA-Z0-9\]", src), "init_webview_app.sh must validate APP_NAME"
 
     @pytest.mark.owasp_a03
     def test_sed_injection_blocked_by_validation(self):
         """App names with / would cause sed delimiter injection, but validation blocks them."""
         _read_script("init_webview_app.sh")  # verify script exists
         # The regex ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ blocks /
-        pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+        pattern = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
         bad_names = [
             "app/../../etc",
             "/bin/sh",
@@ -421,8 +411,8 @@ class TestInitWebviewAppValidation:
 # read_actions.sh — basic validation
 # ===================================================================
 
-class TestReadActionsValidation:
 
+class TestReadActionsValidation:
     @pytest.mark.owasp_a08
     def test_atomic_clear(self):
         """Actions clear must use atomic write pattern."""
@@ -434,9 +424,7 @@ class TestReadActionsValidation:
     def test_missing_file_handled(self):
         """read_actions.sh should handle missing actions.json gracefully."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = _run(
-                ["bash", _script("read_actions.sh"), "--data-dir", tmpdir]
-            )
+            result = _run(["bash", _script("read_actions.sh"), "--data-dir", tmpdir])
             assert result.returncode == 0
             assert '"actions": []' in result.stdout
 
@@ -445,8 +433,8 @@ class TestReadActionsValidation:
 # Cross-cutting security properties
 # ===================================================================
 
-class TestCrossCuttingBashSecurity:
 
+class TestCrossCuttingBashSecurity:
     @pytest.mark.owasp_a05
     def test_no_world_readable_secrets(self):
         """The start script must set restrictive permissions on data files."""
@@ -488,8 +476,7 @@ class TestCrossCuttingBashSecurity:
                 if stripped.startswith("#"):
                     continue
                 # kill with unquoted variable
-                if re.search(r'kill\s+\$[A-Z_]+\s', stripped) and \
-                   not re.search(r'kill\s+"\$[A-Z_]+"', stripped):
+                if re.search(r"kill\s+\$[A-Z_]+\s", stripped) and not re.search(r'kill\s+"\$[A-Z_]+"', stripped):
                     # Might be false positive for kill -0 "$PID" style
                     pass  # Soft check
 
@@ -509,9 +496,7 @@ class TestCrossCuttingBashSecurity:
                 # Check that user data isn't directly interpolated
                 # (sys.argv usage indicates safe parameter passing)
                 if "$CLOSE_MESSAGE" in block or "$JSON_INPUT" in block:
-                    pytest.fail(
-                        f"{script_name}: python -c string interpolates user data directly"
-                    )
+                    pytest.fail(f"{script_name}: python -c string interpolates user data directly")
 
     @pytest.mark.owasp_a05
     def test_remote_debugging_port_hardcoded(self):

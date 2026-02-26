@@ -5,6 +5,7 @@ Provides Ed25519 signing for server→browser messages and HMAC-SHA256
 verification for browser→server messages. All key material is held
 in process memory only and never written to disk.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +20,7 @@ def _lazy_nacl():
     try:
         import nacl.encoding
         import nacl.signing
+
         return nacl
     except ImportError:
         return None
@@ -27,6 +29,7 @@ def _lazy_nacl():
 # ---------------------------------------------------------------------------
 # Key generation
 # ---------------------------------------------------------------------------
+
 
 def generate_session_keys() -> tuple[bytes, str, str]:
     """Generate an ephemeral Ed25519 keypair.
@@ -74,6 +77,7 @@ def generate_nonce() -> str:
 # Message signing (server → browser)
 # ---------------------------------------------------------------------------
 
+
 def sign_message(private_key_seed: bytes, payload: str, nonce: str) -> str:
     """Sign a message using Ed25519.
 
@@ -102,6 +106,7 @@ def sign_message(private_key_seed: bytes, payload: str, nonce: str) -> str:
 # Message verification (browser → server, using HMAC with session token)
 # ---------------------------------------------------------------------------
 
+
 def verify_hmac(token: str, payload: str, nonce: str, signature_hex: str) -> bool:
     """Verify an HMAC-SHA256 signature from the browser.
 
@@ -128,6 +133,7 @@ def verify_hmac(token: str, payload: str, nonce: str, signature_hex: str) -> boo
 # ---------------------------------------------------------------------------
 # Nonce replay protection
 # ---------------------------------------------------------------------------
+
 
 class NonceTracker:
     """Tracks seen nonces to prevent replay attacks.
@@ -166,6 +172,7 @@ class NonceTracker:
 # Key cleanup
 # ---------------------------------------------------------------------------
 
+
 def zero_key(key_bytes: bytes) -> None:
     """Best-effort zeroing of key material in memory.
 
@@ -174,6 +181,7 @@ def zero_key(key_bytes: bytes) -> None:
     """
     try:
         import ctypes
+
         ctypes.memset(id(key_bytes) + 32, 0, len(key_bytes))
     except Exception:
         pass

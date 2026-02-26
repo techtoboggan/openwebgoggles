@@ -3,6 +3,7 @@ Tests for the MCP server (scripts/mcp_server.py).
 
 Covers WebviewSession lifecycle, file I/O, port finding, and MCP tool logic.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -372,12 +373,14 @@ class TestServerLifecycle:
         try:
             await session.ensure_started("dynamic")
 
-            session.write_state({
-                "title": "Integration Test",
-                "message": "Hello from test",
-                "data": {},
-                "actions_requested": [],
-            })
+            session.write_state(
+                {
+                    "title": "Integration Test",
+                    "message": "Hello from test",
+                    "data": {},
+                    "actions_requested": [],
+                }
+            )
 
             # Give the file watcher time to pick it up
             await asyncio.sleep(1.0)
@@ -400,14 +403,16 @@ class TestServerLifecycle:
             await session.ensure_started("dynamic")
 
             session.clear_actions()
-            session.write_state({
-                "title": "Review",
-                "message": "Please review",
-                "data": {},
-                "actions_requested": [
-                    {"id": "approve", "label": "Approve", "type": "approve"},
-                ],
-            })
+            session.write_state(
+                {
+                    "title": "Review",
+                    "message": "Please review",
+                    "data": {},
+                    "actions_requested": [
+                        {"id": "approve", "label": "Approve", "type": "approve"},
+                    ],
+                }
+            )
 
             # Inject an action after a delay (simulating user click)
             async def delayed_action():

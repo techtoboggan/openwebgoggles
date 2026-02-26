@@ -12,6 +12,7 @@ Usage (stdio transport, for Claude Code):
 Configure in .mcp.json:
     {"mcpServers": {"openwebgoggles": {"command": "python", "args": ["scripts/mcp_server.py"]}}}
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -103,10 +104,14 @@ class WebviewSession:
             [
                 sys.executable,
                 str(server_py),
-                "--data-dir", str(self.data_dir),
-                "--http-port", str(self.http_port),
-                "--ws-port", str(self.ws_port),
-                "--sdk-path", str(sdk_path),
+                "--data-dir",
+                str(self.data_dir),
+                "--http-port",
+                str(self.http_port),
+                "--ws-port",
+                str(self.ws_port),
+                "--sdk-path",
+                str(sdk_path),
             ],
             env=env,
             stdout=subprocess.PIPE,
@@ -212,10 +217,7 @@ class WebviewSession:
         pkg_assets = Path(__file__).resolve().parent / "assets"
         if pkg_assets.is_dir():
             return pkg_assets
-        raise FileNotFoundError(
-            "Cannot find assets directory. Expected at "
-            f"{dev_assets} or {pkg_assets}"
-        )
+        raise FileNotFoundError(f"Cannot find assets directory. Expected at {dev_assets} or {pkg_assets}")
 
     def _copy_app(self, app_name: str) -> None:
         """Find and copy the app + SDK to the data directory."""
@@ -224,9 +226,7 @@ class WebviewSession:
         # app_name would silently escape the assets directory.
         _app_path = Path(app_name)
         if _app_path.is_absolute() or ".." in _app_path.parts:
-            raise FileNotFoundError(
-                f"App '{app_name}' not found. App names must be simple names (no '/' or '..')."
-            )
+            raise FileNotFoundError(f"App '{app_name}' not found. App names must be simple names (no '/' or '..').")
 
         assets_dir = self._find_assets_dir()
         repo_root = Path(__file__).resolve().parent.parent
@@ -250,9 +250,7 @@ class WebviewSession:
             examples_dir = repo_root / "examples"
             if examples_dir.is_dir():
                 available.extend(d.name for d in examples_dir.iterdir() if d.is_dir())
-            raise FileNotFoundError(
-                f"App '{app_name}' not found. Available: {', '.join(available) or 'none'}"
-            )
+            raise FileNotFoundError(f"App '{app_name}' not found. Available: {', '.join(available) or 'none'}")
 
         dest = self.data_dir / "apps" / app_name
         if dest.exists():
@@ -289,19 +287,25 @@ class WebviewSession:
     def _init_data_contract(self) -> None:
         """Write initial state.json and actions.json."""
         self._state_version = 0
-        self._write_json(self.data_dir / "state.json", {
-            "version": 0,
-            "status": "initializing",
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "title": "Initializing...",
-            "message": "",
-            "data": {},
-            "actions_requested": [],
-        })
-        self._write_json(self.data_dir / "actions.json", {
-            "version": 0,
-            "actions": [],
-        })
+        self._write_json(
+            self.data_dir / "state.json",
+            {
+                "version": 0,
+                "status": "initializing",
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "title": "Initializing...",
+                "message": "",
+                "data": {},
+                "actions_requested": [],
+            },
+        )
+        self._write_json(
+            self.data_dir / "actions.json",
+            {
+                "version": 0,
+                "actions": [],
+            },
+        )
 
     def _set_permissions(self) -> None:
         """Restrict file permissions on sensitive contract files."""
@@ -809,8 +813,10 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Init command — sets up .mcp.json + .claude/settings.json in a new project
+# Init command — bootstrap OpenWebGoggles for a specific editor
 # ---------------------------------------------------------------------------
+
+_EDITORS = ["claude", "opencode"]
 
 _MCP_CONFIG = {
     "mcpServers": {
@@ -831,11 +837,20 @@ _CLAUDE_SETTINGS = {
     }
 }
 
+_OPENCODE_CONFIG = {
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+        "openwebgoggles": {
+            "type": "local",
+            "command": ["openwebgoggles"],
+            "enabled": True,
+        }
+    },
+}
 
-def _init_project(target_dir: Path | None = None) -> None:
-    """Set up .mcp.json and .claude/settings.json in a project directory."""
-    root = target_dir or Path.cwd()
 
+def _init_claude(root: Path) -> None:
+    """Set up .mcp.json and .claude/settings.json for Claude Code."""
     # --- .mcp.json ---
     mcp_path = root / ".mcp.json"
     if mcp_path.exists():
@@ -875,6 +890,44 @@ def _init_project(target_dir: Path | None = None) -> None:
     print("\nDone! Restart Claude Code to pick up the new MCP server.")
 
 
+def _init_opencode(root: Path) -> None:
+    """Set up opencode.json for OpenCode."""
+    config_path = root / "opencode.json"
+    if config_path.exists():
+        existing = json.loads(config_path.read_text())
+        mcp_servers = existing.setdefault("mcp", {})
+        if "openwebgoggles" in mcp_servers:
+            print(f"  {config_path}: openwebgoggles already configured, skipping.")
+        else:
+            mcp_servers["openwebgoggles"] = _OPENCODE_CONFIG["mcp"]["openwebgoggles"]
+            config_path.write_text(json.dumps(existing, indent=2) + "\n")
+            print(f"  {config_path}: added openwebgoggles server.")
+    else:
+        config_path.write_text(json.dumps(_OPENCODE_CONFIG, indent=2) + "\n")
+        print(f"  {config_path}: created.")
+
+    print("\nDone! Restart OpenCode to pick up the new MCP server.")
+
+
+def _init_usage() -> None:
+    """Print init subcommand usage."""
+    print("Usage: openwebgoggles init <editor> [target_dir]\n")
+    print("Set up OpenWebGoggles for your editor in two seconds.\n")
+    print("Editors:")
+    print("  claude      Claude Code — creates .mcp.json + .claude/settings.json")
+    print("  opencode    OpenCode — creates opencode.json\n")
+    print("Examples:")
+    print("  openwebgoggles init claude")
+    print("  openwebgoggles init opencode")
+    print("  openwebgoggles init claude /path/to/project")
+
+
+_INIT_DISPATCH = {
+    "claude": _init_claude,
+    "opencode": _init_opencode,
+}
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -884,12 +937,17 @@ def main():
     """Entry point for the openwebgoggles console script.
 
     Usage:
-        openwebgoggles          # Run MCP server (stdio transport)
-        openwebgoggles init     # Set up .mcp.json + .claude/settings.json
+        openwebgoggles                        # Run MCP server (stdio transport)
+        openwebgoggles init <editor> [dir]    # Bootstrap for an editor
     """
     if len(sys.argv) > 1 and sys.argv[1] == "init":
-        target = Path(sys.argv[2]) if len(sys.argv) > 2 else None
-        _init_project(target)
+        if len(sys.argv) < 3 or sys.argv[2] not in _INIT_DISPATCH:
+            _init_usage()
+            return
+
+        editor = sys.argv[2]
+        target = Path(sys.argv[3]) if len(sys.argv) > 3 else Path.cwd()
+        _INIT_DISPATCH[editor](target)
         return
 
     logging.basicConfig(

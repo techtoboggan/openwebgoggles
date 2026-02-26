@@ -19,6 +19,7 @@ Coverage mapping:
     T1557 Adversary-in-Middle  — Ed25519 signatures detect tampering
     T1565 Data Manipulation    — signed payloads detect modification
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -510,9 +511,7 @@ class TestEndToEndSigning:
         action_payload = '{"type":"action","data":{"action_id":"approve_1","type":"approve","value":true}}'
         action_nonce = generate_nonce()
         action_message = (action_nonce + action_payload).encode("utf-8")
-        action_sig = hmac_module.new(
-            session_token.encode(), action_message, hashlib.sha256
-        ).hexdigest()
+        action_sig = hmac_module.new(session_token.encode(), action_message, hashlib.sha256).hexdigest()
 
         # --- Server side: verify browser HMAC ---
         assert verify_hmac(session_token, action_payload, action_nonce, action_sig) is True

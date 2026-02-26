@@ -24,6 +24,7 @@ Coverage mapping:
     T1499 Endpoint DoS               — body size limits
     T1568 Dynamic Resolution         — localhost binding
 """
+
 from __future__ import annotations
 
 import json
@@ -68,12 +69,12 @@ def tmp_data_dir(tmp_path):
 
     # Write a minimal index.html
     (apps_dir / "index.html").write_text(
-        '<!DOCTYPE html><html><head><title>Test</title></head>'
+        "<!DOCTYPE html><html><head><title>Test</title></head>"
         '<body><script src="/sdk/openwebgoggles-sdk.js"></script>'
         '<script>console.log("app")</script></body></html>'
     )
     (apps_dir / "app.js").write_text('console.log("app.js");')
-    (apps_dir / "style.css").write_text('body { color: black; }')
+    (apps_dir / "style.css").write_text("body { color: black; }")
 
     return data_dir
 
@@ -185,32 +186,28 @@ class TestHTTPAuthentication:
     @pytest.mark.asyncio
     async def test_api_wrong_token(self, handler):
         """Wrong bearer token returns 401."""
-        w = await send_request(handler, "GET", "/_api/state",
-                               headers={"authorization": "Bearer wrong_token"})
+        w = await send_request(handler, "GET", "/_api/state", headers={"authorization": "Bearer wrong_token"})
         assert w.status_code == 401
 
     @pytest.mark.owasp_a07
     @pytest.mark.asyncio
     async def test_api_correct_token(self, handler):
         """Correct bearer token returns 200."""
-        w = await send_request(handler, "GET", "/_api/state",
-                               headers={"authorization": "Bearer secret_token_abc"})
+        w = await send_request(handler, "GET", "/_api/state", headers={"authorization": "Bearer secret_token_abc"})
         assert w.status_code == 200
 
     @pytest.mark.owasp_a07
     @pytest.mark.asyncio
     async def test_api_empty_token(self, handler):
         """Empty bearer token returns 401."""
-        w = await send_request(handler, "GET", "/_api/state",
-                               headers={"authorization": "Bearer "})
+        w = await send_request(handler, "GET", "/_api/state", headers={"authorization": "Bearer "})
         assert w.status_code == 401
 
     @pytest.mark.owasp_a07
     @pytest.mark.asyncio
     async def test_api_no_bearer_prefix(self, handler):
         """Token without Bearer prefix returns 401."""
-        w = await send_request(handler, "GET", "/_api/state",
-                               headers={"authorization": "secret_token_abc"})
+        w = await send_request(handler, "GET", "/_api/state", headers={"authorization": "secret_token_abc"})
         assert w.status_code == 401
 
     @pytest.mark.owasp_a07
@@ -236,8 +233,7 @@ class TestHTTPAuthentication:
     @pytest.mark.asyncio
     async def test_authenticated_manifest_has_data(self, handler):
         """Authenticated manifest returns session metadata."""
-        w = await send_request(handler, "GET", "/_api/manifest",
-                               headers={"authorization": "Bearer secret_token_abc"})
+        w = await send_request(handler, "GET", "/_api/manifest", headers={"authorization": "Bearer secret_token_abc"})
         assert w.status_code == 200
 
     @pytest.mark.owasp_a07
@@ -246,11 +242,9 @@ class TestHTTPAuthentication:
     async def test_token_timing_attack_resistance(self, handler):
         """Both correct and incorrect tokens should complete (constant-time check)."""
         # Correct
-        w1 = await send_request(handler, "GET", "/_api/state",
-                                headers={"authorization": "Bearer secret_token_abc"})
+        w1 = await send_request(handler, "GET", "/_api/state", headers={"authorization": "Bearer secret_token_abc"})
         # Incorrect (same length)
-        w2 = await send_request(handler, "GET", "/_api/state",
-                                headers={"authorization": "Bearer secret_token_xyz"})
+        w2 = await send_request(handler, "GET", "/_api/state", headers={"authorization": "Bearer secret_token_xyz"})
         assert w1.status_code == 200
         assert w2.status_code == 401
 
@@ -403,6 +397,7 @@ class TestCSPAndBootstrap:
         csp2 = w2.headers.get("content-security-policy", "")
         # Extract nonces
         import re
+
         nonces1 = re.findall(r"nonce-([a-f0-9]+)", csp1)
         nonces2 = re.findall(r"nonce-([a-f0-9]+)", csp2)
         assert nonces1 and nonces2
@@ -434,7 +429,9 @@ class TestCSPAndBootstrap:
 
         w = await send_request(handler, "GET", "/")
         # The literal </script> should NOT appear unescaped
-        bootstrap_section = w.body.split("window.__OCV__")[1].split("</script>")[0] if "window.__OCV__" in w.body else ""
+        bootstrap_section = (
+            w.body.split("window.__OCV__")[1].split("</script>")[0] if "window.__OCV__" in w.body else ""
+        )
         assert "<\\/script>" in w.body or "</script><script>evil()" not in bootstrap_section
 
     @pytest.mark.owasp_a03
@@ -446,7 +443,11 @@ class TestCSPAndBootstrap:
 
         w = await send_request(handler, "GET", "/")
         # <!-- should be escaped to <\!--
-        assert "<!--" not in w.body.split("window.__OCV__")[1].split("</script>")[0] if "window.__OCV__" in w.body else True
+        assert (
+            "<!--" not in w.body.split("window.__OCV__")[1].split("</script>")[0]
+            if "window.__OCV__" in w.body
+            else True
+        )
 
     @pytest.mark.owasp_a03
     @pytest.mark.asyncio
@@ -454,9 +455,10 @@ class TestCSPAndBootstrap:
         """All <script> tags in the HTML should have the CSP nonce."""
         w = await send_request(handler, "GET", "/")
         import re
-        scripts = re.findall(r'<script[^>]*>', w.body)
+
+        scripts = re.findall(r"<script[^>]*>", w.body)
         for script_tag in scripts:
-            assert 'nonce=' in script_tag, f"Script tag missing nonce: {script_tag}"
+            assert "nonce=" in script_tag, f"Script tag missing nonce: {script_tag}"
 
     @pytest.mark.owasp_a05
     @pytest.mark.asyncio
@@ -502,32 +504,34 @@ class TestAPIEndpoints:
     @pytest.mark.owasp_a01
     @pytest.mark.asyncio
     async def test_unknown_api_returns_404(self, handler):
-        w = await send_request(handler, "GET", "/_api/unknown",
-                               headers={"authorization": "Bearer secret_token_abc"})
+        w = await send_request(handler, "GET", "/_api/unknown", headers={"authorization": "Bearer secret_token_abc"})
         assert w.status_code == 404
 
     @pytest.mark.owasp_a01
     @pytest.mark.asyncio
     async def test_actions_post_invalid_json(self, handler):
-        w = await send_request(handler, "POST", "/_api/actions",
-                               headers={"authorization": "Bearer secret_token_abc"},
-                               body=b"not json")
+        w = await send_request(
+            handler, "POST", "/_api/actions", headers={"authorization": "Bearer secret_token_abc"}, body=b"not json"
+        )
         assert w.status_code == 400
 
     @pytest.mark.owasp_a01
     @pytest.mark.asyncio
     async def test_actions_method_not_allowed(self, handler):
-        w = await send_request(handler, "PATCH", "/_api/actions",
-                               headers={"authorization": "Bearer secret_token_abc"})
+        w = await send_request(handler, "PATCH", "/_api/actions", headers={"authorization": "Bearer secret_token_abc"})
         assert w.status_code == 405
 
     @pytest.mark.owasp_a08
     @pytest.mark.asyncio
     async def test_actions_post_valid(self, handler):
         action = {"action_id": "test_action", "type": "confirm", "value": True}
-        w = await send_request(handler, "POST", "/_api/actions",
-                               headers={"authorization": "Bearer secret_token_abc"},
-                               body=json.dumps(action).encode())
+        w = await send_request(
+            handler,
+            "POST",
+            "/_api/actions",
+            headers={"authorization": "Bearer secret_token_abc"},
+            body=json.dumps(action).encode(),
+        )
         assert w.status_code == 200
         data = w.json_body
         assert len(data["actions"]) >= 1
@@ -535,15 +539,13 @@ class TestAPIEndpoints:
     @pytest.mark.owasp_a08
     @pytest.mark.asyncio
     async def test_actions_delete_clears(self, handler):
-        w = await send_request(handler, "DELETE", "/_api/actions",
-                               headers={"authorization": "Bearer secret_token_abc"})
+        w = await send_request(handler, "DELETE", "/_api/actions", headers={"authorization": "Bearer secret_token_abc"})
         assert w.status_code == 200
 
     @pytest.mark.owasp_a08
     @pytest.mark.asyncio
     async def test_state_returns_current(self, handler):
-        w = await send_request(handler, "GET", "/_api/state",
-                               headers={"authorization": "Bearer secret_token_abc"})
+        w = await send_request(handler, "GET", "/_api/state", headers={"authorization": "Bearer secret_token_abc"})
         assert w.status_code == 200
         data = w.json_body
         assert data["status"] == "ready"
@@ -558,9 +560,13 @@ class TestAPIEndpoints:
         # a full stream to test. Here we test that the action validator catches
         # oversized action values.
         action = {"action_id": "x", "type": "confirm", "value": "A" * 100_001}
-        w = await send_request(handler, "POST", "/_api/actions",
-                               headers={"authorization": "Bearer secret_token_abc"},
-                               body=json.dumps(action).encode())
+        w = await send_request(
+            handler,
+            "POST",
+            "/_api/actions",
+            headers={"authorization": "Bearer secret_token_abc"},
+            body=json.dumps(action).encode(),
+        )
         assert w.status_code == 400
 
 
@@ -767,9 +773,13 @@ class TestSecurityGateIntegration:
     async def test_action_with_invalid_type_rejected(self, handler):
         """Actions with disallowed types are rejected by security gate."""
         action = {"action_id": "x", "type": "execute_code", "value": "rm -rf /"}
-        w = await send_request(handler, "POST", "/_api/actions",
-                               headers={"authorization": "Bearer secret_token_abc"},
-                               body=json.dumps(action).encode())
+        w = await send_request(
+            handler,
+            "POST",
+            "/_api/actions",
+            headers={"authorization": "Bearer secret_token_abc"},
+            body=json.dumps(action).encode(),
+        )
         assert w.status_code == 400
         assert "rejected" in w.json_body.get("error", "").lower()
 
@@ -777,9 +787,13 @@ class TestSecurityGateIntegration:
     @pytest.mark.asyncio
     async def test_action_with_valid_type_accepted(self, handler):
         action = {"action_id": "ok", "type": "confirm", "value": True}
-        w = await send_request(handler, "POST", "/_api/actions",
-                               headers={"authorization": "Bearer secret_token_abc"},
-                               body=json.dumps(action).encode())
+        w = await send_request(
+            handler,
+            "POST",
+            "/_api/actions",
+            headers={"authorization": "Bearer secret_token_abc"},
+            body=json.dumps(action).encode(),
+        )
         assert w.status_code == 200
 
 
@@ -900,14 +914,12 @@ class TestBootstrapEscaping:
             "version": 1,
             "status": "ready",
             "title": "Test",
-            "data": {"msg": '</script><script>alert(1)</script>'},
+            "data": {"msg": "</script><script>alert(1)</script>"},
         }
         (tmp_data_dir / "state.json").write_text(json.dumps(malicious_state))
 
         index = tmp_data_dir / "apps" / "testapp" / "index.html"
-        index.write_text(
-            "<!DOCTYPE html><html><head></head><body></body></html>"
-        )
+        index.write_text("<!DOCTYPE html><html><head></head><body></body></html>")
         manifest = json.loads((tmp_data_dir / "manifest.json").read_text())
 
         writer = MockWriter()
@@ -933,9 +945,7 @@ class TestBootstrapEscaping:
         (tmp_data_dir / "state.json").write_text(json.dumps(malicious_state))
 
         index = tmp_data_dir / "apps" / "testapp" / "index.html"
-        index.write_text(
-            "<!DOCTYPE html><html><head></head><body></body></html>"
-        )
+        index.write_text("<!DOCTYPE html><html><head></head><body></body></html>")
         manifest = json.loads((tmp_data_dir / "manifest.json").read_text())
 
         writer = MockWriter()
@@ -959,9 +969,7 @@ class TestBootstrapEscaping:
         manifest = json.loads((tmp_data_dir / "manifest.json").read_text())
 
         index = tmp_data_dir / "apps" / "testapp" / "index.html"
-        index.write_text(
-            "<!DOCTYPE html><html><head></head><body></body></html>"
-        )
+        index.write_text("<!DOCTYPE html><html><head></head><body></body></html>")
         writer = MockWriter()
         await handler._send_index_with_bootstrap(writer, index, manifest)
         html = writer.response_text
@@ -991,11 +999,13 @@ class TestActionSecurityGateHTTP:
     async def test_unknown_action_type_rejected(self, handler):
         """Actions with disallowed type strings must be rejected with 400."""
         auth = {"authorization": "Bearer secret_token_abc"}
-        bad_action = json.dumps({
-            "action_id": "submit",
-            "type": "evil_unknown_type",
-            "value": True,
-        }).encode()
+        bad_action = json.dumps(
+            {
+                "action_id": "submit",
+                "type": "evil_unknown_type",
+                "value": True,
+            }
+        ).encode()
 
         w = await send_request(handler, "POST", "/_api/actions", headers=auth, body=bad_action)
         assert w.status_code == 400
@@ -1007,10 +1017,12 @@ class TestActionSecurityGateHTTP:
     async def test_missing_action_id_rejected(self, handler):
         """Actions without an action_id must be rejected with 400."""
         auth = {"authorization": "Bearer secret_token_abc"}
-        bad_action = json.dumps({
-            "type": "approve",
-            "value": True,
-        }).encode()
+        bad_action = json.dumps(
+            {
+                "type": "approve",
+                "value": True,
+            }
+        ).encode()
 
         w = await send_request(handler, "POST", "/_api/actions", headers=auth, body=bad_action)
         assert w.status_code == 400
@@ -1021,11 +1033,13 @@ class TestActionSecurityGateHTTP:
     async def test_oversized_value_rejected(self, handler):
         """Actions whose value exceeds 100KB must be rejected with 400 (DoS prevention)."""
         auth = {"authorization": "Bearer secret_token_abc"}
-        big_action = json.dumps({
-            "action_id": "submit",
-            "type": "submit",
-            "value": "x" * 200_000,
-        }).encode()
+        big_action = json.dumps(
+            {
+                "action_id": "submit",
+                "type": "submit",
+                "value": "x" * 200_000,
+            }
+        ).encode()
 
         w = await send_request(handler, "POST", "/_api/actions", headers=auth, body=big_action)
         assert w.status_code == 400
@@ -1036,11 +1050,13 @@ class TestActionSecurityGateHTTP:
     async def test_clean_action_accepted(self, handler):
         """A well-formed action passes validation and returns 200."""
         auth = {"authorization": "Bearer secret_token_abc"}
-        clean_action = json.dumps({
-            "action_id": "approve",
-            "type": "approve",
-            "value": True,
-        }).encode()
+        clean_action = json.dumps(
+            {
+                "action_id": "approve",
+                "type": "approve",
+                "value": True,
+            }
+        ).encode()
 
         w = await send_request(handler, "POST", "/_api/actions", headers=auth, body=clean_action)
         assert w.status_code == 200
@@ -1059,8 +1075,7 @@ class TestInputValidation:
     async def test_non_numeric_since_version_returns_400(self, handler):
         """since_version=abc must return 400, not raise ValueError."""
         auth = {"authorization": "Bearer secret_token_abc"}
-        w = await send_request(handler, "GET", "/_api/state", headers=auth,
-                               query={"since_version": ["abc"]})
+        w = await send_request(handler, "GET", "/_api/state", headers=auth, query={"since_version": ["abc"]})
         assert w.status_code == 400
 
     @pytest.mark.owasp_a03
@@ -1068,8 +1083,7 @@ class TestInputValidation:
     async def test_float_since_version_returns_400(self, handler):
         """since_version=1.5 (float string) must return 400."""
         auth = {"authorization": "Bearer secret_token_abc"}
-        w = await send_request(handler, "GET", "/_api/state", headers=auth,
-                               query={"since_version": ["1.5"]})
+        w = await send_request(handler, "GET", "/_api/state", headers=auth, query={"since_version": ["1.5"]})
         assert w.status_code == 400
 
     @pytest.mark.owasp_a03
@@ -1077,8 +1091,7 @@ class TestInputValidation:
     async def test_valid_since_version_returns_200_or_304(self, handler):
         """since_version=0 (behind current version=1) must return state."""
         auth = {"authorization": "Bearer secret_token_abc"}
-        w = await send_request(handler, "GET", "/_api/state", headers=auth,
-                               query={"since_version": ["0"]})
+        w = await send_request(handler, "GET", "/_api/state", headers=auth, query={"since_version": ["0"]})
         assert w.status_code in (200, 304)
 
     @pytest.mark.owasp_a03
@@ -1092,6 +1105,7 @@ class TestInputValidation:
         """
         import inspect
         from webview_server import WebviewHTTPHandler
+
         src = inspect.getsource(WebviewHTTPHandler.handle_request)
         assert "Invalid Content-Length" in src, "Must reject non-numeric Content-Length"
         assert 'int(headers.get("content-length"' in src or "content_length < 0" in src
@@ -1102,6 +1116,7 @@ class TestInputValidation:
         """Verify the connection handler rejects negative Content-Length values."""
         import inspect
         from webview_server import WebviewHTTPHandler
+
         src = inspect.getsource(WebviewHTTPHandler.handle_request)
         assert "content_length < 0" in src, "Must reject negative Content-Length"
 
@@ -1146,6 +1161,7 @@ class TestTokenTimingSafety:
     def test_check_token_uses_compare_digest(self, handler):
         """Verify _check_token source uses hmac.compare_digest (not ==)."""
         import inspect
+
         src = inspect.getsource(handler._check_token)
         assert "compare_digest" in src, "Must use hmac.compare_digest for constant-time comparison"
         assert "== self.session_token" not in src, "Must not use == for token comparison"
@@ -1170,6 +1186,7 @@ class TestWebSocketActionSecurityGate:
         """Verify the WS action handler source applies SecurityGate.validate_action()."""
         import inspect
         from webview_server import WebviewServer
+
         src = inspect.getsource(WebviewServer._handle_ws)
         assert "validate_action" in src, "WS handler must call SecurityGate.validate_action()"
         assert "HAS_GATE" in src, "WS handler must check HAS_GATE before applying gate"
@@ -1181,6 +1198,7 @@ class TestWebSocketActionSecurityGate:
         """SecurityGate check must precede contract.append_action() in WS handler source."""
         import inspect
         from webview_server import WebviewServer
+
         src = inspect.getsource(WebviewServer._handle_ws)
         gate_pos = src.find("validate_action")
         append_pos = src.find("append_action")
@@ -1194,6 +1212,7 @@ class TestWebSocketActionSecurityGate:
         """Both HTTP and WS action paths must apply rate limiting and SecurityGate."""
         import inspect
         from webview_server import WebviewHTTPHandler, WebviewServer
+
         # Rate limiting and SecurityGate live in _handle_api for HTTP, _handle_ws for WS
         http_src = inspect.getsource(WebviewHTTPHandler._handle_api)
         ws_src = inspect.getsource(WebviewServer._handle_ws)
@@ -1226,6 +1245,7 @@ class TestStaticFilePathTraversalOrder:
         """
         import inspect
         from webview_server import WebviewHTTPHandler
+
         src = inspect.getsource(WebviewHTTPHandler._handle_static)
         # Check the specific identifiers used in the user-controlled path section
         containment_pos = src.find("relative_to(apps_dir_resolved)")
@@ -1242,6 +1262,7 @@ class TestStaticFilePathTraversalOrder:
         """404 error messages must not include the requested path (path disclosure)."""
         import inspect
         from webview_server import WebviewHTTPHandler
+
         src = inspect.getsource(WebviewHTTPHandler._handle_static)
         # File-not-found messages must not embed f-string path values
         assert 'f"File not found: {path}"' not in src, "404 must not include path in message"

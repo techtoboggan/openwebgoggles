@@ -53,19 +53,58 @@ The agent gets back:
 
 Structured data in, structured data out. The browser is just the rendering layer in between.
 
-## Getting Started
+## Quick Start
 
-### MCP (the easy path)
-
-If your agent supports the [Model Context Protocol](https://modelcontextprotocol.io), this is a three-minute setup.
-
-Install:
+Install from PyPI:
 
 ```bash
 pip install openwebgoggles
 ```
 
-Add to your project's `.mcp.json`:
+Then bootstrap for your editor:
+
+### Claude Code
+
+```bash
+openwebgoggles init claude
+```
+
+This creates `.mcp.json` and `.claude/settings.json` with the right permissions. Restart Claude Code and you're live.
+
+### OpenCode
+
+```bash
+openwebgoggles init opencode
+```
+
+This creates `opencode.json` with the MCP server configured. Restart OpenCode and you're live.
+
+### Try It
+
+Tell your agent:
+
+> *"Show me a review UI for these changes and wait for my approval."*
+
+> *"Create a dashboard showing the build progress."*
+
+> *"Walk me through these security findings one at a time with severity dropdowns."*
+
+The agent figures out the JSON schema, calls `webview_ask`, and a panel opens in your browser. You make your decisions, click approve, and the agent continues with your structured response.
+
+### What Gets Installed
+
+Four MCP tools — that's the entire API surface:
+
+| Tool | What it does |
+|------|-------------|
+| `webview_ask(state)` | Show a UI and block until the human responds |
+| `webview_show(state)` | Show a UI without blocking (dashboards, progress) |
+| `webview_read()` | Poll for actions without blocking |
+| `webview_close()` | Close the session |
+
+### Manual Setup
+
+If you'd rather configure things by hand, add to your project's `.mcp.json`:
 
 ```json
 {
@@ -77,20 +116,19 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-Restart your editor. Four tools appear:
+Or for OpenCode, add to `opencode.json`:
 
-| Tool | What it does |
-|------|-------------|
-| `webview_ask(state)` | Show a UI and block until the human responds |
-| `webview_show(state)` | Show a UI without blocking (dashboards, progress) |
-| `webview_read()` | Poll for actions without blocking |
-| `webview_close()` | Close the session |
-
-That's the entire API surface. Tell your agent something like:
-
-> *"Show me a review UI for these changes and wait for my approval."*
-
-The agent figures out the schema, calls `webview_ask`, and you see a panel in your browser. You click approve. The agent continues.
+```json
+{
+  "mcp": {
+    "openwebgoggles": {
+      "type": "local",
+      "command": ["openwebgoggles"],
+      "enabled": true
+    }
+  }
+}
+```
 
 ### Bash Scripts (for shell-based agents)
 

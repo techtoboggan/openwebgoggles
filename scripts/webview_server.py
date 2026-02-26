@@ -8,6 +8,7 @@ for the JSON data contract, and a WebSocket channel for real-time push updates.
 Usage:
     python webview_server.py --data-dir .openwebgoggles --http-port 18420 --ws-port 18421
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,6 +32,7 @@ logger = logging.getLogger("openwebgoggles")
 try:
     import websockets
     import websockets.server
+
     HAS_WEBSOCKETS = True
 except ImportError:
     HAS_WEBSOCKETS = False
@@ -45,6 +47,7 @@ try:
         verify_hmac,
         zero_key,
     )
+
     HAS_CRYPTO = True
 except ImportError:
     HAS_CRYPTO = False
@@ -52,6 +55,7 @@ except ImportError:
 # Security gate for validating agent-generated content
 try:
     from security_gate import SecurityGate
+
     HAS_GATE = True
 except ImportError:
     HAS_GATE = False
@@ -146,7 +150,15 @@ class WebviewHTTPHandler:
 
     MAX_BODY_SIZE = 1_048_576  # 1MB
 
-    def __init__(self, contract: DataContract, apps_dir: Path, sdk_path: Path, session_token: str, http_port: int = 18420, ws_port: int = 18421):
+    def __init__(
+        self,
+        contract: DataContract,
+        apps_dir: Path,
+        sdk_path: Path,
+        session_token: str,
+        http_port: int = 18420,
+        ws_port: int = 18421,
+    ):
         self.contract = contract
         self.apps_dir = apps_dir
         self.sdk_path = sdk_path
@@ -160,6 +172,7 @@ class WebviewHTTPHandler:
 
     async def _broadcast(self, message: dict, exclude=None):
         import json as _json
+
         payload = _json.dumps(message)
         for client in list(self.ws_clients):
             if client == exclude:
@@ -263,11 +276,15 @@ class WebviewHTTPHandler:
     async def _route(self, method: str, path: str, query: dict, headers: dict, body: bytes, writer):
         # Health check — no auth required
         if path == "/_health":
-            await self._send_response(writer, 200, {
-                "status": "ok",
-                "uptime": int(time.time() - self.start_time),
-                "ws_clients": len(self.ws_clients),
-            })
+            await self._send_response(
+                writer,
+                200,
+                {
+                    "status": "ok",
+                    "uptime": int(time.time() - self.start_time),
+                    "ws_clients": len(self.ws_clients),
+                },
+            )
             return
 
         # SDK — no auth required (served as static asset, token is fetched from manifest)
@@ -415,6 +432,7 @@ class WebviewHTTPHandler:
     async def _send_index_with_bootstrap(self, writer, index: Path, manifest: dict):
         """Serve index.html with manifest + initial state injected as window.__OCV__ bootstrap."""
         import secrets as _secrets
+
         html = index.read_text(encoding="utf-8")
         state = self.contract.get_state() or {}
 
@@ -444,7 +462,7 @@ class WebviewHTTPHandler:
 
         # Add nonce to existing script tags in the HTML
         html = html.replace('<script src="', f'<script nonce="{csp_nonce}" src="')
-        html = html.replace('<script>', f'<script nonce="{csp_nonce}">')
+        html = html.replace("<script>", f'<script nonce="{csp_nonce}">')
 
         # Inject just before </head> — falls back to injecting at top of <body> or start of file
         if "</head>" in html:
@@ -548,8 +566,12 @@ class WebviewServer:
             logger.warning("Security gate: Not available. Running without content validation.")
 
         self.http_handler = WebviewHTTPHandler(
-            self.contract, self.apps_dir, self.sdk_path, self.session_token,
-            http_port=self.http_port, ws_port=self.ws_port,
+            self.contract,
+            self.apps_dir,
+            self.sdk_path,
+            self.session_token,
+            http_port=self.http_port,
+            ws_port=self.ws_port,
         )
         self.http_handler.ws_clients = self._ws_clients
         self.http_handler._public_key_hex = self._public_key_hex
@@ -591,7 +613,9 @@ class WebviewServer:
             # Broadcast close to all connected clients so windows self-close
             if self._ws_clients:
                 try:
-                    await self._broadcast({"type": "close", "data": {"message": "Server shutting down.", "delay_ms": 0}})
+                    await self._broadcast(
+                        {"type": "close", "data": {"message": "Server shutting down.", "delay_ms": 0}}
+                    )
                 except Exception:
                     logger.debug("Failed to broadcast shutdown message", exc_info=True)
             # Zero out cryptographic key material
@@ -690,7 +714,9 @@ class WebviewServer:
                 elif msg_type == "action":
                     # Rate limiting for WS actions (shared limiter with HTTP)
                     if not self.http_handler._rate_limiter.check():
-                        await self._send_ws_signed(websocket, {"type": "error", "data": {"message": "Rate limit exceeded"}})
+                        await self._send_ws_signed(
+                            websocket, {"type": "error", "data": {"message": "Rate limit exceeded"}}
+                        )
                         continue
                     action_data = msg.get("data", {})
                     # Validate action through security gate (same validation as HTTP path)
@@ -698,7 +724,9 @@ class WebviewServer:
                         gate = SecurityGate()
                         valid, err = gate.validate_action(action_data)
                         if not valid:
-                            await self._send_ws_signed(websocket, {"type": "error", "data": {"message": f"Action rejected: {err}"}})
+                            await self._send_ws_signed(
+                                websocket, {"type": "error", "data": {"message": f"Action rejected: {err}"}}
+                            )
                             continue
                     self.contract.append_action(action_data)
                     # Notify other clients
@@ -706,10 +734,13 @@ class WebviewServer:
                     await self._broadcast({"type": "actions_updated", "data": actions}, exclude=websocket)
 
                 elif msg_type == "heartbeat":
-                    await self._send_ws_signed(websocket, {
-                        "type": "heartbeat_ack",
-                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    })
+                    await self._send_ws_signed(
+                        websocket,
+                        {
+                            "type": "heartbeat_ack",
+                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        },
+                    )
 
                 elif msg_type == "request_state":
                     state = self.contract.get_state()

@@ -19,6 +19,7 @@ Coverage mapping:
     T1190 Exploit Public-Facing App       — input validation at the gate
     T1565 Data Manipulation               — schema integrity enforcement
 """
+
 from __future__ import annotations
 
 import json
@@ -54,9 +55,7 @@ class TestValidPayloads:
         for ft in gate.ALLOWED_FIELD_TYPES:
             state = {
                 "status": "ready",
-                "data": {"ui": {"sections": [
-                    {"type": "form", "fields": [{"key": "f1", "type": ft, "label": "x"}]}
-                ]}},
+                "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": "f1", "type": ft, "label": "x"}]}]}},
             }
             ok, err, _ = gate.validate_state(json.dumps(state))
             assert ok, f"Field type {ft!r} should be valid: {err}"
@@ -98,13 +97,16 @@ class TestXSSBasicPatterns:
     @pytest.mark.owasp_a03
     @pytest.mark.llm05
     @pytest.mark.mitre_t1059
-    @pytest.mark.parametrize("payload", [
-        '<script>alert(1)</script>',
-        '<SCRIPT>alert(1)</SCRIPT>',
-        '< script >alert(1)</ script >',
-        '<script\n>alert(1)</script>',
-        '<script\t>alert(1)</script>',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "<script>alert(1)</script>",
+            "<SCRIPT>alert(1)</SCRIPT>",
+            "< script >alert(1)</ script >",
+            "<script\n>alert(1)</script>",
+            "<script\t>alert(1)</script>",
+        ],
+    )
     def test_script_tags(self, gate, payload):
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
@@ -112,52 +114,64 @@ class TestXSSBasicPatterns:
         assert "XSS" in err
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        'javascript:alert(1)',
-        'JAVASCRIPT:alert(1)',
-        'javascript :alert(1)',
-        'javascript\t:alert(1)',
-        '  javascript:void(0)',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "javascript:alert(1)",
+            "JAVASCRIPT:alert(1)",
+            "javascript :alert(1)",
+            "javascript\t:alert(1)",
+            "  javascript:void(0)",
+        ],
+    )
     def test_javascript_protocol(self, gate, payload):
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok, f"Should block javascript: protocol: {payload!r}"
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        '<img onerror="alert(1)">',
-        '<div onclick="evil()">',
-        '<body onload="evil()">',
-        '<svg onload="evil()">',
-        '<input onfocus="evil()">',
-        '<a onmouseover="evil()">',
-        '<marquee onstart="evil()">',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '<img onerror="alert(1)">',
+            '<div onclick="evil()">',
+            '<body onload="evil()">',
+            '<svg onload="evil()">',
+            '<input onfocus="evil()">',
+            '<a onmouseover="evil()">',
+            '<marquee onstart="evil()">',
+        ],
+    )
     def test_event_handlers(self, gate, payload):
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok, f"Should block event handler: {payload!r}"
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        '<iframe src="evil.com">',
-        '<IFRAME src="evil.com">',
-        '< iframe src="evil.com">',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '<iframe src="evil.com">',
+            '<IFRAME src="evil.com">',
+            '< iframe src="evil.com">',
+        ],
+    )
     def test_iframe_injection(self, gate, payload):
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok, f"Should block iframe: {payload!r}"
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        '<object data="evil.swf">',
-        '<embed src="evil.swf">',
-        '<form action="evil.com">',
-        '<meta http-equiv="refresh" content="0;url=evil">',
-        '<link rel="stylesheet" href="evil.css">',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '<object data="evil.swf">',
+            '<embed src="evil.swf">',
+            '<form action="evil.com">',
+            '<meta http-equiv="refresh" content="0;url=evil">',
+            '<link rel="stylesheet" href="evil.css">',
+        ],
+    )
     def test_dangerous_elements(self, gate, payload):
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
@@ -172,14 +186,14 @@ class TestXSSBasicPatterns:
 
     @pytest.mark.owasp_a03
     def test_css_expression(self, gate):
-        payload = 'color: expression(alert(1))'
+        payload = "color: expression(alert(1))"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok
 
     @pytest.mark.owasp_a03
     def test_data_uri_html(self, gate):
-        payload = 'data:text/html,<script>alert(1)</script>'
+        payload = "data:text/html,<script>alert(1)</script>"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok
@@ -191,7 +205,7 @@ class TestXSSEncodingBypass:
     @pytest.mark.owasp_a03
     @pytest.mark.llm01
     def test_unicode_escaped_script(self, gate):
-        payload = '\\u003cscript\\u003ealert(1)\\u003c/script\\u003e'
+        payload = "\\u003cscript\\u003ealert(1)\\u003c/script\\u003e"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok, "Unicode-escaped <script> should be caught"
@@ -199,21 +213,21 @@ class TestXSSEncodingBypass:
     @pytest.mark.owasp_a03
     @pytest.mark.llm01
     def test_html_entity_hex_script(self, gate):
-        payload = '&#x3c;script&#x3e;alert(1)'
+        payload = "&#x3c;script&#x3e;alert(1)"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok, "HTML hex entity <script> should be caught"
 
     @pytest.mark.owasp_a03
     def test_html_entity_decimal_script(self, gate):
-        payload = '&#60;script&#62;alert(1)'
+        payload = "&#60;script&#62;alert(1)"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok, "HTML decimal entity <script> should be caught"
 
     @pytest.mark.owasp_a03
     def test_html_entity_zero_padded(self, gate):
-        payload = '&#0000060;script>'
+        payload = "&#0000060;script>"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok, "Zero-padded HTML entity should be caught"
@@ -227,7 +241,7 @@ class TestXSSEncodingBypass:
 
     @pytest.mark.owasp_a03
     def test_mixed_case_script(self, gate):
-        payload = '<ScRiPt>alert(1)</ScRiPt>'
+        payload = "<ScRiPt>alert(1)</ScRiPt>"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok
@@ -242,11 +256,23 @@ class TestXSSAdvancedVectors:
         """XSS hidden deep in a form field value."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "form",
-                "fields": [{"key": "name", "type": "text", "label": "Name",
-                             "value": '<script>steal(document.cookie)</script>'}]
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "form",
+                            "fields": [
+                                {
+                                    "key": "name",
+                                    "type": "text",
+                                    "label": "Name",
+                                    "value": "<script>steal(document.cookie)</script>",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -258,8 +284,7 @@ class TestXSSAdvancedVectors:
         state = {
             "status": "ready",
             "actions_requested": [
-                {"id": "x", "type": "confirm", "label": '<img onerror="alert(1)" src=x>',
-                 "style": "primary"}
+                {"id": "x", "type": "confirm", "label": '<img onerror="alert(1)" src=x>', "style": "primary"}
             ],
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
@@ -271,10 +296,16 @@ class TestXSSAdvancedVectors:
         """XSS in section title."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "text",
-                "title": "Normal <script>evil()</script> Title",
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "text",
+                            "title": "Normal <script>evil()</script> Title",
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -285,11 +316,23 @@ class TestXSSAdvancedVectors:
         """LLM might inject XSS into a field description."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "form",
-                "fields": [{"key": "f1", "type": "text", "label": "x",
-                             "description": '<iframe src="http://evil.com">'}]
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "form",
+                            "fields": [
+                                {
+                                    "key": "f1",
+                                    "type": "text",
+                                    "label": "x",
+                                    "description": '<iframe src="http://evil.com">',
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -300,11 +343,18 @@ class TestXSSAdvancedVectors:
         """LLM might inject into placeholder text."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "form",
-                "fields": [{"key": "f1", "type": "text", "label": "x",
-                             "placeholder": '" onfocus="alert(1)" x="'}]
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "form",
+                            "fields": [
+                                {"key": "f1", "type": "text", "label": "x", "placeholder": '" onfocus="alert(1)" x="'}
+                            ],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -315,13 +365,23 @@ class TestXSSAdvancedVectors:
         """XSS in a select option label."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "form",
-                "fields": [{
-                    "key": "f1", "type": "select", "label": "x",
-                    "options": [{"value": "a", "label": '<script>x()</script>'}]
-                }]
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "form",
+                            "fields": [
+                                {
+                                    "key": "f1",
+                                    "type": "select",
+                                    "label": "x",
+                                    "options": [{"value": "a", "label": "<script>x()</script>"}],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -332,10 +392,7 @@ class TestXSSAdvancedVectors:
         """XSS in items list title."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "items",
-                "items": [{"title": '<embed src="evil.swf">'}]
-            }]}},
+            "data": {"ui": {"sections": [{"type": "items", "items": [{"title": '<embed src="evil.swf">'}]}]}},
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -346,10 +403,9 @@ class TestXSSAdvancedVectors:
         """XSS in items list subtitle."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "items",
-                "items": [{"title": "ok", "subtitle": '<object data="evil">'}]
-            }]}},
+            "data": {
+                "ui": {"sections": [{"type": "items", "items": [{"title": "ok", "subtitle": '<object data="evil">'}]}]}
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -379,15 +435,18 @@ class TestXSSPolyglotVectors:
 
     @pytest.mark.owasp_a03
     @pytest.mark.llm05
-    @pytest.mark.parametrize("payload", [
-        # Classic polyglots
-        "jaVasCript:/*-/*`/*\\`/*'/*\"/**/(/* */oNcLiCk=alert() )//",
-        '"><script>alert(String.fromCharCode(88,83,83))</script>',
-        "'><script>alert(1)</script>",
-        # Event handler in attribute context
-        '" onmouseover="alert(1)" x="',
-        "' onfocus='alert(1)' autofocus='",
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            # Classic polyglots
+            "jaVasCript:/*-/*`/*\\`/*'/*\"/**/(/* */oNcLiCk=alert() )//",
+            '"><script>alert(String.fromCharCode(88,83,83))</script>',
+            "'><script>alert(1)</script>",
+            # Event handler in attribute context
+            '" onmouseover="alert(1)" x="',
+            "' onfocus='alert(1)' autofocus='",
+        ],
+    )
     def test_polyglot_payloads(self, gate, payload):
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
@@ -476,11 +535,8 @@ class TestPayloadSizeLimits:
 
     @pytest.mark.llm10
     def test_too_many_fields(self, gate):
-        fields = [{"key": f"f{i}", "type": "text", "label": f"F{i}"}
-                  for i in range(gate.MAX_FIELDS_PER_SECTION + 1)]
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "form", "fields": fields}
-        ]}}}
+        fields = [{"key": f"f{i}", "type": "text", "label": f"F{i}"} for i in range(gate.MAX_FIELDS_PER_SECTION + 1)]
+        state = {"status": "ready", "data": {"ui": {"sections": [{"type": "form", "fields": fields}]}}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "too many fields" in err.lower()
@@ -488,30 +544,34 @@ class TestPayloadSizeLimits:
     @pytest.mark.llm10
     def test_too_many_items(self, gate):
         items = [{"title": f"item{i}"} for i in range(gate.MAX_ITEMS_PER_SECTION + 1)]
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "items", "items": items}
-        ]}}}
+        state = {"status": "ready", "data": {"ui": {"sections": [{"type": "items", "items": items}]}}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "too many items" in err.lower()
 
     @pytest.mark.llm10
     def test_too_many_options(self, gate):
-        options = [{"value": f"v{i}", "label": f"L{i}"}
-                   for i in range(gate.MAX_OPTIONS_PER_FIELD + 1)]
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "form", "fields": [
-                {"key": "f1", "type": "select", "label": "x", "options": options}
-            ]}
-        ]}}}
+        options = [{"value": f"v{i}", "label": f"L{i}"} for i in range(gate.MAX_OPTIONS_PER_FIELD + 1)]
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "select", "label": "x", "options": options}]}
+                    ]
+                }
+            },
+        }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "too many options" in err.lower()
 
     @pytest.mark.llm10
     def test_too_many_actions(self, gate):
-        actions = [{"id": f"a{i}", "type": "confirm", "label": f"A{i}", "style": "primary"}
-                   for i in range(gate.MAX_ACTIONS + 1)]
+        actions = [
+            {"id": f"a{i}", "type": "confirm", "label": f"A{i}", "style": "primary"}
+            for i in range(gate.MAX_ACTIONS + 1)
+        ]
         state = {"status": "ready", "actions_requested": actions}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -536,20 +596,19 @@ class TestSchemaValidation:
 
     @pytest.mark.owasp_a04
     def test_invalid_section_type_rejected(self, gate):
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "executable", "content": "rm -rf /"}
-        ]}}}
+        state = {"status": "ready", "data": {"ui": {"sections": [{"type": "executable", "content": "rm -rf /"}]}}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "invalid type" in err.lower()
 
     @pytest.mark.owasp_a04
     def test_invalid_field_type_rejected(self, gate):
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "form", "fields": [
-                {"key": "f1", "type": "password", "label": "Secret"}
-            ]}
-        ]}}}
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {"sections": [{"type": "form", "fields": [{"key": "f1", "type": "password", "label": "Secret"}]}]}
+            },
+        }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "invalid" in err.lower()
@@ -557,22 +616,22 @@ class TestSchemaValidation:
     @pytest.mark.owasp_a04
     def test_invalid_field_type_file(self, gate):
         """File input should not be allowed."""
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "form", "fields": [
-                {"key": "f1", "type": "file", "label": "Upload"}
-            ]}
-        ]}}}
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {"sections": [{"type": "form", "fields": [{"key": "f1", "type": "file", "label": "Upload"}]}]}
+            },
+        }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
 
     @pytest.mark.owasp_a04
     def test_invalid_field_type_hidden(self, gate):
         """Hidden input type should not be allowed."""
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "form", "fields": [
-                {"key": "f1", "type": "hidden", "label": "H"}
-            ]}
-        ]}}}
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": "f1", "type": "hidden", "label": "H"}]}]}},
+        }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
 
@@ -586,9 +645,10 @@ class TestSchemaValidation:
 
     @pytest.mark.owasp_a04
     def test_invalid_action_style_rejected(self, gate):
-        state = {"status": "ready", "actions_requested": [
-            {"id": "x", "type": "confirm", "label": "X", "style": "exploit"}
-        ]}
+        state = {
+            "status": "ready",
+            "actions_requested": [{"id": "x", "type": "confirm", "label": "X", "style": "exploit"}],
+        }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "invalid" in err.lower()
@@ -607,12 +667,12 @@ class TestSchemaValidation:
 
     @pytest.mark.owasp_a08
     def test_array_root(self, gate):
-        ok, err, _ = gate.validate_state('[1, 2, 3]')
+        ok, err, _ = gate.validate_state("[1, 2, 3]")
         assert not ok
 
     @pytest.mark.owasp_a08
     def test_null_root(self, gate):
-        ok, err, _ = gate.validate_state('null')
+        ok, err, _ = gate.validate_state("null")
         assert not ok
 
 
@@ -620,39 +680,47 @@ class TestKeyValidation:
     """Field key names must match a strict pattern."""
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("key", [
-        "valid_key",
-        "myField1",
-        "section.field",
-        "field-name",
-        "a",
-        "A1_b2.c3-d4",
-    ])
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "valid_key",
+            "myField1",
+            "section.field",
+            "field-name",
+            "a",
+            "A1_b2.c3-d4",
+        ],
+    )
     def test_valid_keys(self, gate, key):
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "form", "fields": [{"key": key, "type": "text", "label": "x"}]}
-        ]}}}
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": key, "type": "text", "label": "x"}]}]}},
+        }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert ok, f"Key {key!r} should be valid: {err}"
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("key", [
-        "../etc/passwd",
-        "<script>",
-        "key with spaces",
-        "",
-        "_leading_underscore",  # must start with alphanumeric
-        ".leading_dot",
-        "-leading_dash",
-        "key;injection",
-        "key'OR 1=1--",
-        "key\nline",
-        "key\x00null",
-    ])
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "../etc/passwd",
+            "<script>",
+            "key with spaces",
+            "",
+            "_leading_underscore",  # must start with alphanumeric
+            ".leading_dot",
+            "-leading_dash",
+            "key;injection",
+            "key'OR 1=1--",
+            "key\nline",
+            "key\x00null",
+        ],
+    )
     def test_invalid_keys_rejected(self, gate, key):
-        state = {"status": "ready", "data": {"ui": {"sections": [
-            {"type": "form", "fields": [{"key": key, "type": "text", "label": "x"}]}
-        ]}}}
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": key, "type": "text", "label": "x"}]}]}},
+        }
         ok, err, _ = gate.validate_state(json.dumps(state))
         # Empty key is allowed (optional), so skip that case
         if key == "":
@@ -735,10 +803,7 @@ class TestInjectionVectors:
     @pytest.mark.mitre_t1059
     def test_script_injection_via_nested_data(self, gate):
         """Script tag buried in a deeply nested custom data field."""
-        state = {
-            "status": "ready",
-            "data": {"extra": {"deep": {"nested": {"val": "<script>evil()</script>"}}}}
-        }
+        state = {"status": "ready", "data": {"extra": {"deep": {"nested": {"val": "<script>evil()</script>"}}}}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, "Script tag in deep nested data should be caught"
 
@@ -766,11 +831,16 @@ class TestLLMSpecificThreats:
         """LLM generates an onclick handler in a label."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "form",
-                "fields": [{"key": "f1", "type": "text",
-                             "label": 'Enter name" onclick="alert(1)'}]
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "form",
+                            "fields": [{"key": "f1", "type": "text", "label": 'Enter name" onclick="alert(1)'}],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -822,11 +892,17 @@ class TestLLMSpecificThreats:
         state = {
             "status": "ready",
             "title": "Code Review",
-            "data": {"ui": {"sections": [{
-                "type": "text",
-                "content": "Please review this code",
-                "title": '<link rel="import" href="http://evil.com/component.html">',
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "text",
+                            "content": "Please review this code",
+                            "title": '<link rel="import" href="http://evil.com/component.html">',
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -915,17 +991,20 @@ class TestZeroWidthCharDetection:
 
     @pytest.mark.owasp_a03
     @pytest.mark.llm01
-    @pytest.mark.parametrize("char,name", [
-        ("\u200b", "zero-width space"),
-        ("\u200c", "zero-width non-joiner"),
-        ("\u200d", "zero-width joiner"),
-        ("\u200e", "left-to-right mark"),
-        ("\u200f", "right-to-left mark"),
-        ("\ufeff", "zero-width no-break space / BOM"),
-        ("\u00ad", "soft hyphen"),
-        ("\u2060", "word joiner"),
-        ("\u180e", "mongolian vowel separator"),
-    ])
+    @pytest.mark.parametrize(
+        "char,name",
+        [
+            ("\u200b", "zero-width space"),
+            ("\u200c", "zero-width non-joiner"),
+            ("\u200d", "zero-width joiner"),
+            ("\u200e", "left-to-right mark"),
+            ("\u200f", "right-to-left mark"),
+            ("\ufeff", "zero-width no-break space / BOM"),
+            ("\u00ad", "soft hyphen"),
+            ("\u2060", "word joiner"),
+            ("\u180e", "mongolian vowel separator"),
+        ],
+    )
     def test_zero_width_chars_in_string_rejected(self, gate, char, name):
         """Any zero-width character in a string value should be rejected."""
         raw = json.dumps({"status": "ready", "message": f"hello{char}world"})
@@ -964,11 +1043,16 @@ class TestZeroWidthCharDetection:
         """Zero-width chars in nested field values should be caught."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "form",
-                "fields": [{"key": "f1", "type": "text", "label": "x",
-                             "value": "safe\u200btext"}]
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "form",
+                            "fields": [{"key": "f1", "type": "text", "label": "x", "value": "safe\u200btext"}],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -991,11 +1075,14 @@ class TestNewXSSPatterns:
     """Tests for newly added XSS detection patterns."""
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        '<base href="http://evil.com/">',
-        '<BASE href="http://evil.com/">',
-        '< base href="http://evil.com/">',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '<base href="http://evil.com/">',
+            '<BASE href="http://evil.com/">',
+            '< base href="http://evil.com/">',
+        ],
+    )
     def test_base_tag_injection(self, gate, payload):
         """<base> tag can redirect all relative URLs to attacker-controlled domain."""
         raw = json.dumps({"status": "ready", "message": payload})
@@ -1003,11 +1090,14 @@ class TestNewXSSPatterns:
         assert not ok, f"Should block base tag: {payload!r}"
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        '<math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert(1)>',
-        '<math href="javascript:alert(1)">click</math>',
-        '<MATH><mi>test</mi></MATH>',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "<math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert(1)>",
+            '<math href="javascript:alert(1)">click</math>',
+            "<MATH><mi>test</mi></MATH>",
+        ],
+    )
     def test_math_tag_injection(self, gate, payload):
         """MathML can be used for XSS via namespace confusion."""
         raw = json.dumps({"status": "ready", "message": payload})
@@ -1015,11 +1105,14 @@ class TestNewXSSPatterns:
         assert not ok, f"Should block math tag: {payload!r}"
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        '<style>body{background:url("javascript:alert(1)")}</style>',
-        '<STYLE>@import "http://evil.com/evil.css";</STYLE>',
-        '< style>*{display:none}</style>',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '<style>body{background:url("javascript:alert(1)")}</style>',
+            '<STYLE>@import "http://evil.com/evil.css";</STYLE>',
+            "< style>*{display:none}</style>",
+        ],
+    )
     def test_style_tag_injection(self, gate, payload):
         """<style> tag injection can deface UI or exfiltrate data via CSS."""
         raw = json.dumps({"status": "ready", "message": payload})
@@ -1027,11 +1120,14 @@ class TestNewXSSPatterns:
         assert not ok, f"Should block style tag: {payload!r}"
 
     @pytest.mark.owasp_a03
-    @pytest.mark.parametrize("payload", [
-        'vbscript:MsgBox("XSS")',
-        'VBSCRIPT:alert',
-        'vbscript :alert',
-    ])
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            'vbscript:MsgBox("XSS")',
+            "VBSCRIPT:alert",
+            "vbscript :alert",
+        ],
+    )
     def test_vbscript_protocol(self, gate, payload):
         """VBScript protocol handler (IE-specific but worth blocking)."""
         raw = json.dumps({"status": "ready", "message": payload})
@@ -1049,7 +1145,7 @@ class TestNewXSSPatterns:
     @pytest.mark.owasp_a03
     def test_behavior_css_injection(self, gate):
         """IE behavior CSS property can execute HTC components."""
-        payload = 'behavior: url(evil.htc)'
+        payload = "behavior: url(evil.htc)"
         raw = json.dumps({"status": "ready", "message": payload})
         ok, err, _ = gate.validate_state(raw)
         assert not ok

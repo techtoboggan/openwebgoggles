@@ -1,4 +1,5 @@
 """Shared test helpers."""
+
 from __future__ import annotations
 
 import json
@@ -17,16 +18,12 @@ def make_state(overrides: dict | None = None) -> str:
                     {
                         "type": "form",
                         "title": "Info",
-                        "fields": [
-                            {"key": "name", "type": "text", "label": "Name", "value": "Alice"}
-                        ],
+                        "fields": [{"key": "name", "type": "text", "label": "Name", "value": "Alice"}],
                     }
                 ]
             }
         },
-        "actions_requested": [
-            {"id": "ok", "type": "confirm", "label": "OK", "style": "primary"}
-        ],
+        "actions_requested": [{"id": "ok", "type": "confirm", "label": "OK", "style": "primary"}],
     }
     if overrides:
         _deep_merge(state, overrides)

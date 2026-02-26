@@ -30,6 +30,7 @@ Coverage mapping:
     T1557 Adversary-in-the-Middle  — MITM on localhost, proxy injection
     T1565 Data Manipulation        — state/action tampering in transit
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -233,6 +234,7 @@ class TestProcessImpersonation:
         """If a rogue process writes malicious state.json, the security gate
         should catch XSS payloads when the file watcher broadcasts."""
         from security_gate import SecurityGate
+
         gate = SecurityGate()
 
         rogue_state = {
@@ -262,6 +264,7 @@ class TestNetworkIsolation:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server.WebviewServer.start)
         # The asyncio.start_server call should use "127.0.0.1"
         assert '"127.0.0.1"' in source or "'127.0.0.1'" in source
@@ -274,6 +277,7 @@ class TestNetworkIsolation:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server.WebviewServer.start)
         # Count 127.0.0.1 occurrences — should appear for both HTTP and WS
         assert source.count("127.0.0.1") >= 2
@@ -283,11 +287,7 @@ class TestNetworkIsolation:
     def test_no_remote_connect_src_in_csp(self):
         """CSP connect-src must not allow remote WebSocket or HTTP connections."""
         # Verify CSP pattern allows only self + localhost WS
-        csp_template = (
-            "default-src 'none'; "
-            "script-src 'nonce-abc123'; "
-            "connect-src 'self' ws://127.0.0.1:18421; "
-        )
+        csp_template = "default-src 'none'; script-src 'nonce-abc123'; connect-src 'self' ws://127.0.0.1:18421; "
         # Should NOT contain external domains
         assert "ws://*" not in csp_template
         assert "wss://" not in csp_template
@@ -301,6 +301,7 @@ class TestNetworkIsolation:
         import inspect
 
         import webview_server
+
         # Check the SDK connector: should use first-message auth
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
         # Legacy query-param auth exists but should be secondary
@@ -531,12 +532,11 @@ class TestTokenExposure:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server.WebviewServer.__init__)
         # Look for print statements — they should use [:16] truncation for key
         # and should not print session_token directly
-        lines_with_print = [
-            line.strip() for line in source.split("\n") if "print(" in line
-        ]
+        lines_with_print = [line.strip() for line in source.split("\n") if "print(" in line]
         for line in lines_with_print:
             # Token variable should not appear in prints
             assert "self.session_token" not in line, f"Token leaked in log: {line}"
@@ -562,6 +562,7 @@ class TestTokenExposure:
         }
         # Simulate stripping
         import copy
+
         safe = copy.deepcopy(manifest)
         del safe["session"]["token"]
         assert "token" not in safe["session"]
@@ -584,6 +585,7 @@ class TestSupplyChainIntegrity:
         import inspect
 
         import crypto_utils
+
         source = inspect.getsource(crypto_utils)
 
         # Should use PyNaCl for Ed25519
@@ -604,6 +606,7 @@ class TestSupplyChainIntegrity:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server)
         # Remove string literals to avoid false positives
         # Simple check: eval( and exec( should not appear outside strings
@@ -616,6 +619,7 @@ class TestSupplyChainIntegrity:
         import inspect
 
         from security_gate import SecurityGate
+
         source = inspect.getsource(SecurityGate)
         assert "eval(" not in source
         assert "exec(" not in source
@@ -627,6 +631,7 @@ class TestSupplyChainIntegrity:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server)
         assert "pickle" not in source
         assert "marshal" not in source
@@ -648,6 +653,7 @@ class TestWebSocketAuthentication:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
         assert "first_msg" in source or "auth" in source
 
@@ -658,6 +664,7 @@ class TestWebSocketAuthentication:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
         assert "timeout" in source
 
@@ -669,6 +676,7 @@ class TestWebSocketAuthentication:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server.WebviewServer._handle_ws)
         assert "4001" in source
 
@@ -679,6 +687,7 @@ class TestWebSocketAuthentication:
         import inspect
 
         import webview_server
+
         source = inspect.getsource(webview_server.WebviewServer._send_ws_signed)
         assert '"nonce"' in source or "'nonce'" in source
         assert '"sig"' in source or "'sig'" in source
@@ -752,6 +761,7 @@ class TestCrossCuttingSecurity:
         import inspect
 
         import webview_server
+
         start_source = inspect.getsource(webview_server.WebviewServer.start)
         assert "127.0.0.1" in start_source
 
@@ -765,14 +775,17 @@ class TestCrossCuttingSecurity:
 
         # Layer 4: Ed25519
         from crypto_utils import sign_message as sm
+
         assert sm is not None
 
         # Layer 5: HMAC
         from crypto_utils import verify_hmac as vh
+
         assert vh is not None
 
         # Layer 6: Nonce tracking
         from crypto_utils import NonceTracker as NT
+
         assert NT is not None
 
         # Layer 7: CSP
@@ -781,6 +794,7 @@ class TestCrossCuttingSecurity:
 
         # Layer 8: SecurityGate
         from security_gate import SecurityGate as SG
+
         assert SG is not None
 
     @pytest.mark.secure_comms
@@ -790,6 +804,7 @@ class TestCrossCuttingSecurity:
         import inspect
 
         import webview_server
+
         init_source = inspect.getsource(webview_server.WebviewServer.__init__)
         # Private key should be stored in self._private_key (memory)
         assert "_private_key" in init_source
@@ -803,5 +818,6 @@ class TestCrossCuttingSecurity:
         import inspect
 
         import webview_server
+
         start_source = inspect.getsource(webview_server.WebviewServer.start)
         assert "zero_key" in start_source
