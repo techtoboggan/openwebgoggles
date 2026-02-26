@@ -13,11 +13,11 @@ pipx install openwebgoggles
 Then bootstrap for your editor:
 
 ```bash
-openwebgoggles init claude      # Claude Code
-openwebgoggles init opencode    # OpenCode
+openwebgoggles init claude      # Claude Code — project-level (.mcp.json in cwd)
+openwebgoggles init opencode    # OpenCode — global (~/.config/opencode/opencode.json)
 ```
 
-The init command resolves the absolute path to the binary and embeds it in the editor config, so editors don't depend on PATH.
+The init command resolves the absolute path to the binary and embeds it in the editor config, so editors don't depend on PATH. For OpenCode, the default is the global config so the tools are available in every project.
 
 ## MCP Tools (Claude Code / OpenCode)
 

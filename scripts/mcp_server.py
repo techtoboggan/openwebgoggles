@@ -833,6 +833,15 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
 
 _EDITORS = ["claude", "opencode"]
 
+# Default config directories per editor (when user doesn't specify a target).
+# Claude Code uses project-level .mcp.json, so cwd is the right default.
+# OpenCode has a global config at ~/.config/opencode/, which makes more sense
+# as a default since you typically want the MCP server available everywhere.
+_EDITOR_DEFAULT_DIRS: dict[str, Path | None] = {
+    "claude": None,  # None means cwd
+    "opencode": Path.home() / ".config" / "opencode",
+}
+
 
 def _resolve_binary() -> str:
     """Find the absolute path to the openwebgoggles binary.
@@ -912,8 +921,51 @@ def _init_claude(root: Path) -> None:
     print("\nDone! Restart Claude Code to pick up the new MCP server.")
 
 
+def _strip_jsonc_comments(text: str) -> str:
+    """Remove // and /* */ comments from JSONC, preserving strings.
+
+    Uses a simple state machine so that comments inside quoted strings
+    (e.g. ``"https://example.com"``) are left untouched.
+    """
+    result: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        # Inside a string — copy until closing quote
+        if text[i] == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2  # skip escaped char
+                elif text[j] == '"':
+                    j += 1
+                    break
+                else:
+                    j += 1
+            result.append(text[i:j])
+            i = j
+        # Line comment
+        elif text[i : i + 2] == "//":
+            # Skip to end of line
+            end = text.find("\n", i)
+            i = end if end != -1 else n
+        # Block comment
+        elif text[i : i + 2] == "/*":
+            end = text.find("*/", i + 2)
+            i = end + 2 if end != -1 else n
+        else:
+            result.append(text[i])
+            i += 1
+    return "".join(result)
+
+
 def _init_opencode(root: Path) -> None:
-    """Set up opencode.json for OpenCode."""
+    """Set up opencode.json for OpenCode.
+
+    Default target is ~/.config/opencode/ (global config), so the MCP server
+    is available in every project.  Pass a project directory to create a
+    project-specific override instead.
+    """
     root.mkdir(parents=True, exist_ok=True)
     binary = _resolve_binary()
     print(f"  binary: {binary}")
@@ -923,34 +975,59 @@ def _init_opencode(root: Path) -> None:
         "mcp": {"openwebgoggles": server_entry},
     }
 
+    # OpenCode supports both opencode.json and opencode.jsonc.
+    # Detect which one exists; prefer .jsonc if it's the only one,
+    # .json if both exist (higher precedence in OpenCode).
     config_path = root / "opencode.json"
+    jsonc_path = root / "opencode.jsonc"
+
+    if jsonc_path.exists() and not config_path.exists():
+        config_path = jsonc_path
+
     if config_path.exists():
-        existing = json.loads(config_path.read_text())
+        raw = config_path.read_text()
+        # Strip // and /* */ comments for .jsonc files so json.loads works.
+        # Must skip comments inside strings (e.g. "https://...").
+        if config_path.suffix == ".jsonc":
+            raw = _strip_jsonc_comments(raw)
+        existing = json.loads(raw)
         mcp_servers = existing.setdefault("mcp", {})
         if "openwebgoggles" in mcp_servers:
             print(f"  {config_path}: openwebgoggles already configured, skipping.")
         else:
             mcp_servers["openwebgoggles"] = server_entry
+            # Write back as plain JSON (comments are lost, but the config is valid)
             config_path.write_text(json.dumps(existing, indent=2) + "\n")
             print(f"  {config_path}: added openwebgoggles server.")
+            if config_path.suffix == ".jsonc":
+                print("  note: comments were stripped during rewrite (JSON doesn't support comments).")
     else:
         config_path.write_text(json.dumps(opencode_config, indent=2) + "\n")
         print(f"  {config_path}: created.")
 
-    print("\nDone! Restart OpenCode to pick up the new MCP server.")
+    global_dir = Path.home() / ".config" / "opencode"
+    is_global = root.resolve() == global_dir.resolve()
+    if is_global:
+        print("\nDone! This is the global config — OpenWebGoggles will be available in all projects.")
+    else:
+        print(f"\nDone! This is a project-specific config in {root}.")
+    print("Restart OpenCode to pick up the new MCP server.")
 
 
 def _init_usage() -> None:
     """Print init subcommand usage."""
     print("Usage: openwebgoggles init <editor> [target_dir]\n")
-    print("Set up OpenWebGoggles for your editor in two seconds.\n")
+    print("Set up OpenWebGoggles for your editor.\n")
     print("Editors:")
     print("  claude      Claude Code — creates .mcp.json + .claude/settings.json")
-    print("  opencode    OpenCode — creates opencode.json\n")
+    print("              Default target: current directory (project-level)")
+    print("  opencode    OpenCode — creates opencode.json")
+    print("              Default target: ~/.config/opencode/ (global, all projects)\n")
     print("Examples:")
-    print("  openwebgoggles init claude")
-    print("  openwebgoggles init opencode")
-    print("  openwebgoggles init claude /path/to/project")
+    print("  openwebgoggles init claude          # set up current project for Claude Code")
+    print("  openwebgoggles init opencode         # set up OpenCode globally")
+    print("  openwebgoggles init opencode .       # set up OpenCode for this project only")
+    print("  openwebgoggles init claude ~/my-proj # set up a specific project for Claude Code")
 
 
 _INIT_DISPATCH = {
@@ -977,7 +1054,10 @@ def main():
             return
 
         editor = sys.argv[2]
-        target = Path(sys.argv[3]) if len(sys.argv) > 3 else Path.cwd()
+        if len(sys.argv) > 3:
+            target = Path(sys.argv[3])
+        else:
+            target = _EDITOR_DEFAULT_DIRS.get(editor) or Path.cwd()
         _INIT_DISPATCH[editor](target)
         return
 

@@ -88,10 +88,11 @@ Then bootstrap for your editor:
 ### Claude Code
 
 ```bash
+cd your-project
 openwebgoggles init claude
 ```
 
-This creates `.mcp.json` and `.claude/settings.json` with the right permissions. Restart Claude Code and you're live.
+Creates `.mcp.json` and `.claude/settings.json` in your project. Restart Claude Code and you're live. Run this in each project where you want the tools available.
 
 ### OpenCode
 
@@ -99,7 +100,9 @@ This creates `.mcp.json` and `.claude/settings.json` with the right permissions.
 openwebgoggles init opencode
 ```
 
-This creates `opencode.json` with the MCP server configured. Restart OpenCode and you're live.
+Adds to `~/.config/opencode/opencode.json` (global config) — available in every project. Restart OpenCode and you're live.
+
+> To set up a specific project instead: `openwebgoggles init opencode /path/to/project`
 
 ### Try It
 
