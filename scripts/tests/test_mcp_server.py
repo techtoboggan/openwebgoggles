@@ -436,99 +436,115 @@ class TestServerLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# App name security — path traversal prevention
+# Version detection & auto-reload
 # ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# webview_show action stripping
-# ---------------------------------------------------------------------------
+class TestVersionDetection:
+    """Test the installed version detection utilities."""
+
+    def test_get_installed_version_info_returns_tuple(self):
+        """Should return a (version, path) tuple."""
+        from mcp_server import _get_installed_version_info
+
+        version, path = _get_installed_version_info()
+        # Package may or may not be installed in test env
+        assert isinstance(version, str)
+        assert path is None or isinstance(path, Path)
+
+    def test_read_version_fresh_returns_string(self):
+        """Should return a version string (or 'unknown')."""
+        from mcp_server import _read_version_fresh
+
+        version = _read_version_fresh()
+        assert isinstance(version, str)
 
 
-class TestWebviewShowActionStripping:
-    """webview_show must strip action buttons since it's non-blocking.
+class TestTrackToolCall:
+    """Test the _track_tool_call decorator for in-flight call tracking."""
 
-    Only webview_ask (which blocks) should present interactive buttons.
-    This prevents the 'orphaned button' bug where a user clicks a button
-    but the agent has already exited and nobody is polling for the response.
-    """
+    async def test_increments_and_decrements(self):
+        """Counter should be 0 -> 1 -> 0 around a tool call."""
+        import mcp_server
 
-    def test_strips_actions_requested(self, session):
-        """actions_requested should be removed from state before writing."""
-        session.data_dir.mkdir(parents=True, exist_ok=True)
-        session._init_data_contract()
+        original = mcp_server._active_tool_calls
+        mcp_server._active_tool_calls = 0
+        mcp_server._reload_pending = False
 
-        state = {
-            "title": "Test",
-            "actions_requested": [
-                {"id": "approve", "label": "Approve", "type": "approve"},
-            ],
-        }
-        # Simulate what webview_show does: pop actions, then write
-        had_actions = bool(state.pop("actions_requested", None))
-        session.write_state(state)
+        @mcp_server._track_tool_call
+        async def dummy():
+            assert mcp_server._active_tool_calls == 1
+            return {"ok": True}
 
-        assert had_actions is True
-        written = json.loads((session.data_dir / "state.json").read_text())
-        assert "actions_requested" not in written
+        result = await dummy()
+        assert result == {"ok": True}
+        assert mcp_server._active_tool_calls == 0
+        mcp_server._active_tool_calls = original
 
-    def test_strips_data_actions(self, session):
-        """data.actions (alternate location) should also be stripped."""
-        session.data_dir.mkdir(parents=True, exist_ok=True)
-        session._init_data_contract()
+    async def test_decrements_on_exception(self):
+        """Counter should decrement even if the tool raises."""
+        import mcp_server
 
-        state = {
-            "title": "Test",
-            "data": {
-                "sections": [{"type": "text", "content": "Hello"}],
-                "actions": [
-                    {"id": "ok", "label": "OK", "type": "approve"},
-                ],
-            },
-        }
-        had_actions = bool(state.pop("actions_requested", None))
-        data = state.get("data")
-        if isinstance(data, dict):
-            had_actions = bool(data.pop("actions", None)) or had_actions
-        session.write_state(state)
+        mcp_server._active_tool_calls = 0
+        mcp_server._reload_pending = False
 
-        assert had_actions is True
-        written = json.loads((session.data_dir / "state.json").read_text())
-        assert "actions" not in written.get("data", {})
-        # Sections should be preserved
-        assert len(written["data"]["sections"]) == 1
+        @mcp_server._track_tool_call
+        async def boom():
+            raise ValueError("test error")
 
-    def test_no_warning_without_actions(self, session):
-        """State without actions should write normally with no stripping."""
-        session.data_dir.mkdir(parents=True, exist_ok=True)
-        session._init_data_contract()
+        with pytest.raises(ValueError, match="test error"):
+            await boom()
+        assert mcp_server._active_tool_calls == 0
 
-        state = {"title": "Progress", "message": "Step 1 of 3"}
-        had_actions = bool(state.pop("actions_requested", None))
-        session.write_state(state)
+    async def test_rejects_during_reload(self):
+        """Should return error dict when _reload_pending is True."""
+        import mcp_server
 
-        assert had_actions is False
-        written = json.loads((session.data_dir / "state.json").read_text())
-        assert written["title"] == "Progress"
-        assert written["message"] == "Step 1 of 3"
+        mcp_server._reload_pending = True
 
-    def test_ask_preserves_actions(self, session):
-        """webview_ask should NOT strip actions (it blocks and waits)."""
-        session.data_dir.mkdir(parents=True, exist_ok=True)
-        session._init_data_contract()
+        @mcp_server._track_tool_call
+        async def dummy():
+            return {"ok": True}
 
-        state = {
-            "title": "Review",
-            "actions_requested": [
-                {"id": "approve", "label": "Approve", "type": "approve"},
-            ],
-        }
-        # webview_ask writes state directly without stripping
-        session.write_state(state)
+        result = await dummy()
+        assert "error" in result
+        assert "reloading" in result["error"].lower()
+        mcp_server._reload_pending = False
 
-        written = json.loads((session.data_dir / "state.json").read_text())
-        assert "actions_requested" in written
-        assert len(written["actions_requested"]) == 1
+
+class TestExecReload:
+    """Test the _exec_reload function constructs correct arguments."""
+
+    def test_exec_constructs_correct_args(self, monkeypatch):
+        """Should call os.execv with sys.executable and sys.argv."""
+        from mcp_server import _exec_reload
+
+        captured = {}
+
+        def fake_execv(executable, args):
+            captured["executable"] = executable
+            captured["args"] = args
+            raise SystemExit(0)  # Prevent actual exec
+
+        monkeypatch.setattr(os, "execv", fake_execv)
+
+        with pytest.raises(SystemExit):
+            _exec_reload()
+
+        assert captured["executable"] == sys.executable
+        assert captured["args"][0] == sys.executable
+
+
+class TestVersionMonitor:
+    """Test the _version_monitor background task."""
+
+    async def test_exits_when_not_installed(self, monkeypatch):
+        """Monitor should return immediately when package is not pip-installed."""
+        import mcp_server
+
+        monkeypatch.setattr(mcp_server, "_get_installed_version_info", lambda: ("unknown", None))
+        # Should return without error (not hang)
+        await mcp_server._version_monitor()
 
 
 # ---------------------------------------------------------------------------

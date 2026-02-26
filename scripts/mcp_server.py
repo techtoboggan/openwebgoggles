@@ -2,7 +2,7 @@
 """
 OpenWebGoggles MCP Server — exposes browser-based HITL UIs as MCP tools.
 
-Agents call webview_ask() to show an interactive UI and block until the user
+Agents call webview() to show an interactive UI and block until the user
 responds.  The MCP server manages the full lifecycle: data directory setup,
 subprocess launch, browser opening, state updates, and cleanup.
 
@@ -13,6 +13,9 @@ Install & configure:
 
 import asyncio
 import atexit
+import functools
+import importlib
+import importlib.metadata
 import json
 import logging
 import os
@@ -584,10 +587,196 @@ async def _get_session() -> WebviewSession:
         return _session
 
 
+# ---------------------------------------------------------------------------
+# Auto-reload: detect pipx/pip upgrades and restart seamlessly
+# ---------------------------------------------------------------------------
+
+_active_tool_calls: int = 0
+_active_tool_calls_lock = asyncio.Lock()
+_reload_pending: bool = False
+_reload_task: asyncio.Task | None = None
+_RELOAD_CHECK_INTERVAL = 30  # seconds
+
+
+def _get_installed_version_info() -> tuple[str, Path | None]:
+    """Return (version_string, dist_info_path) for the installed package.
+
+    Returns ("unknown", None) when running from source without pip install.
+    """
+    try:
+        dist = importlib.metadata.distribution("openwebgoggles")
+        version = dist.metadata["Version"]
+        dist_path = getattr(dist, "_path", None)
+        if dist_path is not None:
+            dist_path = Path(dist_path)
+        return (version, dist_path)
+    except importlib.metadata.PackageNotFoundError:
+        return ("unknown", None)
+
+
+def _read_version_fresh() -> str:
+    """Read installed version bypassing importlib caches (Python 3.12+)."""
+    importlib.invalidate_caches()
+    try:
+        dist = importlib.metadata.distribution("openwebgoggles")
+        return dist.metadata["Version"]
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _exec_reload() -> None:
+    """Replace the current process with a fresh interpreter via os.execv.
+
+    On Unix this is seamless — same PID, same stdin/stdout/stderr pipes.
+    The MCP client never sees a disconnect.
+    """
+    executable = sys.executable
+    args = [executable] + sys.argv
+
+    logger.info("Reloading: exec %s %s", executable, " ".join(sys.argv))
+
+    if platform.system() == "Windows":
+        logger.warning("Windows does not support in-place exec. The MCP client will need to restart the server.")
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(executable, args)  # noqa: S606 — intentional self-restart
+
+
+async def _version_monitor() -> None:
+    """Background task: poll for package version changes and exec to reload.
+
+    Two-tier detection: cheap mtime check every 30s, full version read only
+    when the dist-info directory changes.
+    """
+    global _reload_pending
+
+    startup_version, dist_info_path = _get_installed_version_info()
+    if startup_version == "unknown":
+        logger.info("Package not installed via pip — version monitor disabled.")
+        return
+
+    logger.info("Version monitor started: v%s", startup_version)
+
+    last_mtime: float | None = None
+    if dist_info_path and dist_info_path.is_dir():
+        try:
+            last_mtime = dist_info_path.stat().st_mtime
+        except OSError:
+            pass
+
+    while True:
+        await asyncio.sleep(_RELOAD_CHECK_INTERVAL)
+
+        try:
+            # Tier 1: cheap mtime check
+            mtime_changed = False
+            if dist_info_path is not None:
+                try:
+                    current_mtime = dist_info_path.stat().st_mtime
+                    if last_mtime is not None and current_mtime != last_mtime:
+                        mtime_changed = True
+                    last_mtime = current_mtime
+                except OSError:
+                    # Directory gone — package is being upgraded
+                    mtime_changed = True
+            else:
+                mtime_changed = True
+
+            if not mtime_changed:
+                continue
+
+            # Tier 2: full version read (only after mtime change)
+            current_version = _read_version_fresh()
+
+            if current_version == "unknown":
+                # Package temporarily missing during upgrade — retry next cycle
+                dist_info_path = None
+                last_mtime = None
+                continue
+
+            if current_version == startup_version:
+                # Mtime changed but same version — update path in case it moved
+                _, dist_info_path = _get_installed_version_info()
+                if dist_info_path and dist_info_path.is_dir():
+                    last_mtime = dist_info_path.stat().st_mtime
+                continue
+
+            # Version changed — trigger reload
+            logger.info(
+                "Package updated: %s -> %s — reloading server",
+                startup_version,
+                current_version,
+            )
+            _reload_pending = True
+
+            # Wait for in-flight tool calls to drain (up to 60s)
+            drain_deadline = time.monotonic() + 60
+            while time.monotonic() < drain_deadline:
+                async with _active_tool_calls_lock:
+                    if _active_tool_calls == 0:
+                        break
+                await asyncio.sleep(1)
+
+            # Close webview session gracefully
+            global _session
+            if _session is not None:
+                try:
+                    await _session.close(message="Server reloading (package updated).")
+                except Exception:
+                    pass
+                _session = None
+
+            _exec_reload()
+
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("Version monitor error (will retry)")
+
+
+def _track_tool_call(fn):  # type: ignore[no-untyped-def]
+    """Decorator: track in-flight tool calls for safe reload."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        global _active_tool_calls
+        if _reload_pending:
+            return {"error": "Server is reloading after a package update. Please retry in a moment."}
+        async with _active_tool_calls_lock:
+            _active_tool_calls += 1
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            async with _active_tool_calls_lock:
+                _active_tool_calls -= 1
+
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
+# MCP Lifespan
+# ---------------------------------------------------------------------------
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP):
-    """MCP server lifecycle: clean up webview on shutdown."""
+    """MCP server lifecycle: version monitor on start, cleanup on shutdown."""
+    global _reload_task
+    _reload_task = asyncio.create_task(_version_monitor())
+
     yield
+
+    # Cancel version monitor
+    if _reload_task is not None:
+        _reload_task.cancel()
+        try:
+            await _reload_task
+        except asyncio.CancelledError:
+            pass
+        _reload_task = None
+
+    # Clean up webview session
     global _session
     if _session is not None:
         try:
@@ -604,7 +793,7 @@ Browser-based HITL UIs for CLI agents. Show interactive webviews and collect use
 
 ## When to use these tools
 
-Use webview_ask instead of plain text or AskUserQuestion when ANY of these apply:
+Use webview instead of plain text or AskUserQuestion when ANY of these apply:
 
 - **Multiple items to review**: Lists of PRs, issues, findings, migrations, configs, etc. \
 where the user needs to act on each one (approve/reject/edit/skip).
@@ -612,8 +801,8 @@ where the user needs to act on each one (approve/reject/edit/skip).
 fields, checkboxes, or multi-field input.
 - **Structured data review**: Tables, key-value pairs, nested objects, or arrays where \
 visual layout helps comprehension.
-- **Multi-step workflows**: Wizards, sequential approvals, or processes where you update \
-the UI between steps (use webview_show for progress, webview_ask for decision points).
+- **Multi-step workflows**: Wizards, sequential approvals, or processes where you call \
+webview repeatedly for each step.
 - **Batch operations**: When the user needs to triage, categorize, or make choices across \
 many items at once.
 - **Rich context alongside a decision**: When showing code diffs, logs, configs, or \
@@ -628,10 +817,10 @@ When the user needs to review/decide on multiple items (issues, PRs, findings, c
 migrations, etc.), ALWAYS present them **one at a time** as a step-by-step wizard. \
 NEVER dump all items into a single long scrolling page.
 
-For N items, call webview_ask N times in sequence:
+For N items, call webview N times in sequence:
 - Show "Item 1 of N" with context + form for that item
 - Collect the response, then show "Item 2 of N", etc.
-- After the last item, show a summary with webview_show, then webview_close
+- After the last item, show a summary and call webview_close
 
 Each step should show:
 1. An "items" section with just the current item (title + subtitle)
@@ -642,7 +831,7 @@ Each step should show:
 
 Example — step 1 of a 3-item wizard:
 ```
-webview_ask({
+webview({
   "title": "Issue Triage",
   "message": "Issue 1 of 3",
   "status": "pending_review",
@@ -665,14 +854,14 @@ webview_ask({
 })
 ```
 
-Then call webview_ask again for item 2, then 3, etc. Collect all responses, \
-then show a summary and close.
+Then call webview again for item 2, then 3, etc. Collect all responses, \
+then show a summary and call webview_close.
 
 ## Quick patterns
 
 **Single item review or form input**:
 ```
-webview_ask({
+webview({
   "title": "Configuration",
   "data": {"sections": [
     {"type": "form", "fields": [
@@ -684,29 +873,23 @@ webview_ask({
   "actions_requested": [{"id": "submit", "label": "Submit", "type": "approve"}]
 })
 ```
-
-**Progress update (non-blocking)**:
-```
-webview_show({"title": "Processing", "status": "in_progress", "message": "Step 1 of 3..."})
-# ... do work ...
-webview_ask({"title": "Review Results", "status": "pending_review", ...})
-```
 """,
     lifespan=lifespan,
 )
 
 
 @mcp.tool()
-async def webview_ask(
+@_track_tool_call
+async def webview(
     state: dict[str, Any],
     timeout: int = 300,
     app: str = "dynamic",
 ) -> dict[str, Any]:
     """Show an interactive webview UI and wait for the user to respond.
 
-    This is the primary tool for human-in-the-loop interactions and the ONLY
-    way to present action buttons to the user. Pass a state object describing
-    the UI and this tool blocks until the user clicks an action button.
+    This is the primary tool for human-in-the-loop interactions. Pass a state
+    object describing the UI and this tool blocks until the user clicks an
+    action button.
 
     The state object schema:
       - title (str): Header title
@@ -733,7 +916,7 @@ async def webview_ask(
       - value: Collected form data (dict) or boolean
 
     Example:
-        result = webview_ask({
+        result = webview({
             "title": "Code Review",
             "message": "Please review these changes.",
             "data": {
@@ -751,7 +934,7 @@ async def webview_ask(
         })
 
     Example — review a list of items with per-item actions:
-        result = webview_ask({
+        result = webview({
             "title": "PR Triage",
             "message": "Review these pull requests.",
             "data": {"sections": [
@@ -788,58 +971,12 @@ async def webview_ask(
 
 
 @mcp.tool()
-async def webview_show(
-    state: dict[str, Any],
-    app: str = "dynamic",
-) -> dict[str, Any]:
-    """Show or update a webview UI without waiting for a response.
-
-    Use this for dashboards, progress displays, or multi-step workflows where
-    you want to update what the user sees without blocking.
-
-    Same state schema as webview_ask. The webview opens automatically on
-    first call; subsequent calls update the displayed content in real-time.
-
-    IMPORTANT: Action buttons (actions_requested) are automatically stripped.
-    This tool is non-blocking — the agent would never receive button clicks.
-    Use webview_ask() for any interactive UI that needs user responses.
-    webview_show should always be followed by webview_ask or webview_close.
-    """
-    session = await _get_session()
-    try:
-        await session.ensure_started(app)
-    except Exception as e:
-        return {"error": f"Failed to start webview: {e}"}
-
-    # Strip action buttons — webview_show is non-blocking so nobody would
-    # be polling for the response.  Use webview_ask for interactive UIs.
-    had_actions = bool(state.pop("actions_requested", None))
-    data = state.get("data")
-    if isinstance(data, dict):
-        had_actions = bool(data.pop("actions", None)) or had_actions
-
-    session.write_state(state)
-
-    result: dict[str, Any] = {
-        "status": "ok",
-        "url": session.url,
-        "message": "Webview updated.",
-    }
-    if had_actions:
-        result["warning"] = (
-            "actions_requested were stripped — webview_show is non-blocking "
-            "so the agent would never receive the response. "
-            "Use webview_ask() for interactive UIs with buttons."
-        )
-    return result
-
-
-@mcp.tool()
+@_track_tool_call
 async def webview_read(clear: bool = False) -> dict[str, Any]:
     """Read the current user actions from the webview.
 
-    Use after webview_show() to check if the user has responded (polling
-    pattern). Returns the actions array, or an empty array if no response yet.
+    Use after webview() to check if the user has responded (polling pattern).
+    Returns the actions array, or an empty array if no response yet.
 
     Set clear=True to clear actions after reading so the next read starts fresh.
     """
@@ -855,6 +992,7 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_track_tool_call
 async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
     """Close the webview session and stop the server.
 
