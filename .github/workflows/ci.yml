@@ -30,6 +30,11 @@ jobs:
       - name: Lint
         run: ruff check scripts/
 
+      - name: Audit dependencies
+        run: |
+          pip install pip-audit
+          pip-audit --strict --desc on
+
       - name: Run tests
         run: python -m pytest scripts/tests/ -v
 

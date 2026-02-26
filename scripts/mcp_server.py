@@ -203,7 +203,7 @@ class WebviewSession:
                     },
                     method="POST",
                 )
-                urllib.request.urlopen(req, timeout=3)
+                urllib.request.urlopen(req, timeout=3)  # nosec B310 — localhost-only health check
             except Exception:
                 pass
 
@@ -370,7 +370,7 @@ class WebviewSession:
             if self.process and self.process.poll() is not None:
                 return False
             try:
-                with urllib.request.urlopen(url, timeout=2) as resp:
+                with urllib.request.urlopen(url, timeout=2) as resp:  # nosec B310 — localhost-only
                     if resp.status == 200:
                         return True
             except (urllib.error.URLError, OSError, TimeoutError):
