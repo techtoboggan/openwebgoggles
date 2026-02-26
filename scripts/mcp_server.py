@@ -36,7 +36,26 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+# Lazy-guard: init subcommands don't need mcp — let them work even when
+# the mcp library is missing, broken, or has version conflicts.
+_mcp_import_error: Exception | None = None
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception as exc:
+    _mcp_import_error = exc
+
+    class FastMCP:  # type: ignore[no-redef]
+        """Stub so module-level decorators don't crash when mcp can't load."""
+
+        def __init__(self, *a: Any, **kw: Any) -> None:
+            pass
+
+        def tool(self, *a: Any, **kw: Any):  # noqa: ANN201
+            def _decorator(fn):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202
+                return fn
+
+            return _decorator
+
 
 logger = logging.getLogger("openwebgoggles")
 
@@ -851,6 +870,7 @@ _OPENCODE_CONFIG = {
 
 def _init_claude(root: Path) -> None:
     """Set up .mcp.json and .claude/settings.json for Claude Code."""
+    root.mkdir(parents=True, exist_ok=True)
     # --- .mcp.json ---
     mcp_path = root / ".mcp.json"
     if mcp_path.exists():
@@ -892,6 +912,7 @@ def _init_claude(root: Path) -> None:
 
 def _init_opencode(root: Path) -> None:
     """Set up opencode.json for OpenCode."""
+    root.mkdir(parents=True, exist_ok=True)
     config_path = root / "opencode.json"
     if config_path.exists():
         existing = json.loads(config_path.read_text())
@@ -949,6 +970,12 @@ def main():
         target = Path(sys.argv[3]) if len(sys.argv) > 3 else Path.cwd()
         _INIT_DISPATCH[editor](target)
         return
+
+    # Init commands don't need mcp, but the server does.
+    if _mcp_import_error is not None:
+        print(f"Error: failed to load mcp library: {_mcp_import_error}", file=sys.stderr)
+        print("Install with: pip install openwebgoggles", file=sys.stderr)
+        sys.exit(1)
 
     logging.basicConfig(
         level=logging.INFO,
