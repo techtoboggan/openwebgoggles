@@ -12,9 +12,44 @@ Agent ←→ OpenWebGoggles Server ←→ Browser UI ←→ Human
 
 *"The goggles — they do everything."*
 
-## What This Actually Looks Like
+## The Big Use Case: Review Before You Commit
 
-Here's a concrete example. Your agent finishes a security audit and has 12 findings to triage. Without OpenWebGoggles, it dumps them into the terminal and asks you to type `approve` or `reject` twelve times. With OpenWebGoggles, it opens a tabbed wizard in your browser — one finding per screen, editable severity dropdowns, analyst notes, a progress bar — and reads back your structured decisions when you're done.
+Your agent just finished a round of work — refactored the auth module, updated three API endpoints, added tests. Before it commits, it opens a review UI in your browser that groups the changes by category and shows you what changed and why:
+
+```json
+{
+  "title": "Pre-Commit Review",
+  "message": "### 3 categories of changes across 8 files\nReview each category and approve or request changes.",
+  "message_format": "markdown",
+  "status": "pending_review",
+  "data": {
+    "sections": [
+      { "type": "text", "title": "Auth Refactor (4 files)", "format": "markdown",
+        "content": "Replaced session-based auth with JWT tokens.\n\n- `auth.py` — new `create_token()` / `verify_token()` functions\n- `middleware.py` — swapped session lookup for token validation\n- `login.py` / `logout.py` — updated to issue/revoke JWTs" },
+      { "type": "text", "title": "API Updates (2 files)", "format": "markdown",
+        "content": "Updated `/users` and `/settings` to use new auth middleware.\n\n- Response codes unchanged, no breaking changes" },
+      { "type": "text", "title": "Tests (2 files)", "format": "markdown",
+        "content": "Added 14 tests for token lifecycle. All passing." },
+      { "type": "form", "fields": [
+        { "key": "feedback", "label": "Notes (optional)", "type": "textarea",
+          "placeholder": "Anything you want changed before committing?" }
+      ]}
+    ]
+  },
+  "actions_requested": [
+    { "id": "approve", "type": "approve", "label": "Commit & Push" },
+    { "id": "revise", "type": "reject", "label": "Request Changes" }
+  ]
+}
+```
+
+You see the summary, scan the categories, and either approve or type "the logout endpoint should also clear the cookie" and hit Request Changes. The agent gets your structured response and acts on it. No scrolling through `git diff` in a terminal.
+
+This pattern works as a pre-commit checkpoint, a PR summary review, or any time an agent wants sign-off before taking an irreversible action.
+
+## More Examples
+
+Here's another example — a security audit where the agent has 12 findings to triage. Without OpenWebGoggles, it dumps them into the terminal and asks you to type `approve` or `reject` twelve times. With OpenWebGoggles, it opens a tabbed wizard in your browser — one finding per screen, editable severity dropdowns, analyst notes, a progress bar — and reads back your structured decisions when you're done.
 
 The agent doesn't need to know HTML. It writes a JSON object describing what it wants to show, and the built-in dynamic renderer handles the rest:
 
@@ -114,16 +149,15 @@ Tell your agent:
 
 > *"Walk me through these security findings one at a time with severity dropdowns."*
 
-The agent figures out the JSON schema, calls `webview_ask`, and a panel opens in your browser. You make your decisions, click approve, and the agent continues with your structured response.
+The agent figures out the JSON schema, calls `webview`, and a panel opens in your browser. You make your decisions, click approve, and the agent continues with your structured response.
 
 ### What Gets Installed
 
-Four MCP tools — that's the entire API surface:
+Three MCP tools — that's the entire API surface:
 
 | Tool | What it does |
 |------|-------------|
-| `webview_ask(state)` | Show a UI and block until the human responds |
-| `webview_show(state)` | Show a UI without blocking (dashboards, progress) |
+| `webview(state)` | Show a UI and block until the human responds |
 | `webview_read()` | Poll for actions without blocking |
 | `webview_close()` | Close the session |
 
@@ -247,9 +281,11 @@ These aren't toy demos. They're functional interfaces that handle real workflows
 
 **Single approval.** Agent shows a summary, human clicks approve or reject. The simplest case, and probably the most common.
 
-**Multi-step wizard.** For N items that need review, show one at a time. The agent calls `webview_ask` in a loop, advancing to the next item after each response. This avoids overwhelming the user with a wall of decisions.
+**Pre-commit change review.** This is the killer use case. Your agent finishes a round of changes — refactoring, feature work, security hardening — and before it commits, it opens a review UI that summarizes *what changed and why*, grouped by category. You see the diffs, the rationale, and approve or ask questions right in the browser. Think of it as a pre-commit checklist where the agent is the one presenting and you're the one signing off. Way faster than scrolling through a terminal dump of `git diff`, and you get structured feedback back to the agent if something needs to change.
 
-**Live dashboard.** Agent calls `webview_show` (non-blocking) to display progress, then updates state periodically. Useful for long-running operations where the human wants visibility but doesn't need to act.
+**Multi-step wizard.** For N items that need review, show one at a time. The agent calls `webview` in a loop, advancing to the next item after each response. This avoids overwhelming the user with a wall of decisions.
+
+**Live dashboard.** Agent calls `webview` to display progress, then uses `webview_read` to check for user actions periodically. Useful for long-running operations where the human wants visibility but may occasionally need to act.
 
 **Batch triage.** Show all items at once with per-item actions — tabs, cards, or a list with inline controls. Works well when the total count is under 10 or so.
 
@@ -269,7 +305,7 @@ Nine defense layers enforce this, all enabled by default:
 - **SecurityGate** — 22 XSS patterns, zero-width character detection, schema validation
 - **Rate limiting** — 30 actions per minute per session
 
-All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 471 tests.
+All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 541 tests.
 
 The tradeoff is real, though. This level of defense adds complexity to the codebase. If you're running in a fully trusted local environment and want to understand what each layer does, the [security tests](scripts/tests/) are the best documentation.
 

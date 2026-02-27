@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-27
+
+### Added
+
+- **MCP keep-alive progress notifications** — `webview()` now sends progress pings every 10 seconds during the blocking wait, preventing MCP client -32001 timeout errors
+- Pre-commit change review use case documented in README as the headline workflow pattern
+- 541 tests (up from 471), covering all new security hardening
+
+### Fixed
+
+- **H1**: Removed all inline event handlers from example apps (CSP compliance) — full DOM API rewrite of approval-review and security-qa apps
+- **H2**: SDK fail-closed — unsigned WS messages are dropped instead of sent in plaintext
+- **H3**: Server rejects unsigned WS envelopes when crypto is enabled
+- **H4**: HMAC fallback returns empty verify key instead of leaking the symmetric secret as a "public key"
+- **H5**: `start_webview.sh` copies all SDK files, not just the primary one
+- **H6**: CI workflows use least-privilege permissions (`contents: read`)
+- **M1**: SDK enforces state version monotonicity (rejects downgrades)
+- **M2**: Nonce tracker aggressive prune at capacity before hard-rejecting all messages
+- **M3**: SecurityGate singleton per handler instead of per-request instantiation
+- **M4**: App directory name validation blocks path traversal in manifest entries
+- **M5**: XSS patterns extended for `srcdoc` and `xlink:href` injection vectors
+- **L1**: Template app uses DOM API instead of `innerHTML`
+- **L2**: SDK periodic nonce pruning timer on WS connect/disconnect
+- **L3**: Close message length limited to 500 characters
+
+### Changed
+
+- README updated: stale `webview_ask`/`webview_show` references replaced with current `webview` API
+- `actions/upload-artifact` bumped from 6.0.0 to 7.0.0
+- `actions/download-artifact` bumped from 6.0.0 to 8.0.0
+
+## [0.6.0] - 2026-02-26
+
+### Added
+
+- Opt-in markdown rendering via DOMPurify sanitization for message and text section content
+- `message_format` and section-level `format` fields — set to `"markdown"` to enable rich rendering
+
+## [0.5.0] - 2026-02-26
+
+### Changed
+
+- **Breaking:** Removed `webview_show` — use `webview` + `webview_read` for non-blocking patterns
+- **Breaking:** Renamed `webview_ask` → `webview` — single blocking tool for all interactive UIs
+- Added auto-reload: server watches `state.json` for changes and pushes updates to the browser in real time
+
+## [0.4.3] - 2026-02-26
+
+### Fixed
+
+- Stripped action buttons from `webview_show` responses to prevent orphaned interactions that could never be read
+
+## [0.4.2] - 2026-02-26
+
+### Fixed
+
+- 53 code review findings across security, correctness, and cross-platform compatibility
+
 ## [0.4.1] - 2026-02-25
 
 ### Fixed

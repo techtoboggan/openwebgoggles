@@ -1378,3 +1378,77 @@ class TestCloseMessageLimits:
         auth = {"authorization": "Bearer secret_token_abc"}
         w = await send_request(handler, "POST", "/_api/close", headers=auth, body=b"{}")
         assert w.status_code == 200
+
+
+class TestWaitForActionProgress:
+    """Verify wait_for_action calls the progress callback to keep MCP alive."""
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_fires_during_wait(self, tmp_path):
+        """on_progress callback should fire at least once during a wait."""
+        from mcp_server import WebviewSession
+
+        session = WebviewSession.__new__(WebviewSession)
+        session.data_dir = tmp_path
+        session.POLL_INTERVAL = 0.05
+        session.PROGRESS_INTERVAL = 0.1
+
+        actions_path = tmp_path / "actions.json"
+        actions_path.write_text('{"version": 0, "actions": []}')
+
+        calls: list[tuple[float, float]] = []
+
+        async def _on_progress(elapsed: float, total: float) -> None:
+            calls.append((elapsed, total))
+            # Simulate user responding after first progress ping
+            actions_path.write_text('{"version": 1, "actions": [{"action_id": "ok"}]}')
+
+        result = await session.wait_for_action(timeout=5.0, on_progress=_on_progress)
+        assert result is not None
+        assert result["actions"][0]["action_id"] == "ok"
+        assert len(calls) >= 1
+        assert calls[0][1] == 5.0  # total should be the timeout
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_exception_does_not_break_wait(self, tmp_path):
+        """If on_progress raises, wait_for_action should continue polling."""
+        from mcp_server import WebviewSession
+
+        session = WebviewSession.__new__(WebviewSession)
+        session.data_dir = tmp_path
+        session.POLL_INTERVAL = 0.05
+        session.PROGRESS_INTERVAL = 0.1
+
+        actions_path = tmp_path / "actions.json"
+        actions_path.write_text('{"version": 0, "actions": []}')
+
+        error_count = 0
+
+        async def _bad_progress(elapsed: float, total: float) -> None:
+            nonlocal error_count
+            error_count += 1
+            if error_count <= 2:
+                raise RuntimeError("progress boom")
+            # Third call: write action so wait completes
+            actions_path.write_text('{"version": 1, "actions": [{"action_id": "done"}]}')
+
+        result = await session.wait_for_action(timeout=5.0, on_progress=_bad_progress)
+        assert result is not None
+        assert error_count >= 2  # survived at least 2 exceptions
+
+    @pytest.mark.asyncio
+    async def test_no_progress_callback_still_works(self, tmp_path):
+        """wait_for_action without on_progress should work as before."""
+        from mcp_server import WebviewSession
+
+        session = WebviewSession.__new__(WebviewSession)
+        session.data_dir = tmp_path
+        session.POLL_INTERVAL = 0.05
+        session.PROGRESS_INTERVAL = 0.1
+
+        actions_path = tmp_path / "actions.json"
+        actions_path.write_text('{"version": 1, "actions": [{"action_id": "immediate"}]}')
+
+        result = await session.wait_for_action(timeout=1.0)
+        assert result is not None
+        assert result["actions"][0]["action_id"] == "immediate"

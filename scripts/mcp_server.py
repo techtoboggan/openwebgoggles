@@ -39,9 +39,15 @@ from typing import Any
 # the mcp library is missing, broken, or has version conflicts.
 _mcp_import_error: Exception | None = None
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp import Context, FastMCP
 except Exception as exc:
     _mcp_import_error = exc
+
+    class Context:  # type: ignore[no-redef]
+        """Stub so type hints don't crash when mcp can't load."""
+
+        async def report_progress(self, *a: Any, **kw: Any) -> None:
+            pass
 
     class FastMCP:  # type: ignore[no-redef]
         """Stub so module-level decorators don't crash when mcp can't load."""
@@ -71,6 +77,7 @@ class WebviewSession:
     MAX_PORT_ATTEMPTS = 10
     HEALTH_TIMEOUT = 15.0
     POLL_INTERVAL = 0.5
+    PROGRESS_INTERVAL = 10.0
 
     def __init__(self, work_dir: Path | None = None, open_browser: bool = True):
         self.work_dir = work_dir or Path.cwd()
@@ -177,10 +184,23 @@ class WebviewSession:
         """Reset actions.json to empty."""
         self._write_json(self.data_dir / "actions.json", {"version": 0, "actions": []})
 
-    async def wait_for_action(self, timeout: float = 300.0) -> dict[str, Any] | None:
-        """Poll actions.json until a user action appears, or timeout."""
+    async def wait_for_action(
+        self,
+        timeout: float = 300.0,
+        on_progress: Any | None = None,
+    ) -> dict[str, Any] | None:
+        """Poll actions.json until a user action appears, or timeout.
+
+        Args:
+            timeout: Maximum seconds to wait.
+            on_progress: Optional ``async callable(elapsed, total)`` invoked
+                every :pyattr:`PROGRESS_INTERVAL` seconds to keep the MCP
+                connection alive (prevents client-side -32001 timeouts).
+        """
         actions_path = self.data_dir / "actions.json"
-        deadline = time.monotonic() + timeout
+        start = time.monotonic()
+        deadline = start + timeout
+        last_progress = start
 
         while time.monotonic() < deadline:
             try:
@@ -189,6 +209,16 @@ class WebviewSession:
                     return data
             except (FileNotFoundError, json.JSONDecodeError):
                 pass
+
+            now = time.monotonic()
+            if on_progress and (now - last_progress) >= self.PROGRESS_INTERVAL:
+                elapsed = now - start
+                try:
+                    await on_progress(elapsed, timeout)
+                except Exception:
+                    pass  # Never let progress reporting break the wait loop
+                last_progress = now
+
             await asyncio.sleep(self.POLL_INTERVAL)
 
         return None
@@ -904,6 +934,7 @@ async def webview(
     state: dict[str, Any],
     timeout: int = 300,
     app: str = "dynamic",
+    ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Show an interactive webview UI and wait for the user to respond.
 
@@ -985,7 +1016,14 @@ async def webview(
     session.clear_actions()
     session.write_state(state)
 
-    result = await session.wait_for_action(timeout=float(timeout))
+    async def _report_progress(elapsed: float, total: float) -> None:
+        if ctx is not None:
+            await ctx.report_progress(elapsed, total, message="Waiting for user response…")
+
+    result = await session.wait_for_action(
+        timeout=float(timeout),
+        on_progress=_report_progress,
+    )
     if result is None:
         return {"error": "Timeout waiting for user response", "timeout_seconds": timeout}
 
