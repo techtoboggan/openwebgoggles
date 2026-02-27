@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# Detect Python (prefer venv over system)
+# shellcheck source=_detect_python.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_detect_python.sh"
+
 DATA_DIR=".openwebgoggles"
 STATE_FILE="$DATA_DIR/state.json"
 JSON_INPUT=""
@@ -40,7 +44,7 @@ if [[ -z "$JSON_INPUT" ]]; then
 fi
 
 # Validate JSON via stdin to avoid argv length limits
-if ! echo "$JSON_INPUT" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+if ! echo "$JSON_INPUT" | "$PYTHON" -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
     echo "Error: Invalid JSON" >&2
     exit 1
 fi
@@ -51,11 +55,11 @@ mkdir -p "$DATA_DIR"
 # Atomic write: write to temp file, then rename
 TMP_FILE="${STATE_FILE}.tmp"
 trap "rm -f \"$TMP_FILE\"" EXIT ERR
-echo "$JSON_INPUT" | python3 -c "
+echo "$JSON_INPUT" | "$PYTHON" -c "
 import json, sys
 data = json.load(sys.stdin)
 print(json.dumps(data, indent=2))
 " > "$TMP_FILE"
 
 mv "$TMP_FILE" "$STATE_FILE"
-echo "State written (version: $(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('version','?'))" "$STATE_FILE"))"
+echo "State written (version: $("$PYTHON" -c "import json,sys; print(json.loads(open(sys.argv[1]).read()).get('version','?'))" "$STATE_FILE"))"

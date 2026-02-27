@@ -8,6 +8,10 @@
 
 set -euo pipefail
 
+# Detect Python (prefer venv over system)
+# shellcheck source=_detect_python.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_detect_python.sh"
+
 DATA_DIR=".openwebgoggles"
 CLEAR=false
 COUNT_ONLY=false
@@ -29,14 +33,14 @@ if [[ ! -f "$ACTIONS_FILE" ]]; then
 fi
 
 if [[ "$COUNT_ONLY" == "true" ]]; then
-    python3 -c "import json,sys; data=json.load(open(sys.argv[1])); print(len(data.get('actions',[])))" "$ACTIONS_FILE"
+    "$PYTHON" -c "import json,sys; data=json.load(open(sys.argv[1])); print(len(data.get('actions',[])))" "$ACTIONS_FILE"
     exit 0
 fi
 
 # Print current actions and optionally clear atomically
 if [[ "$CLEAR" == "true" ]]; then
     # Read and clear in a single Python process to minimize the race window
-    python3 -c "
+    "$PYTHON" -c "
 import json, sys, os
 path = sys.argv[1]
 with open(path) as f:

@@ -100,10 +100,37 @@ if [[ -d "$SDK_DIR" ]]; then
 fi
 SDK_PATH="$SDK_DIR/openwebgoggles-sdk.js"
 
-# Generate session token
-SESSION_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-CREATED_AT=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))")
+# --- Python environment via uv ---
+VENV_DIR="$SKILL_DIR/scripts/.venv"
+PYTHON="$VENV_DIR/bin/python"
+REQUIREMENTS="$SKILL_DIR/scripts/requirements.txt"
+
+if command -v uv > /dev/null 2>&1; then
+    # Create venv if it doesn't exist
+    if [[ ! -f "$PYTHON" ]]; then
+        echo "Creating Python venv with uv..."
+        uv venv "$VENV_DIR" --quiet
+    fi
+    # Sync dependencies (fast no-op if already installed)
+    uv pip install --quiet --python "$PYTHON" -r "$REQUIREMENTS"
+else
+    # uv not available — fall back to system python3 with pip
+    echo "Warning: uv not found. Using system python3 (consider installing uv for isolation)."
+    PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo '')"
+    if [[ -z "$PYTHON" ]]; then
+        echo "Error: No Python found. Install uv or python3."
+        exit 1
+    fi
+    "$PYTHON" -c "import websockets" 2>/dev/null || {
+        "$PYTHON" -m pip install --quiet websockets || \
+            echo "Warning: Could not install websockets. Running HTTP-only mode."
+    }
+fi
+
+# Generate session credentials (using the venv Python)
+SESSION_TOKEN=$("$PYTHON" -c "import secrets; print(secrets.token_hex(32))")
+SESSION_ID=$("$PYTHON" -c "import uuid; print(uuid.uuid4())")
+CREATED_AT=$("$PYTHON" -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))")
 
 # Write manifest.json
 cat > "$DATA_DIR/manifest.json" << MANIFEST_EOF
@@ -157,33 +184,6 @@ chmod 0700 "$DATA_DIR"
 chmod 0600 "$DATA_DIR/manifest.json"
 chmod 0600 "$DATA_DIR/state.json" 2>/dev/null || true
 chmod 0600 "$DATA_DIR/actions.json" 2>/dev/null || true
-
-# --- Python environment via uv ---
-VENV_DIR="$SKILL_DIR/scripts/.venv"
-PYTHON="$VENV_DIR/bin/python"
-REQUIREMENTS="$SKILL_DIR/scripts/requirements.txt"
-
-if command -v uv > /dev/null 2>&1; then
-    # Create venv if it doesn't exist
-    if [[ ! -f "$PYTHON" ]]; then
-        echo "Creating Python venv with uv..."
-        uv venv "$VENV_DIR" --quiet
-    fi
-    # Sync dependencies (fast no-op if already installed)
-    uv pip install --quiet --python "$PYTHON" -r "$REQUIREMENTS"
-else
-    # uv not available — fall back to system python3 with pip
-    echo "Warning: uv not found. Using system python3 (consider installing uv for isolation)."
-    PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo '')"
-    if [[ -z "$PYTHON" ]]; then
-        echo "Error: No Python found. Install uv or python3."
-        exit 1
-    fi
-    "$PYTHON" -c "import websockets" 2>/dev/null || {
-        "$PYTHON" -m pip install --quiet websockets || \
-            echo "Warning: Could not install websockets. Running HTTP-only mode."
-    }
-fi
 
 # Start the server in the background (token passed via env, never on disk)
 echo "Starting webview server on http://127.0.0.1:$HTTP_PORT..."

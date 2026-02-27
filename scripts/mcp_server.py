@@ -92,6 +92,110 @@ class WebviewSession:
         self._open_browser_on_start: bool = open_browser
         self._chrome_process: subprocess.Popen | None = None
         self._chrome_profile: str | None = None
+        self._lock_fd: int | None = None  # flock file descriptor
+
+    # -- Singleton enforcement -----------------------------------------------
+
+    def _kill_stale_server(self) -> None:
+        """Check for a stale webview server from a previous session and kill it.
+
+        This handles the case where a prior MCP server process crashed without
+        cleaning up its webview subprocess, or where the editor spawned multiple
+        MCP server processes that each launched a webview.
+        """
+        pid_file = self.data_dir / ".server.pid"
+        if not pid_file.exists():
+            return
+
+        try:
+            raw = pid_file.read_text().strip()
+            if not raw.isdigit():
+                pid_file.unlink(missing_ok=True)
+                return
+            pid = int(raw)
+        except (OSError, ValueError):
+            return
+
+        # Don't kill our own subprocess
+        if self.process and self.process.pid == pid:
+            return
+
+        # Check if the PID is alive and is actually a Python/webview process
+        try:
+            os.kill(pid, 0)  # Signal 0 = existence check, doesn't kill
+        except OSError:
+            # Process doesn't exist — stale PID file
+            logger.info("Removing stale PID file (pid=%d no longer running).", pid)
+            pid_file.unlink(missing_ok=True)
+            return
+
+        # PID is alive — kill it
+        logger.warning("Killing stale webview server (pid=%d) from previous session.", pid)
+        try:
+            os.kill(pid, 15)  # SIGTERM
+            # Give it a moment to exit gracefully
+            for _ in range(10):
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.5)
+                except OSError:
+                    break
+            else:
+                # Still alive after 5s — force kill
+                try:
+                    os.kill(pid, 9)  # SIGKILL
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        pid_file.unlink(missing_ok=True)
+
+    def _acquire_lock(self) -> None:
+        """Acquire an exclusive flock on .server.lock to prevent concurrent starts.
+
+        Uses non-blocking flock so a second MCP server instance immediately
+        detects that a lock is held, cleans up the stale process, then retries.
+        """
+        import fcntl
+
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = self.data_dir / ".server.lock"
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # Lock held by another process — kill stale server and retry
+            logger.warning("Lock held by another process — cleaning up stale server.")
+            os.close(fd)
+            self._kill_stale_server()
+            # Retry with blocking lock (short timeout via the loop below)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+            for _attempt in range(6):  # ~3 seconds
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    time.sleep(0.5)
+            else:
+                os.close(fd)
+                raise RuntimeError("Cannot acquire webview lock — another instance may be running")
+        self._lock_fd = fd
+        # Write our PID into the lock file for debugging
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, str(os.getpid()).encode())
+
+    def _release_lock(self) -> None:
+        """Release the flock and close the lock file descriptor."""
+        import fcntl
+
+        if self._lock_fd is not None:
+            try:
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                os.close(self._lock_fd)
+            except OSError:
+                pass
+            self._lock_fd = None
 
     # -- Public API ---------------------------------------------------------
 
@@ -105,8 +209,11 @@ class WebviewSession:
             logger.warning("Webview subprocess died — restarting.")
             self._cleanup_process()
 
-        # Setup
+        # Singleton enforcement: kill stale servers, acquire exclusive lock
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._kill_stale_server()
+        self._acquire_lock()
+
         (self.data_dir / "apps").mkdir(exist_ok=True)
 
         self._copy_app(app)
@@ -574,19 +681,18 @@ class WebviewSession:
         tmp.replace(path)
 
     def _cleanup_process(self) -> None:
-        """Kill subprocess if running."""
-        if self.process is None:
-            return
-        try:
-            self.process.terminate()
+        """Kill subprocess if running and release the server lock."""
+        if self.process is not None:
             try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=2)
-        except Exception:
-            pass
-        self.process = None
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=2)
+            except Exception:
+                pass
+            self.process = None
 
         # Remove PID file
         pid_file = self.data_dir / ".server.pid"
@@ -595,6 +701,9 @@ class WebviewSession:
                 pid_file.unlink()
             except OSError:
                 pass
+
+        # Release the flock so the next session can start cleanly
+        self._release_lock()
 
     def _atexit_cleanup(self) -> None:
         """Safety net: kill subprocess and Chrome on interpreter exit."""

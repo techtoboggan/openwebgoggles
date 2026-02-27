@@ -13,6 +13,10 @@
 
 set -euo pipefail
 
+# Detect Python (prefer venv over system)
+# shellcheck source=_detect_python.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_detect_python.sh"
+
 DATA_DIR=".openwebgoggles"
 TIMEOUT=0  # 0 = no timeout
 ACTION_TYPE=""
@@ -46,7 +50,7 @@ START_TIME=$(date +%s)
 while true; do
     if [[ -f "$ACTIONS_FILE" ]]; then
         # Check if there are any actions (optionally filtered by type)
-        RESULT=$(python3 - "$ACTIONS_FILE" "$ACTION_TYPE" <<'PYEOF' 2>/dev/null || echo ""
+        RESULT=$("$PYTHON" - "$ACTIONS_FILE" "$ACTION_TYPE" <<'PYEOF' 2>/dev/null || echo ""
 import json, sys
 
 with open(sys.argv[1]) as f:

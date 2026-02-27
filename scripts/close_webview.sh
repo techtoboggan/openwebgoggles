@@ -14,6 +14,10 @@
 
 set -euo pipefail
 
+# Detect Python (prefer venv over system)
+# shellcheck source=_detect_python.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_detect_python.sh"
+
 DATA_DIR=".openwebgoggles"
 CLOSE_MESSAGE="Session complete."
 DELAY_MS=1500
@@ -35,18 +39,18 @@ fi
 
 # 1. Notify connected browser clients via the API (they'll self-close after delay)
 if [[ -f "$DATA_DIR/manifest.json" ]]; then
-    TOKEN=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['session']['token'])" "$DATA_DIR/manifest.json" 2>/dev/null || echo "")
-    HTTP_PORT=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['server']['http_port'])" "$DATA_DIR/manifest.json" 2>/dev/null || echo "18420")
+    TOKEN=$("$PYTHON" -c "import json,sys; print(json.load(open(sys.argv[1]))['session']['token'])" "$DATA_DIR/manifest.json" 2>/dev/null || echo "")
+    HTTP_PORT=$("$PYTHON" -c "import json,sys; print(json.load(open(sys.argv[1]))['server']['http_port'])" "$DATA_DIR/manifest.json" 2>/dev/null || echo "18420")
 
     if [[ -n "$TOKEN" ]]; then
-        PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'message': sys.argv[1], 'delay_ms': int(sys.argv[2])}))" "$CLOSE_MESSAGE" "$DELAY_MS")
+        PAYLOAD=$("$PYTHON" -c "import json,sys; print(json.dumps({'message': sys.argv[1], 'delay_ms': int(sys.argv[2])}))" "$CLOSE_MESSAGE" "$DELAY_MS")
         # Use --config with process substitution to keep token out of ps output
         RESPONSE=$(curl --config <(printf 'header = "Authorization: Bearer %s"\n' "$TOKEN") \
             -s -X POST "http://127.0.0.1:$HTTP_PORT/_api/close" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" 2>/dev/null || echo "")
         if [[ -n "$RESPONSE" ]]; then
-            CLIENTS=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('clients_notified',0))" 2>/dev/null || echo "0")
+            CLIENTS=$(echo "$RESPONSE" | "$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('clients_notified',0))" 2>/dev/null || echo "0")
             echo "Close message sent to $CLIENTS connected client(s)."
         fi
     fi
@@ -54,7 +58,7 @@ fi
 
 # 2. Wait for the delay so clients have time to self-close gracefully
 if [[ $DELAY_MS -gt 0 ]]; then
-    WAIT_SECS=$(python3 -c "import sys; print(float(sys.argv[1]) / 1000 + 0.5)" "$DELAY_MS")
+    WAIT_SECS=$("$PYTHON" -c "import sys; print(float(sys.argv[1]) / 1000 + 0.5)" "$DELAY_MS")
     sleep "$WAIT_SECS"
 fi
 
