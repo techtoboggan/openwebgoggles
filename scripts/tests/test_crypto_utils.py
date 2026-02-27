@@ -551,3 +551,83 @@ class TestEndToEndSigning:
         # MITM tampers
         tampered = '{"type":"action","data":{"action_id":"submit","type":"delete","value":{}}}'
         assert verify_hmac(session_token, tampered, nonce, sig) is False
+
+
+class TestHMACFallbackKeys:
+    """Tests for HMAC fallback key generation when PyNaCl is unavailable (H4 hardening)."""
+
+    @pytest.mark.owasp_a02
+    def test_hmac_fallback_returns_empty_verify_hex(self):
+        """When PyNaCl is absent, verify_hex must be empty string (not a fake public key)."""
+        import unittest.mock
+
+        with unittest.mock.patch("crypto_utils._lazy_nacl", return_value=None):
+            priv, pub, verify = generate_session_keys()
+            assert isinstance(priv, bytes)
+            assert len(priv) == 32  # HMAC key is 32-byte SHA256 digest
+            assert pub == "", "HMAC fallback must return empty public key"
+            assert verify == "", "HMAC fallback must return empty verify key"
+
+    @pytest.mark.owasp_a02
+    def test_hmac_fallback_key_is_derived(self):
+        """HMAC fallback key should be derived from random seed, not the seed itself."""
+        import unittest.mock
+
+        with unittest.mock.patch("crypto_utils._lazy_nacl", return_value=None):
+            priv1, _, _ = generate_session_keys()
+            priv2, _, _ = generate_session_keys()
+            assert priv1 != priv2, "Each call should produce a unique HMAC key"
+
+    @pytest.mark.owasp_a02
+    def test_hmac_fallback_signing_still_works(self):
+        """HMAC-only mode should still produce valid signatures."""
+        import unittest.mock
+
+        with unittest.mock.patch("crypto_utils._lazy_nacl", return_value=None):
+            priv, _, _ = generate_session_keys()
+            sig = sign_message(priv, "test-payload", "test-nonce")
+            assert isinstance(sig, str)
+            assert len(sig) == 64  # HMAC-SHA256 produces 32 bytes = 64 hex chars
+
+
+class TestNonceTrackerCapacity:
+    """Tests for NonceTracker capacity handling (M2 hardening)."""
+
+    @pytest.mark.owasp_a05
+    def test_aggressive_prune_at_capacity(self):
+        """When at MAX_NONCE_COUNT, aggressive prune with halved window should free space."""
+        tracker = NonceTracker(window_seconds=10)
+        now = time.time()
+        # Fill to capacity with nonces from 6 seconds ago (within full window, outside half-window)
+        for i in range(tracker.MAX_NONCE_COUNT):
+            tracker._seen[f"nonce-{i}"] = now - 6  # 6s ago (within 10s window, but outside 5s half-window)
+
+        # The next check_and_record should trigger aggressive prune and succeed
+        result = tracker.check_and_record("fresh-nonce")
+        assert result is True, "Should succeed after aggressive prune frees space"
+        assert "fresh-nonce" in tracker._seen
+
+    @pytest.mark.owasp_a05
+    def test_capacity_hard_reject_when_all_recent(self):
+        """When ALL nonces are very recent, even aggressive prune can't free space."""
+        tracker = NonceTracker(window_seconds=10)
+        now = time.time()
+        # Fill to capacity with nonces from just now
+        for i in range(tracker.MAX_NONCE_COUNT):
+            tracker._seen[f"nonce-{i}"] = now
+
+        result = tracker.check_and_record("fresh-nonce")
+        assert result is False, "Should reject when no nonces can be pruned"
+
+    @pytest.mark.owasp_a05
+    def test_nonce_tracker_prune_with_window_override(self):
+        """_prune with window_override should use the overridden window."""
+        tracker = NonceTracker(window_seconds=60)
+        now = time.time()
+        tracker._seen["old"] = now - 20  # 20s ago
+        tracker._seen["recent"] = now - 5  # 5s ago
+
+        # Prune with 10s override window should remove 'old' but keep 'recent'
+        tracker._prune(now, window_override=10)
+        assert "old" not in tracker._seen
+        assert "recent" in tracker._seen

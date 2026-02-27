@@ -3,6 +3,8 @@
  *
  * A rich code review UI for approving/rejecting proposed changes.
  * Renders diffs, file summaries, and provides approve/reject/feedback actions.
+ *
+ * Uses addEventListener (CSP-safe) instead of inline event handlers.
  */
 (function () {
   "use strict";
@@ -45,7 +47,11 @@
       if (state) renderState(state);
     })
     .catch(function (err) {
-      els.loading.innerHTML = '<p class="error">Failed to connect: ' + err.message + "</p>";
+      els.loading.textContent = "";
+      var p = document.createElement("p");
+      p.className = "error";
+      p.textContent = "Failed to connect: " + err.message;
+      els.loading.appendChild(p);
     });
 
   wv.onStateUpdate(function (state) {
@@ -73,7 +79,11 @@
     }
 
     if (state.status === "processing") {
-      els.actionsArea.innerHTML = '<p class="muted">Agent is processing your response...</p>';
+      els.actionsArea.textContent = "";
+      var p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "Agent is processing your response...";
+      els.actionsArea.appendChild(p);
       return;
     }
 
@@ -86,61 +96,103 @@
   }
 
   function renderMessage(message) {
+    els.messageArea.textContent = "";
     if (message) {
-      els.messageArea.innerHTML = '<div class="message">' + escapeHtml(message) + "</div>";
-    } else {
-      els.messageArea.innerHTML = "";
+      var div = document.createElement("div");
+      div.className = "message";
+      div.textContent = message;
+      els.messageArea.appendChild(div);
     }
   }
 
   function renderFiles(data) {
     var files = data.files_changed || data.files || [];
     if (files.length === 0) {
-      els.filesArea.innerHTML = "";
+      els.filesArea.textContent = "";
       return;
     }
 
-    var html = '<div class="files-list">';
+    var container = document.createElement("div");
+    container.className = "files-list";
+
     files.forEach(function (file, index) {
-      html += '<div class="file-card">';
-      html += '<div class="file-header" onclick="toggleFile(' + index + ')">';
-      html += '<span class="file-icon">&#128196;</span>';
-      html += '<span class="file-path">' + escapeHtml(file.path || file.name || "unknown") + "</span>";
+      var card = document.createElement("div");
+      card.className = "file-card";
+
+      // File header (clickable to toggle diff)
+      var header = document.createElement("div");
+      header.className = "file-header";
+      header.setAttribute("data-file-index", index);
+
+      var icon = document.createElement("span");
+      icon.className = "file-icon";
+      icon.innerHTML = "&#128196;";
+      header.appendChild(icon);
+
+      var path = document.createElement("span");
+      path.className = "file-path";
+      path.textContent = file.path || file.name || "unknown";
+      header.appendChild(path);
+
       if (file.summary) {
-        html += '<span class="file-summary">' + escapeHtml(file.summary) + "</span>";
+        var summary = document.createElement("span");
+        summary.className = "file-summary";
+        summary.textContent = file.summary;
+        header.appendChild(summary);
       }
-      html += '<span class="file-toggle" id="toggle-' + index + '">&#9660;</span>';
-      html += "</div>";
 
+      var toggle = document.createElement("span");
+      toggle.className = "file-toggle";
+      toggle.id = "toggle-" + index;
+      toggle.innerHTML = "&#9660;";
+      header.appendChild(toggle);
+
+      card.appendChild(header);
+
+      // Diff content
       if (file.diff) {
-        html += '<div class="file-diff" id="diff-' + index + '">';
-        html += renderDiff(file.diff);
-        html += "</div>";
+        var diffEl = document.createElement("div");
+        diffEl.className = "file-diff";
+        diffEl.id = "diff-" + index;
+        diffEl.appendChild(buildDiffView(file.diff));
+        card.appendChild(diffEl);
       } else if (file.content) {
-        html += '<div class="file-diff" id="diff-' + index + '">';
-        html += '<pre class="diff-content">' + escapeHtml(file.content) + "</pre>";
-        html += "</div>";
+        var diffEl2 = document.createElement("div");
+        diffEl2.className = "file-diff";
+        diffEl2.id = "diff-" + index;
+        var pre = document.createElement("pre");
+        pre.className = "diff-content";
+        pre.textContent = file.content;
+        diffEl2.appendChild(pre);
+        card.appendChild(diffEl2);
       }
 
-      html += "</div>";
+      container.appendChild(card);
     });
-    html += "</div>";
-    els.filesArea.innerHTML = html;
+
+    els.filesArea.textContent = "";
+    els.filesArea.appendChild(container);
+    bindFileEvents();
   }
 
-  function renderDiff(diffText) {
+  function buildDiffView(diffText) {
     var lines = diffText.split("\n");
-    var html = '<div class="diff-view">';
+    var view = document.createElement("div");
+    view.className = "diff-view";
+
     lines.forEach(function (line) {
+      var el = document.createElement("div");
       var cls = "diff-line";
       if (line.startsWith("+") && !line.startsWith("+++")) cls += " diff-add";
       else if (line.startsWith("-") && !line.startsWith("---")) cls += " diff-remove";
       else if (line.startsWith("@@")) cls += " diff-hunk";
       else if (line.startsWith("diff ") || line.startsWith("index ")) cls += " diff-meta";
-      html += '<div class="' + cls + '">' + escapeHtml(line) + "</div>";
+      el.className = cls;
+      el.textContent = line;
+      view.appendChild(el);
     });
-    html += "</div>";
-    return html;
+
+    return view;
   }
 
   function renderSummary(data) {
@@ -149,57 +201,97 @@
     if (data.total_lines_added !== undefined) parts.push("+" + data.total_lines_added);
     if (data.total_lines_removed !== undefined) parts.push("-" + data.total_lines_removed);
 
+    els.summaryArea.textContent = "";
     if (parts.length > 0) {
-      els.summaryArea.innerHTML =
-        '<div class="summary-bar">' +
-        '<span class="summary-stats">' + parts.join(" &middot; ") + "</span>" +
-        "</div>";
-    } else {
-      els.summaryArea.innerHTML = "";
+      var bar = document.createElement("div");
+      bar.className = "summary-bar";
+      var stats = document.createElement("span");
+      stats.className = "summary-stats";
+      stats.textContent = parts.join(" \u00B7 ");
+      bar.appendChild(stats);
+      els.summaryArea.appendChild(bar);
     }
   }
 
   function renderActions(actions) {
+    els.actionsArea.textContent = "";
     if (actions.length === 0) {
-      els.actionsArea.innerHTML = '<p class="muted">Waiting for agent to request actions...</p>';
+      var msg = document.createElement("p");
+      msg.className = "muted";
+      msg.textContent = "Waiting for agent to request actions...";
+      els.actionsArea.appendChild(msg);
       return;
     }
 
-    var html = '<div class="actions-container">';
+    var container = document.createElement("div");
+    container.className = "actions-container";
 
     // Feedback input (check if there's an input-type action)
     var inputAction = actions.find(function (a) { return a.type === "input"; });
     if (inputAction) {
-      html +=
-        '<div class="feedback-group">' +
-        '<label for="feedback-input">' + escapeHtml(inputAction.label) + "</label>" +
-        '<textarea id="feedback-input" rows="3" placeholder="' +
-        escapeHtml(inputAction.description || "Type your feedback...") +
-        '"></textarea>' +
-        "</div>";
+      var group = document.createElement("div");
+      group.className = "feedback-group";
+      var label = document.createElement("label");
+      label.setAttribute("for", "feedback-input");
+      label.textContent = inputAction.label;
+      var textarea = document.createElement("textarea");
+      textarea.id = "feedback-input";
+      textarea.rows = 3;
+      textarea.placeholder = inputAction.description || "Type your feedback...";
+      group.appendChild(label);
+      group.appendChild(textarea);
+      container.appendChild(group);
     }
 
     // Action buttons
-    html += '<div class="actions-bar">';
+    var bar = document.createElement("div");
+    bar.className = "actions-bar";
+
     actions.forEach(function (action) {
       if (action.type === "input") return; // Already rendered as textarea
 
+      var btn = document.createElement("button");
       var btnClass = "btn";
       if (action.type === "approve") btnClass += " btn-approve";
       else if (action.type === "reject") btnClass += " btn-reject";
       else btnClass += " btn-default";
-
-      var btnTitle = escapeHtml(action.description || "");
-      var btnLabel = escapeHtml(action.label);
-      html += '<button class="' + btnClass + '" onclick="handleAction(\'' + escAttr(action.id) + "','" + escAttr(action.type) + '\')" title="' + btnTitle + '">' + btnLabel + "</button>";
+      btn.className = btnClass;
+      btn.title = action.description || "";
+      btn.textContent = action.label;
+      btn.setAttribute("data-action-id", action.id);
+      btn.setAttribute("data-action-type", action.type);
+      bar.appendChild(btn);
     });
-    html += "</div></div>";
-    els.actionsArea.innerHTML = html;
+
+    container.appendChild(bar);
+    els.actionsArea.appendChild(container);
+    bindActionEvents();
+  }
+
+  // --- Event binding (CSP-safe) ---
+
+  function bindFileEvents() {
+    els.filesArea.querySelectorAll("[data-file-index]").forEach(function (header) {
+      header.addEventListener("click", function () {
+        var index = parseInt(header.getAttribute("data-file-index"), 10);
+        toggleFile(index);
+      });
+    });
+  }
+
+  function bindActionEvents() {
+    els.actionsArea.querySelectorAll("[data-action-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var actionId = btn.getAttribute("data-action-id");
+        var actionType = btn.getAttribute("data-action-type");
+        handleAction(actionId, actionType);
+      });
+    });
   }
 
   // --- Action handlers ---
 
-  window.handleAction = function (actionId, type) {
+  function handleAction(actionId, type) {
     if (responded) return;
     responded = true;
 
@@ -218,16 +310,16 @@
     }
 
     Promise.all(promises).then(function () {
-      els.actionsArea.innerHTML =
-        '<div class="response-sent">' +
-        '<span class="check-small">&#10003;</span> ' +
-        (type === "approve" ? "Approved" : type === "reject" ? "Rejected" : "Response sent") +
-        " — waiting for agent..." +
-        "</div>";
+      els.actionsArea.textContent = "";
+      var div = document.createElement("div");
+      div.className = "response-sent";
+      var label = type === "approve" ? "Approved" : type === "reject" ? "Rejected" : "Response sent";
+      div.innerHTML = '<span class="check-small">&#10003;</span> ' + escapeHtml(label) + " \u2014 waiting for agent...";
+      els.actionsArea.appendChild(div);
     });
-  };
+  }
 
-  window.toggleFile = function (index) {
+  function toggleFile(index) {
     var diff = document.getElementById("diff-" + index);
     var toggle = document.getElementById("toggle-" + index);
     if (diff) {
@@ -235,20 +327,11 @@
       diff.style.display = isHidden ? "block" : "none";
       toggle.innerHTML = isHidden ? "&#9660;" : "&#9654;";
     }
-  };
+  }
 
   function escapeHtml(str) {
     var div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
-  }
-
-  function escAttr(str) {
-    return String(str == null ? "" : str)
-      .replace(/&/g, "&amp;")
-      .replace(/'/g, "&#39;")
-      .replace(/"/g, "&quot;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
   }
 })();

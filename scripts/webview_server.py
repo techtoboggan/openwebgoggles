@@ -170,6 +170,7 @@ class WebviewHTTPHandler:
         self._csp_nonce: str | None = None  # set per-HTML-response
         self._public_key_hex: str = ""
         self._rate_limiter = RateLimiter(max_actions=30, window_seconds=60.0)
+        self._security_gate: SecurityGate | None = SecurityGate() if HAS_GATE else None
 
     async def _broadcast(self, message: dict, exclude=None):
         import json as _json
@@ -356,10 +357,9 @@ class WebviewHTTPHandler:
                 except json.JSONDecodeError:
                     await self._send_response(writer, 400, {"error": "Invalid JSON"})
                     return
-                # Validate action through security gate
-                if HAS_GATE:
-                    gate = SecurityGate()
-                    valid, err = gate.validate_action(action)
+                # Validate action through security gate (singleton)
+                if self._security_gate:
+                    valid, err = self._security_gate.validate_action(action)
                     if not valid:
                         await self._send_response(writer, 400, {"error": f"Action rejected: {err}"})
                         return
@@ -380,7 +380,7 @@ class WebviewHTTPHandler:
             except json.JSONDecodeError:
                 opts = {}
             delay_ms = max(0, min(int(opts.get("delay_ms", 1500)), 10000))
-            message = opts.get("message", "Session complete.")
+            message = str(opts.get("message", "Session complete."))[:500]  # Limit close message length
             await self._broadcast({"type": "close", "data": {"message": message, "delay_ms": delay_ms}})
             await self._send_response(writer, 200, {"ok": True, "clients_notified": len(self.ws_clients)})
 
@@ -396,6 +396,13 @@ class WebviewHTTPHandler:
 
         app_entry = manifest.get("app", {}).get("entry", "")
         app_dir_name = app_entry.split("/")[0] if "/" in app_entry else app_entry
+
+        # Defense-in-depth: validate app directory name to prevent injection
+        import re as _re
+
+        if not app_dir_name or not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", app_dir_name):
+            await self._send_response(writer, 400, {"error": "Invalid app entry in manifest"})
+            return
 
         if path == "/" or path == "":
             # Serve the app's index.html with bootstrap data injected
@@ -556,7 +563,13 @@ class WebviewServer:
         if HAS_CRYPTO:
             self._private_key, self._public_key_hex, _ = generate_session_keys()
             self._nonce_tracker = NonceTracker(window_seconds=300)
-            logger.info("Crypto: Ed25519 ephemeral keypair generated (pub: %s...)", self._public_key_hex[:16])
+            if self._public_key_hex:
+                logger.info("Crypto: Ed25519 ephemeral keypair generated (pub: %s...)", self._public_key_hex[:16])
+            else:
+                logger.warning(
+                    "Crypto: HMAC-only mode (PyNaCl import failed). "
+                    "Server→browser messages use HMAC signatures; browser cannot verify with Ed25519."
+                )
         else:
             logger.warning("Crypto: PyNaCl not available. Running without message signing.")
 
@@ -698,6 +711,13 @@ class WebviewServer:
                             logger.warning("WS: Rejected replayed nonce: %s...", msg["nonce"][:16])
                             continue
                     msg = msg["p"]
+                elif HAS_CRYPTO and self._nonce_tracker:
+                    # Crypto is enabled but message has no signed envelope — reject
+                    # This prevents security downgrade by sending unsigned messages
+                    msg_type = msg.get("type", "")
+                    if msg_type != "auth":
+                        logger.warning("WS: Rejected unsigned message (type=%s) — signed envelope required", msg_type)
+                        continue
 
                 msg_type = msg.get("type")
 
@@ -713,10 +733,9 @@ class WebviewServer:
                         )
                         continue
                     action_data = msg.get("data", {})
-                    # Validate action through security gate (same validation as HTTP path)
-                    if HAS_GATE:
-                        gate = SecurityGate()
-                        valid, err = gate.validate_action(action_data)
+                    # Validate action through security gate (singleton, same validation as HTTP path)
+                    if self._security_gate:
+                        valid, err = self._security_gate.validate_action(action_data)
                         if not valid:
                             await self._send_ws_signed(
                                 websocket, {"type": "error", "data": {"message": f"Action rejected: {err}"}}

@@ -1482,3 +1482,47 @@ class TestFormatValidation:
         state = {"status": "ready", "message": "Hello"}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert ok, f"State without format fields rejected: {err}"
+
+
+class TestXSSSrcdocAndXlink:
+    """Tests for srcdoc and xlink:href XSS patterns (M5 hardening)."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            'srcdoc="<script>alert(1)</script>"',
+            "srcdoc = '<img onerror=alert(1) src=x>'",
+            'SRCDOC="<body onload=alert(1)>"',
+            'srcdoc ="test"',
+        ],
+    )
+    def test_srcdoc_attribute_blocked(self, gate, payload):
+        """srcdoc attribute must be blocked — it embeds arbitrary HTML in iframes."""
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, f"Should block srcdoc: {payload!r}"
+        assert "srcdoc" in err.lower() or "xss" in err.lower()
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            'xlink:href="javascript:alert(1)"',
+            "xlink:href = 'http://evil.com'",
+            'XLINK:HREF="data:text/html,<script>alert(1)</script>"',
+        ],
+    )
+    def test_xlink_href_blocked(self, gate, payload):
+        """xlink:href must be blocked — SVG can reference javascript: URIs."""
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, f"Should block xlink:href: {payload!r}"
+
+    @pytest.mark.owasp_a03
+    def test_safe_text_mentioning_srcdoc_in_prose(self, gate):
+        """Text that discusses srcdoc without using it as an attribute should be blocked
+        (defense-in-depth — the pattern triggers on the attribute syntax)."""
+        raw = json.dumps({"status": "ready", "message": 'The srcdoc="..." attribute is dangerous'})
+        ok, _, _ = gate.validate_state(raw)
+        assert not ok, "srcdoc= pattern should trigger even in prose"

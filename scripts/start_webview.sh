@@ -91,11 +91,14 @@ echo "Copying app '$APP_NAME' from $APP_SRC..."
 rm -rf "$DATA_DIR/apps/$APP_NAME"
 cp -r "$APP_SRC" "$DATA_DIR/apps/$APP_NAME"
 
-# Copy SDK into app directory
-SDK_PATH="$SKILL_DIR/assets/sdk/openwebgoggles-sdk.js"
-if [[ -f "$SDK_PATH" ]]; then
-    cp "$SDK_PATH" "$DATA_DIR/apps/$APP_NAME/openwebgoggles-sdk.js"
+# Copy all SDK files into app directory (SDK, marked.min.js, purify.min.js, etc.)
+SDK_DIR="$SKILL_DIR/assets/sdk"
+if [[ -d "$SDK_DIR" ]]; then
+    for sdk_file in "$SDK_DIR"/*.js; do
+        [[ -f "$sdk_file" ]] && cp "$sdk_file" "$DATA_DIR/apps/$APP_NAME/"
+    done
 fi
+SDK_PATH="$SDK_DIR/openwebgoggles-sdk.js"
 
 # Generate session token
 SESSION_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(32))")

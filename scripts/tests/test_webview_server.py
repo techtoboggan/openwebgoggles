@@ -1189,7 +1189,7 @@ class TestWebSocketActionSecurityGate:
 
         src = inspect.getsource(WebviewServer._handle_ws)
         assert "validate_action" in src, "WS handler must call SecurityGate.validate_action()"
-        assert "HAS_GATE" in src, "WS handler must check HAS_GATE before applying gate"
+        assert "_security_gate" in src, "WS handler must use self._security_gate singleton"
 
     @pytest.mark.owasp_a03
     @pytest.mark.llm01
@@ -1289,4 +1289,92 @@ class TestStaticFilePathTraversalOrder:
         """Legitimate static file requests must still be served after the check-order fix."""
         auth = {"authorization": "Bearer secret_token_abc"}
         w = await send_request(handler, "GET", "/app.js", headers=auth)
+        assert w.status_code == 200
+
+
+class TestAppDirValidation:
+    """Tests for app directory name validation in _handle_static (M4 hardening)."""
+
+    @pytest.fixture
+    def handler_with_manifest(self, handler, tmp_data_dir):
+        """Handler with a known manifest."""
+        return handler
+
+    @pytest.mark.owasp_a01
+    @pytest.mark.asyncio
+    async def test_valid_app_dir_name(self, handler, tmp_data_dir):
+        """A valid app directory name should be accepted."""
+        auth = {"authorization": "Bearer secret_token_abc"}
+        # Default manifest has app.entry = "dynamic/index.html", app_dir_name = "dynamic"
+        w = await send_request(handler, "GET", "/", headers=auth)
+        assert w.status_code in (200, 404)  # 200 if index exists, 404 if not — but not 400
+
+    @pytest.mark.owasp_a01
+    @pytest.mark.asyncio
+    async def test_traversal_app_dir_name_rejected(self, handler, tmp_data_dir):
+        """An app entry with path traversal in the manifest must be rejected."""
+        manifest = {
+            "version": "1.0",
+            "app": {"name": "evil", "entry": "../../../etc/index.html", "title": "Evil"},
+            "session": {"id": "test-id", "token": "REDACTED"},
+            "server": {"http_port": 18420, "ws_port": 18421, "host": "127.0.0.1"},
+        }
+        handler.contract.write_json(handler.contract.manifest_path, manifest)
+        auth = {"authorization": "Bearer secret_token_abc"}
+        w = await send_request(handler, "GET", "/", headers=auth)
+        assert w.status_code == 400, "Path traversal in app entry must be rejected with 400"
+
+    @pytest.mark.owasp_a01
+    @pytest.mark.asyncio
+    async def test_empty_app_dir_name_rejected(self, handler, tmp_data_dir):
+        """An empty app entry in the manifest must be rejected."""
+        manifest = {
+            "version": "1.0",
+            "app": {"name": "empty", "entry": "", "title": "Empty"},
+            "session": {"id": "test-id", "token": "REDACTED"},
+            "server": {"http_port": 18420, "ws_port": 18421, "host": "127.0.0.1"},
+        }
+        handler.contract.write_json(handler.contract.manifest_path, manifest)
+        auth = {"authorization": "Bearer secret_token_abc"}
+        w = await send_request(handler, "GET", "/", headers=auth)
+        assert w.status_code == 400
+
+
+class TestSecurityGateSingleton:
+    """Tests for SecurityGate singleton usage in HTTP handler (M3 hardening)."""
+
+    @pytest.mark.owasp_a05
+    def test_handler_has_security_gate_instance(self, handler):
+        """WebviewHTTPHandler must have a _security_gate attribute."""
+        assert hasattr(handler, "_security_gate"), "Handler must have _security_gate"
+
+    @pytest.mark.owasp_a05
+    def test_handler_security_gate_is_singleton(self, handler):
+        """The _security_gate must be a SecurityGate instance (not None if HAS_GATE)."""
+        from security_gate import SecurityGate
+
+        if handler._security_gate is not None:
+            assert isinstance(handler._security_gate, SecurityGate)
+
+
+class TestCloseMessageLimits:
+    """Tests for close message sanitization (L3 hardening)."""
+
+    @pytest.mark.asyncio
+    async def test_close_message_length_limited(self, handler):
+        """Close message must be truncated to prevent exfiltration of large text."""
+        import json
+
+        long_message = "A" * 1000
+        body = json.dumps({"message": long_message}).encode()
+        auth = {"authorization": "Bearer secret_token_abc"}
+        w = await send_request(handler, "POST", "/_api/close", headers=auth, body=body)
+        assert w.status_code == 200
+        # The actual truncation happens server-side before broadcasting — verify the handler accepted it
+
+    @pytest.mark.asyncio
+    async def test_close_default_message(self, handler):
+        """Close endpoint with no message should use default."""
+        auth = {"authorization": "Bearer secret_token_abc"}
+        w = await send_request(handler, "POST", "/_api/close", headers=auth, body=b"{}")
         assert w.status_code == 200

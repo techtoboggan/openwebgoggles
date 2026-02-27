@@ -148,12 +148,21 @@
       // Try WebSocket for live updates, fall back to polling
       self._connectWebSocket();
 
+      // Periodic nonce prune to prevent unbounded memory growth in long sessions
+      self._noncePruneTimer = setInterval(function () {
+        self._pruneNonces();
+      }, 60000);
+
       return self;
     });
   };
 
   OpenWebGoggles.prototype.disconnect = function () {
     this._connected = false;
+    if (this._noncePruneTimer) {
+      clearInterval(this._noncePruneTimer);
+      this._noncePruneTimer = null;
+    }
     if (this._ws) {
       this._ws.close();
       this._ws = null;
@@ -247,9 +256,8 @@
         console.error("OpenWebGoggles: HMAC signing failed, message NOT sent:", err);
       });
     } else {
-      // No SubtleCrypto: send unsigned (degraded security)
-      console.warn("OpenWebGoggles: SubtleCrypto unavailable, sending unsigned message (HMAC disabled)");
-      this._ws.send(JSON.stringify(message));
+      // Fail-closed: refuse to send unsigned messages (security downgrade prevention)
+      console.error("OpenWebGoggles: SubtleCrypto unavailable — message dropped (HMAC required for WS messages)");
     }
   };
 
@@ -472,6 +480,13 @@
         }
         break;
       case "state_updated":
+        // Version monotonicity: only accept strictly increasing versions (prevents state downgrade)
+        if (msg.data && this._state && typeof msg.data.version === "number" && typeof this._state.version === "number") {
+          if (msg.data.version <= this._state.version) {
+            console.warn("OpenWebGoggles: Rejected state downgrade (v" + msg.data.version + " <= v" + this._state.version + ")");
+            break;
+          }
+        }
         this._state = msg.data;
         this._emit("state_updated", msg.data);
         break;
@@ -523,7 +538,9 @@
           return resp.json();
         })
         .then(function (data) {
-          if (data && data.version !== (self._state ? self._state.version : -1)) {
+          // Version monotonicity: only accept strictly increasing versions
+          var currentVersion = self._state ? self._state.version : -1;
+          if (data && typeof data.version === "number" && data.version > currentVersion) {
             self._state = data;
             self._emit("state_updated", data);
           }

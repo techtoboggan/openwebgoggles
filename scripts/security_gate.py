@@ -144,7 +144,11 @@ class SecurityGate:
         re.compile(r"<\s*details\b[^>]*\bon", re.IGNORECASE),
         re.compile(r"<\s*marquee\b", re.IGNORECASE),
         re.compile(r"<\s*source\b", re.IGNORECASE),
+        re.compile(r"srcdoc\s*=", re.IGNORECASE),  # iframe srcdoc can embed arbitrary HTML
+        re.compile(r"xlink:href\s*=", re.IGNORECASE),  # SVG xlink:href can reference javascript: URIs
     ]
+    # NOTE: The <img> pattern (above) intentionally blocks <img> tags even in markdown content.
+    # This is correct defense-in-depth: DOMPurify's ALLOWED_TAGS in app.js also excludes <img>.
 
     # --- Key name validation (for form field keys used in data attributes) ---
     KEY_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")

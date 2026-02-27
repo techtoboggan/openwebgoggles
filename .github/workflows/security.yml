@@ -9,6 +9,9 @@ on:
     # Weekly scan — catches newly disclosed CVEs in dependencies
     - cron: "0 8 * * 1"
 
+permissions:
+  contents: read
+
 jobs:
   sca:
     name: Dependency audit

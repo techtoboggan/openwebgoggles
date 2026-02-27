@@ -1,5 +1,10 @@
 "use strict";
 
+/**
+ * Security Assessment QA — OpenWebGoggles Example App
+ *
+ * Uses addEventListener (CSP-safe) instead of inline event handlers.
+ */
 (function () {
   var wv = new OpenWebGoggles();
   var findings = [];
@@ -18,9 +23,21 @@
     btnFP:         document.getElementById("btn-fp"),
     btnReviewed:   document.getElementById("btn-reviewed"),
     submitBar:     document.getElementById("submit-bar"),
+    submitBtn:     document.getElementById("btn-submit"),
+    tabsLeft:      document.getElementById("tabs-left"),
+    tabsRight:     document.getElementById("tabs-right"),
     connDot:       document.getElementById("conn-dot"),
     sessionInfo:   document.getElementById("session-info"),
   };
+
+  // --- Bind static button events (CSP-safe, no inline handlers) ---
+  if (els.tabsLeft)   els.tabsLeft.addEventListener("click", function () { scrollTabs(-1); });
+  if (els.tabsRight)  els.tabsRight.addEventListener("click", function () { scrollTabs(1); });
+  if (els.btnPrev)    els.btnPrev.addEventListener("click", function () { navPrev(); });
+  if (els.btnNext)    els.btnNext.addEventListener("click", function () { navNext(); });
+  if (els.btnFP)      els.btnFP.addEventListener("click", function () { markFalsePositive(); });
+  if (els.btnReviewed) els.btnReviewed.addEventListener("click", function () { markReviewed(); });
+  if (els.submitBtn)  els.submitBtn.addEventListener("click", function () { submitReport(); });
 
   // --- Connect ---
   wv.connect()
@@ -33,13 +50,26 @@
       renderState(instance.getState());
     })
     .catch(function (err) {
-      els.loading.innerHTML = "<p style='color:#f85149'>Connection failed: " + escHtml(String(err)) + "</p>";
+      els.loading.textContent = "";
+      var p = document.createElement("p");
+      p.style.color = "#f85149";
+      p.textContent = "Connection failed: " + String(err);
+      els.loading.appendChild(p);
     });
 
   wv.on("connected", function (data) { renderState(data.state); });
   wv.on("state_updated", function (state) { renderState(state); });
   wv.on("close", function (data) {
-    if (els.main) els.main.innerHTML = "<div class='loading-screen'><p style='color:#3fb950'>&#10003; " + escHtml((data && data.message) || "Session closed.") + "</p></div>";
+    if (els.main) {
+      els.main.textContent = "";
+      var wrap = document.createElement("div");
+      wrap.className = "loading-screen";
+      var p = document.createElement("p");
+      p.style.color = "#3fb950";
+      p.innerHTML = "&#10003; " + escHtml((data && data.message) || "Session closed.");
+      wrap.appendChild(p);
+      els.main.appendChild(wrap);
+    }
   });
 
   // --- State rendering ---
@@ -47,7 +77,11 @@
     if (!state || !state.data) return;
     var raw = state.data.findings;
     if (!raw || !raw.length) {
-      els.loading.innerHTML = "<p style='color:#8b949e'>Waiting for findings...</p>";
+      els.loading.textContent = "";
+      var p = document.createElement("p");
+      p.style.color = "#8b949e";
+      p.textContent = "Waiting for findings...";
+      els.loading.appendChild(p);
       return;
     }
 
@@ -91,16 +125,29 @@
   }
 
   function renderTabs() {
-    var html = "";
+    els.findingTabs.textContent = "";
+
     findings.forEach(function (f, i) {
+      var btn = document.createElement("button");
       var cls = "finding-tab";
       if (i === currentIndex) cls += " active";
       if (f._status === "reviewed") cls += " reviewed";
       if (f._status === "false-positive") cls += " false-positive";
-      var label = (i + 1) + ". " + severityIcon(f.severity) + " " + escHtml(truncate(f.title, 22));
-      html += '<button class="' + cls + '" onclick="goTo(' + i + ')" title="' + escHtml(f.title) + '">' + label + "</button>";
+      btn.className = cls;
+      btn.title = f.title || "";
+      btn.setAttribute("data-tab-index", i);
+      btn.innerHTML = (i + 1) + ". " + severityIcon(f.severity) + " " + escHtml(truncate(f.title, 22));
+      els.findingTabs.appendChild(btn);
     });
-    els.findingTabs.innerHTML = html;
+
+    // Bind tab click events
+    els.findingTabs.querySelectorAll("[data-tab-index]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var idx = parseInt(btn.getAttribute("data-tab-index"), 10);
+        goTo(idx);
+      });
+    });
+
     // Scroll active tab into view
     var activeTab = els.findingTabs.children[currentIndex];
     if (activeTab) activeTab.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
@@ -111,55 +158,73 @@
     var f = findings[index];
     if (!f) return;
 
-    var statusBadge = statusBadgeHtml(f._status);
-    var sevClass = "sev-" + (f.severity || "info").toLowerCase();
-    var cvssColor = cvssBarColor(f.cvss_score);
-    var cvssWidth = f.cvss_score ? Math.round((f.cvss_score / 10) * 100) : 0;
-
-    var html = "";
+    els.findingCard.textContent = "";
 
     // Header
-    html += '<div class="finding-header">';
-    html += '<div class="finding-title-wrap">';
-    html += '<div class="finding-num">Finding ' + (index + 1) + ' of ' + findings.length + '</div>';
-    html += '<div class="finding-title">' + escHtml(f.title) + '</div>';
-    html += '</div>';
-    html += '<div class="finding-status-badges">' + statusBadge + '</div>';
-    html += '</div>';
+    var headerEl = document.createElement("div");
+    headerEl.className = "finding-header";
+
+    var titleWrap = document.createElement("div");
+    titleWrap.className = "finding-title-wrap";
+    var findingNum = document.createElement("div");
+    findingNum.className = "finding-num";
+    findingNum.textContent = "Finding " + (index + 1) + " of " + findings.length;
+    var findingTitle = document.createElement("div");
+    findingTitle.className = "finding-title";
+    findingTitle.textContent = f.title;
+    titleWrap.appendChild(findingNum);
+    titleWrap.appendChild(findingTitle);
+
+    var statusBadges = document.createElement("div");
+    statusBadges.className = "finding-status-badges";
+    statusBadges.appendChild(createStatusBadge(f._status));
+
+    headerEl.appendChild(titleWrap);
+    headerEl.appendChild(statusBadges);
+    els.findingCard.appendChild(headerEl);
 
     // Row 1: severity, cvss, cwe, host
-    html += '<div class="field-grid">';
-    html += severityDropdownField(index, f._edited.severity !== undefined ? f._edited.severity : f.severity);
-    html += field("CVSS Score",
-      '<div class="cvss-score">' +
-      '<span>' + (f.cvss_score != null ? f.cvss_score.toFixed(1) : "—") + '</span>' +
-      '<div class="cvss-bar" style="width:80px;background:var(--border)"><div class="cvss-bar" style="width:' + cvssWidth + '%;background:' + cvssColor + '"></div></div>' +
-      '</div>');
-    html += field("CWE", '<span class="field-value monospace">' + escHtml(f.cwe_id || "—") + '</span>');
-    html += editableField(index, "affected_host", "Affected Host", f._edited.affected_host !== undefined ? f._edited.affected_host : f.affected_host);
-    html += '</div>';
+    var grid1 = document.createElement("div");
+    grid1.className = "field-grid";
+    grid1.appendChild(createSeverityDropdown(index, f._edited.severity !== undefined ? f._edited.severity : f.severity));
+    grid1.appendChild(createCvssField(f.cvss_score));
+    grid1.appendChild(createStaticField("CWE", f.cwe_id || "\u2014", true));
+    grid1.appendChild(createEditableField(index, "affected_host", "Affected Host", f._edited.affected_host !== undefined ? f._edited.affected_host : f.affected_host));
+    els.findingCard.appendChild(grid1);
 
     // Description
-    html += '<div class="field-grid full">';
-    html += editableField(index, "description", "Description", f._edited.description !== undefined ? f._edited.description : f.description, true);
-    html += '</div>';
+    var grid2 = document.createElement("div");
+    grid2.className = "field-grid full";
+    grid2.appendChild(createEditableField(index, "description", "Description", f._edited.description !== undefined ? f._edited.description : f.description, true));
+    els.findingCard.appendChild(grid2);
 
     // Evidence
-    html += '<div class="field-grid full">';
-    html += '<div class="field"><div class="field-label">Evidence</div><div class="evidence-block">' + escHtml(f.evidence || "No evidence provided.") + '</div></div>';
-    html += '</div>';
+    var grid3 = document.createElement("div");
+    grid3.className = "field-grid full";
+    var evidenceField = document.createElement("div");
+    evidenceField.className = "field";
+    var evidenceLabel = document.createElement("div");
+    evidenceLabel.className = "field-label";
+    evidenceLabel.textContent = "Evidence";
+    var evidenceBlock = document.createElement("div");
+    evidenceBlock.className = "evidence-block";
+    evidenceBlock.textContent = f.evidence || "No evidence provided.";
+    evidenceField.appendChild(evidenceLabel);
+    evidenceField.appendChild(evidenceBlock);
+    grid3.appendChild(evidenceField);
+    els.findingCard.appendChild(grid3);
 
     // Recommendation
-    html += '<div class="field-grid full">';
-    html += editableField(index, "recommendation", "Recommendation", f._edited.recommendation !== undefined ? f._edited.recommendation : f.recommendation, true);
-    html += '</div>';
+    var grid4 = document.createElement("div");
+    grid4.className = "field-grid full";
+    grid4.appendChild(createEditableField(index, "recommendation", "Recommendation", f._edited.recommendation !== undefined ? f._edited.recommendation : f.recommendation, true));
+    els.findingCard.appendChild(grid4);
 
     // Analyst notes
-    html += '<div class="field-grid full">';
-    html += editableField(index, "_notes", "Analyst Notes", f._notes, true, "Add notes, context, or caveats...");
-    html += '</div>';
-
-    els.findingCard.innerHTML = html;
+    var grid5 = document.createElement("div");
+    grid5.className = "field-grid full";
+    grid5.appendChild(createEditableField(index, "_notes", "Analyst Notes", f._notes, true, "Add notes, context, or caveats..."));
+    els.findingCard.appendChild(grid5);
 
     // Update footer button states
     els.btnPrev.disabled = index === 0;
@@ -168,50 +233,135 @@
     els.btnReviewed.classList.toggle("hidden", f._status === "reviewed");
   }
 
-  // --- Field helpers ---
-  function field(label, valueHtml) {
-    return '<div class="field"><div class="field-label">' + escHtml(label) + '</div><div class="field-value">' + valueHtml + '</div></div>';
+  // --- DOM field builders (CSP-safe, no inline handlers) ---
+
+  function createStaticField(label, value, mono) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "field";
+    var lbl = document.createElement("div");
+    lbl.className = "field-label";
+    lbl.textContent = label;
+    var val = document.createElement("span");
+    val.className = "field-value" + (mono ? " monospace" : "");
+    val.textContent = value;
+    wrapper.appendChild(lbl);
+    wrapper.appendChild(val);
+    return wrapper;
   }
 
-  function editableField(index, key, label, value, multiline, placeholder) {
-    var id = "field-" + index + "-" + key;
-    var ph = placeholder || "";
+  function createCvssField(score) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "field";
+    var lbl = document.createElement("div");
+    lbl.className = "field-label";
+    lbl.textContent = "CVSS Score";
+    var val = document.createElement("div");
+    val.className = "field-value cvss-score";
+
+    var scoreSpan = document.createElement("span");
+    scoreSpan.textContent = score != null ? score.toFixed(1) : "\u2014";
+    val.appendChild(scoreSpan);
+
+    var barOuter = document.createElement("div");
+    barOuter.className = "cvss-bar";
+    barOuter.style.width = "80px";
+    barOuter.style.background = "var(--border)";
+    var barInner = document.createElement("div");
+    barInner.className = "cvss-bar";
+    var pct = score ? Math.round((score / 10) * 100) : 0;
+    barInner.style.width = pct + "%";
+    barInner.style.background = cvssBarColor(score);
+    barOuter.appendChild(barInner);
+    val.appendChild(barOuter);
+
+    wrapper.appendChild(lbl);
+    wrapper.appendChild(val);
+    return wrapper;
+  }
+
+  function createEditableField(index, key, label, value, multiline, placeholder) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "field";
+    wrapper.id = "wrap-field-" + index + "-" + key;
+
+    var lbl = document.createElement("div");
+    lbl.className = "field-label";
+    lbl.textContent = label;
+    wrapper.appendChild(lbl);
+
+    var input;
     if (multiline) {
-      return '<div class="field" id="wrap-' + id + '">' +
-        '<div class="field-label">' + escHtml(label) + '</div>' +
-        '<textarea class="field-value editable" id="' + id + '" rows="3" placeholder="' + escHtml(ph) + '" ' +
-        'oninput="saveEdit(' + index + ',\'' + escAttr(key) + '\',this.value)" ' +
-        'onfocus="this.parentElement.classList.add(\'editing\')" ' +
-        'onblur="this.parentElement.classList.remove(\'editing\')">' +
-        escHtml(value || "") + '</textarea></div>';
+      input = document.createElement("textarea");
+      input.className = "field-value editable";
+      input.rows = 3;
+      input.placeholder = placeholder || "";
+      input.textContent = value || "";
+    } else {
+      input = document.createElement("input");
+      input.className = "field-value editable";
+      input.type = "text";
+      input.value = value || "";
+      input.placeholder = placeholder || "";
     }
-    return '<div class="field" id="wrap-' + id + '">' +
-      '<div class="field-label">' + escHtml(label) + '</div>' +
-      '<input class="field-value editable" id="' + id + '" type="text" value="' + escAttr(value || "") + '" placeholder="' + escAttr(ph) + '" ' +
-      'oninput="saveEdit(' + index + ',\'' + escAttr(key) + '\',this.value)" ' +
-      'onfocus="this.parentElement.classList.add(\'editing\')" ' +
-      'onblur="this.parentElement.classList.remove(\'editing\')" />' +
-      '</div>';
+
+    input.addEventListener("input", function () {
+      saveEdit(index, key, input.value);
+    });
+    input.addEventListener("focus", function () {
+      wrapper.classList.add("editing");
+    });
+    input.addEventListener("blur", function () {
+      wrapper.classList.remove("editing");
+    });
+
+    wrapper.appendChild(input);
+    return wrapper;
   }
 
-  function severityDropdownField(index, currentSev) {
+  function createSeverityDropdown(index, currentSev) {
     var levels = ["Critical", "High", "Medium", "Low", "Info"];
-    var opts = levels.map(function (s) {
-      var sel = s === currentSev ? " selected" : "";
-      return '<option value="' + s + '"' + sel + '>' + s + '</option>';
-    }).join("");
+    var wrapper = document.createElement("div");
+    wrapper.className = "field editing-select";
+
+    var lbl = document.createElement("div");
+    lbl.className = "field-label";
+    lbl.textContent = "Severity";
+    wrapper.appendChild(lbl);
+
     var sevClass = "sev-" + (currentSev || "info").toLowerCase();
-    return '<div class="field editing-select">' +
-      '<div class="field-label">Severity</div>' +
-      '<select class="field-value sev-select ' + sevClass + '" ' +
-      'onchange="saveEdit(' + index + ',\'severity\',this.value);this.className=\'field-value sev-select sev-\'+this.value.toLowerCase()">' +
-      opts + '</select></div>';
+    var select = document.createElement("select");
+    select.className = "field-value sev-select " + sevClass;
+
+    levels.forEach(function (s) {
+      var opt = document.createElement("option");
+      opt.value = s;
+      opt.textContent = s;
+      if (s === currentSev) opt.selected = true;
+      select.appendChild(opt);
+    });
+
+    select.addEventListener("change", function () {
+      saveEdit(index, "severity", select.value);
+      select.className = "field-value sev-select sev-" + select.value.toLowerCase();
+    });
+
+    wrapper.appendChild(select);
+    return wrapper;
   }
 
-  function statusBadgeHtml(status) {
-    if (status === "reviewed") return '<span class="status-badge status-reviewed">&#10003; Reviewed</span>';
-    if (status === "false-positive") return '<span class="status-badge status-false-positive">False Positive</span>';
-    return '<span class="status-badge status-pending">Pending</span>';
+  function createStatusBadge(status) {
+    var span = document.createElement("span");
+    if (status === "reviewed") {
+      span.className = "status-badge status-reviewed";
+      span.innerHTML = "&#10003; Reviewed";
+    } else if (status === "false-positive") {
+      span.className = "status-badge status-false-positive";
+      span.textContent = "False Positive";
+    } else {
+      span.className = "status-badge status-pending";
+      span.textContent = "Pending";
+    }
+    return span;
   }
 
   function severityIcon(sev) {
@@ -231,64 +381,64 @@
     return "var(--blue)";
   }
 
-  // --- Actions ---
-  window.saveEdit = function (index, key, value) {
+  // --- Actions (all local, no window.* exports) ---
+
+  function saveEdit(index, key, value) {
     if (!findings[index]) return;
     findings[index]._edited = findings[index]._edited || {};
     findings[index]._edited[key] = value;
     if (key === "_notes") findings[index]._notes = value;
     else findings[index][key] = value;
-  };
+  }
 
-  window.goTo = function (index) {
+  function goTo(index) {
     currentIndex = index;
     renderTabs();
     renderFinding(index);
-  };
+  }
 
-  window.navPrev = function () {
-    if (currentIndex > 0) window.goTo(currentIndex - 1);
-  };
+  function navPrev() {
+    if (currentIndex > 0) goTo(currentIndex - 1);
+  }
 
-  window.navNext = function () {
-    if (currentIndex < findings.length - 1) window.goTo(currentIndex + 1);
-  };
+  function navNext() {
+    if (currentIndex < findings.length - 1) goTo(currentIndex + 1);
+  }
 
-  window.markFalsePositive = function () {
+  function markFalsePositive() {
     findings[currentIndex]._status = "false-positive";
     renderTabs();
     renderFinding(currentIndex);
     renderProgress();
-    // Auto-advance to next pending
     autoAdvance();
-  };
+  }
 
-  window.markReviewed = function () {
+  function markReviewed() {
     findings[currentIndex]._status = "reviewed";
     renderTabs();
     renderFinding(currentIndex);
     renderProgress();
     autoAdvance();
-  };
+  }
 
   function autoAdvance() {
     // Find next pending finding
     for (var i = currentIndex + 1; i < findings.length; i++) {
-      if (findings[i]._status === "pending") { window.goTo(i); return; }
+      if (findings[i]._status === "pending") { goTo(i); return; }
     }
     // Wrap around from start
     for (var j = 0; j < currentIndex; j++) {
-      if (findings[j]._status === "pending") { window.goTo(j); return; }
+      if (findings[j]._status === "pending") { goTo(j); return; }
     }
     // All done — stay on current
   }
 
-  window.scrollTabs = function (dir) {
+  function scrollTabs(dir) {
     var tabs = els.findingTabs;
     tabs.scrollBy({ left: dir * 200, behavior: "smooth" });
-  };
+  }
 
-  window.submitReport = function () {
+  function submitReport() {
     if (submitted) return;
     submitted = true;
     els.submitBar.classList.add("hidden");
@@ -311,13 +461,25 @@
     });
 
     wv.sendAction("submit_report", "submit", report).then(function () {
-      els.findingCard.innerHTML =
-        '<div class="loading-screen"><div style="text-align:center">' +
-        '<p style="color:var(--green);font-size:18px;margin-bottom:8px">&#10003; Report Submitted</p>' +
-        '<p style="color:var(--text2)">Waiting for agent to process...</p>' +
-        '</div></div>';
+      els.findingCard.textContent = "";
+      var wrap = document.createElement("div");
+      wrap.className = "loading-screen";
+      var inner = document.createElement("div");
+      inner.style.textAlign = "center";
+      var p1 = document.createElement("p");
+      p1.style.color = "var(--green)";
+      p1.style.fontSize = "18px";
+      p1.style.marginBottom = "8px";
+      p1.innerHTML = "&#10003; Report Submitted";
+      var p2 = document.createElement("p");
+      p2.style.color = "var(--text2)";
+      p2.textContent = "Waiting for agent to process...";
+      inner.appendChild(p1);
+      inner.appendChild(p2);
+      wrap.appendChild(inner);
+      els.findingCard.appendChild(wrap);
     });
-  };
+  }
 
   // --- Utilities ---
   function escHtml(s) {
@@ -328,17 +490,8 @@
       .replace(/"/g, "&quot;");
   }
 
-  function escAttr(s) {
-    return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;")
-      .replace(/'/g, "&#39;")
-      .replace(/"/g, "&quot;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
   function truncate(s, n) {
     s = String(s || "");
-    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+    return s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
   }
 })();

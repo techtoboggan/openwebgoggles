@@ -63,11 +63,13 @@
       els.appTitle.textContent = state.title;
     }
 
-    // Render message
+    // Render message (DOM API — no innerHTML)
+    els.messageArea.textContent = "";
     if (state.message) {
-      els.messageArea.innerHTML = '<p class="message">' + escapeHtml(state.message) + "</p>";
-    } else {
-      els.messageArea.innerHTML = "";
+      var p = document.createElement("p");
+      p.className = "message";
+      p.textContent = state.message;
+      els.messageArea.appendChild(p);
     }
 
     // Render data (customize this for your app)
@@ -78,13 +80,19 @@
   }
 
   function renderData(data) {
-    // Default: show raw JSON. Override this for your custom UI.
+    // Default: show raw JSON. Override this for your custom UI. (DOM API — no innerHTML)
+    els.dataArea.textContent = "";
     if (Object.keys(data).length === 0) {
-      els.dataArea.innerHTML = '<p class="muted">No data from agent yet.</p>';
+      var p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "No data from agent yet.";
+      els.dataArea.appendChild(p);
       return;
     }
-    els.dataArea.innerHTML =
-      '<pre class="data-display">' + escapeHtml(JSON.stringify(data, null, 2)) + "</pre>";
+    var pre = document.createElement("pre");
+    pre.className = "data-display";
+    pre.textContent = JSON.stringify(data, null, 2);
+    els.dataArea.appendChild(pre);
   }
 
   function renderActions(actions) {

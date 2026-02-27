@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import struct
 import threading
@@ -43,11 +44,13 @@ def generate_session_keys() -> tuple[bytes, str, str]:
     """
     nacl = _lazy_nacl()
     if nacl is None:
-        # Fallback: HMAC-only mode (no asymmetric signing)
+        # Fallback: HMAC-only mode (no asymmetric signing).
+        # Return empty verify_hex so the server knows NOT to export a public key
+        # to the browser — the browser can't verify HMAC signatures with Ed25519,
+        # and exporting a derived hash as a "public key" would be misleading.
         seed = os.urandom(32)
         hmac_key = hashlib.sha256(b"hmac-signing-key:" + seed).digest()
-        verify_hex = hashlib.sha256(b"browser-verify-key:" + seed).hexdigest()
-        return hmac_key, verify_hex, verify_hex
+        return hmac_key, "", ""
 
     signing_key = nacl.signing.SigningKey.generate()
     seed = bytes(signing_key)  # 32-byte seed
@@ -145,6 +148,8 @@ class NonceTracker:
     """Tracks seen nonces to prevent replay attacks.
 
     Nonces older than `window_seconds` are automatically pruned.
+    When nearing capacity, aggressively prunes with a halved window
+    before rejecting — prevents DoS via nonce flooding.
     """
 
     MAX_NONCE_COUNT = 100_000
@@ -152,6 +157,7 @@ class NonceTracker:
     def __init__(self, window_seconds: int = 300):
         self._seen: dict[str, float] = {}
         self._window = window_seconds
+        self._logger = logging.getLogger("openwebgoggles.nonce")
 
     def check_and_record(self, nonce: str) -> bool:
         """Returns True if the nonce is fresh (not seen before).
@@ -163,14 +169,23 @@ class NonceTracker:
             return False
 
         if len(self._seen) >= self.MAX_NONCE_COUNT:
-            return False
+            # Aggressive prune: halve the window and retry once
+            self._logger.warning(
+                "Nonce tracker at capacity (%d nonces). Aggressive pruning with halved window.",
+                len(self._seen),
+            )
+            self._prune(now, window_override=self._window / 2)
+            if len(self._seen) >= self.MAX_NONCE_COUNT:
+                self._logger.error("Nonce tracker still at capacity after aggressive prune. Rejecting nonce.")
+                return False
 
         self._seen[nonce] = now
         return True
 
-    def _prune(self, now: float) -> None:
+    def _prune(self, now: float, window_override: float | None = None) -> None:
         """Remove expired nonces."""
-        cutoff = now - self._window
+        window = window_override if window_override is not None else self._window
+        cutoff = now - window
         expired = [n for n, t in self._seen.items() if t < cutoff]
         for n in expired:
             del self._seen[n]

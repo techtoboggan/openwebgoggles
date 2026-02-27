@@ -378,12 +378,13 @@ class TestSourceCodePatterns:
             return f.read()
 
     @pytest.mark.owasp_a03
-    def test_approval_review_escapes_action_id(self):
-        """approval-review/app.js must use escAttr on action.id in onclick."""
+    def test_approval_review_uses_data_attributes(self):
+        """approval-review/app.js must use data-* attributes + addEventListener (no inline onclick)."""
         src = self._read_js("examples/approval-review/app.js")
-        # Should use escAttr(action.id) not raw action.id in onclick
-        assert "escAttr(action.id)" in src
-        assert "escAttr(action.type)" in src
+        # Should use setAttribute for action IDs (DOM API auto-escapes, no manual escAttr needed)
+        assert "data-action-id" in src, "Must use data-action-id attributes"
+        assert "data-action-type" in src, "Must use data-action-type attributes"
+        assert "addEventListener" in src, "Must use addEventListener"
 
     @pytest.mark.owasp_a03
     def test_template_escapes_action_id(self):
@@ -393,24 +394,26 @@ class TestSourceCodePatterns:
         assert "onclick" not in src, "template/app.js should not use inline onclick handlers"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_escapes_key_in_oninput(self):
-        """security-qa/app.js must use escAttr on key in oninput handlers."""
+    def test_security_qa_uses_dom_api_for_inputs(self):
+        """security-qa/app.js must use addEventListener instead of inline oninput/onchange."""
         src = self._read_js("examples/security-qa/app.js")
-        assert "escAttr(key)" in src
+        assert "addEventListener" in src, "Must use addEventListener for input events"
+        # Must NOT have inline event handlers
+        inline = re.findall(r"\bon(?:input|change)\s*=", src)
+        assert len(inline) == 0, f"Found inline handlers: {inline}"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_escattr_complete(self):
-        """security-qa escAttr must encode & < > in addition to quotes."""
+    def test_security_qa_eschtml_complete(self):
+        """security-qa escHtml must encode & < > "."""
         src = self._read_js("examples/security-qa/app.js")
-        # Find escAttr function body
-        match = re.search(r"function\s+escAttr\s*\([^)]*\)\s*\{([^}]+)\}", src)
-        assert match, "escAttr function not found"
+        # Find escHtml function body
+        match = re.search(r"function\s+escHtml\s*\([^)]*\)\s*\{([^}]+)\}", src)
+        assert match, "escHtml function not found"
         body = match.group(1)
-        assert "&amp;" in body, "escAttr must encode &"
-        assert "&lt;" in body, "escAttr must encode <"
-        assert "&gt;" in body, "escAttr must encode >"
-        assert "&#39;" in body, "escAttr must encode '"
-        assert "&quot;" in body, 'escAttr must encode "'
+        assert "&amp;" in body, "escHtml must encode &"
+        assert "&lt;" in body, "escHtml must encode <"
+        assert "&gt;" in body, "escHtml must encode >"
+        assert "&quot;" in body, 'escHtml must encode "'
 
     @pytest.mark.owasp_a03
     def test_dynamic_app_escapes_in_onclick(self):
@@ -439,18 +442,21 @@ class TestSourceCodePatterns:
             # (This is validated by the XSS tests above)
 
     @pytest.mark.owasp_a03
-    def test_all_apps_have_esc_functions(self):
-        """Every app.js must define both escapeHtml/escHtml and escAttr."""
+    def test_all_apps_have_escape_functions(self):
+        """Every app.js must define an HTML escape function. Apps using DOM API
+        (setAttribute, textContent) don't need escAttr since the DOM auto-escapes."""
         apps = {
-            "examples/approval-review/app.js": ("escapeHtml", "escAttr"),
-            "assets/template/app.js": ("escapeHtml", "escAttr"),
-            "examples/security-qa/app.js": ("escHtml", "escAttr"),
+            # Dynamic app still uses innerHTML with esc/escAttr for rendering
             "assets/apps/dynamic/app.js": ("esc", "escAttr"),
+            # Refactored apps use DOM API — only need HTML escape for innerHTML fallback
+            "examples/approval-review/app.js": ("escapeHtml",),
+            "examples/security-qa/app.js": ("escHtml",),
+            "assets/template/app.js": ("escapeHtml",),
         }
-        for path, (html_fn, attr_fn) in apps.items():
+        for path, required_fns in apps.items():
             src = self._read_js(path)
-            assert f"function {html_fn}" in src, f"{path} missing {html_fn}"
-            assert f"function {attr_fn}" in src, f"{path} missing {attr_fn}"
+            for fn in required_fns:
+                assert f"function {fn}" in src, f"{path} missing {fn}"
 
 
 class TestMarkdownRendering:
@@ -610,3 +616,131 @@ class TestMarkdownRendering:
         """markdownBlock() must wrap output in .markdown-content div."""
         src = self._read_js("assets/apps/dynamic/app.js")
         assert "markdown-content" in src, "Markdown output must use .markdown-content wrapper"
+
+
+class TestSecurityHardening:
+    """Tests for the v0.6.1 security hardening pass."""
+
+    @staticmethod
+    def _read_js(rel_path):
+        import os
+
+        base = os.path.join(os.path.dirname(__file__), "..", "..")
+        full = os.path.join(base, rel_path)
+        with open(full) as f:
+            return f.read()
+
+    # ── H1: Example apps must NOT use inline event handlers ───────────────
+
+    @pytest.mark.owasp_a03
+    def test_approval_review_no_inline_handlers(self):
+        """approval-review/app.js must not use inline onclick/oninput/onchange."""
+        src = self._read_js("examples/approval-review/app.js")
+        import re
+
+        inline = re.findall(r"\bon(?:click|input|change|focus|blur|submit|load)\s*=", src)
+        assert len(inline) == 0, f"Found inline handlers in approval-review: {inline}"
+
+    @pytest.mark.owasp_a03
+    def test_security_qa_no_inline_handlers(self):
+        """security-qa/app.js must not use inline onclick/oninput/onchange."""
+        src = self._read_js("examples/security-qa/app.js")
+        import re
+
+        inline = re.findall(r"\bon(?:click|input|change|focus|blur|submit|load)\s*=", src)
+        assert len(inline) == 0, f"Found inline handlers in security-qa/app.js: {inline}"
+
+    @pytest.mark.owasp_a03
+    def test_security_qa_html_no_inline_handlers(self):
+        """security-qa/index.html must not use inline onclick attributes."""
+        src = self._read_js("examples/security-qa/index.html")
+        import re
+
+        inline = re.findall(r"\bon(?:click|input|change|focus|blur|submit|load)\s*=", src)
+        assert len(inline) == 0, f"Found inline handlers in security-qa/index.html: {inline}"
+
+    @pytest.mark.owasp_a03
+    def test_approval_review_uses_addeventlistener(self):
+        """approval-review must use addEventListener for CSP compliance."""
+        src = self._read_js("examples/approval-review/app.js")
+        assert "addEventListener" in src, "Must use addEventListener instead of inline handlers"
+
+    @pytest.mark.owasp_a03
+    def test_security_qa_uses_addeventlistener(self):
+        """security-qa must use addEventListener for CSP compliance."""
+        src = self._read_js("examples/security-qa/app.js")
+        assert "addEventListener" in src, "Must use addEventListener instead of inline handlers"
+
+    # ── H1: Example apps must NOT expose globals via window.* ─────────────
+
+    @pytest.mark.owasp_a03
+    def test_approval_review_no_window_exports(self):
+        """approval-review should not export functions to window (encapsulated IIFE)."""
+        src = self._read_js("examples/approval-review/app.js")
+        import re
+
+        exports = re.findall(r"window\.\w+\s*=\s*function", src)
+        assert len(exports) == 0, f"Found window exports: {exports}"
+
+    @pytest.mark.owasp_a03
+    def test_security_qa_no_window_exports(self):
+        """security-qa should not export functions to window (encapsulated IIFE)."""
+        src = self._read_js("examples/security-qa/app.js")
+        import re
+
+        exports = re.findall(r"window\.\w+\s*=\s*function", src)
+        assert len(exports) == 0, f"Found window exports: {exports}"
+
+    # ── H2: SDK must fail-closed (no unsigned messages) ───────────────────
+
+    @pytest.mark.owasp_a02
+    def test_sdk_no_unsigned_ws_send(self):
+        """SDK must NOT send unsigned WS messages — fail-closed."""
+        src = self._read_js("assets/sdk/openwebgoggles-sdk.js")
+        assert "message dropped" in src, "SDK must log error and drop unsigned messages"
+        assert "HMAC required" in src, "SDK must indicate HMAC is required"
+        # Must NOT contain the old pattern of sending unsigned
+        assert "sending unsigned message" not in src, "Old unsigned send pattern must be removed"
+
+    # ── M1: SDK state version monotonicity ────────────────────────────────
+
+    @pytest.mark.llm04
+    def test_sdk_version_monotonicity_ws(self):
+        """SDK WS handler must reject state downgrades (version <= current)."""
+        src = self._read_js("assets/sdk/openwebgoggles-sdk.js")
+        assert "state downgrade" in src.lower(), "SDK must check for state version downgrade"
+        assert "version <=" in src or "version <" in src, "SDK must compare version monotonically"
+
+    @pytest.mark.llm04
+    def test_sdk_version_monotonicity_polling(self):
+        """SDK polling handler must only accept strictly increasing versions."""
+        src = self._read_js("assets/sdk/openwebgoggles-sdk.js")
+        assert "data.version > currentVersion" in src, "Polling must use strict > comparison"
+
+    # ── L1: Template app must use DOM API (no innerHTML) ──────────────────
+
+    @pytest.mark.owasp_a03
+    def test_template_no_innerhtml(self):
+        """Template app.js must not use innerHTML for content rendering."""
+        src = self._read_js("assets/template/app.js")
+        import re
+
+        # innerHTML is OK in comments, but not in actual code
+        code_lines = [
+            line
+            for line in src.split("\n")
+            if line.strip() and not line.strip().startswith("//") and not line.strip().startswith("*")
+        ]
+        code = "\n".join(code_lines)
+        uses = re.findall(r"\.innerHTML\s*=", code)
+        assert len(uses) == 0, f"Template app.js still uses innerHTML: found {len(uses)} occurrences"
+
+    # ── L2: SDK periodic nonce prune timer ────────────────────────────────
+
+    @pytest.mark.owasp_a05
+    def test_sdk_nonce_prune_timer(self):
+        """SDK must have a periodic nonce prune timer (not just on-message)."""
+        src = self._read_js("assets/sdk/openwebgoggles-sdk.js")
+        assert "_noncePruneTimer" in src, "SDK must have a periodic nonce prune timer"
+        assert "setInterval" in src, "Prune timer must use setInterval"
+        assert "clearInterval" in src, "Timer must be cleaned up on disconnect"
