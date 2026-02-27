@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-02-27
+
+### Added
+
+- **Singleton webview server enforcement** — flock-based locking prevents duplicate webview servers from accumulating when the editor spawns multiple MCP processes
+- Stale PID detection: on startup, checks `.server.pid` and kills orphaned servers from crashed/restarted MCP sessions
+- Shared `_detect_python.sh` helper for consistent Python interpreter detection across all shell scripts
+
+### Fixed
+
+- **MCP -32001 timeout** — `webview()` now sends progress pings every 10s via `ctx.report_progress()` to keep the MCP connection alive during long waits for user input
+- Shell scripts no longer hardcode `python3` — all scripts source `_detect_python.sh` and use `$PYTHON` (prefers venv, falls back to system)
+- `start_webview.sh`: session credential generation moved after venv setup so it uses the venv Python, not system Python
+- README: fixed stale `webview_ask`/`webview_show` references, updated test count to 541
+- CHANGELOG: added missing entries for v0.4.2 through v0.7.0
+
 ## [0.7.0] - 2026-02-27
 
 ### Added
