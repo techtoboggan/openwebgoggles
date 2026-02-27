@@ -153,12 +153,14 @@ The agent figures out the JSON schema, calls `webview`, and a panel opens in you
 
 ### What Gets Installed
 
-Three MCP tools — that's the entire API surface:
+Five MCP tools — that's the entire API surface:
 
 | Tool | What it does |
 |------|-------------|
 | `webview(state)` | Show a UI and block until the human responds |
+| `webview_update(state)` | Push live updates without blocking (progress, logs, status) |
 | `webview_read()` | Poll for actions without blocking |
+| `webview_status()` | Check if a session is active |
 | `webview_close()` | Close the session |
 
 ### Manual Setup
@@ -236,13 +238,80 @@ This means you can debug the entire system by looking at three JSON files. No hi
 
 Most use cases don't require custom HTML. The built-in `dynamic` app takes a JSON schema and renders a complete, styled interface.
 
-**Section types:** `text`, `items`, `form`, `actions`
+**Section types:** `text`, `items`, `form`, `actions`, `progress`, `log`, `diff`, `table`, `tabs`
 
 **Form field types:** `text`, `textarea`, `number`, `select`, `checkbox`, `email`, `url`, `static`
 
 **Action styles:** `primary`, `success`, `danger`, `warning`, `ghost`, `approve`, `reject`, `submit`, `delete`
 
 You can combine these to build approval flows, configuration wizards, data entry forms, triage interfaces — really any structured interaction that runs on fields, selections, and decisions. For 80% of use cases, you never touch HTML.
+
+### Rich Section Types
+
+Beyond basic forms and text, the renderer supports content types purpose-built for developer workflows:
+
+- **`progress`** — Task checklist with status icons and percentage bar. Pair with `webview_update(merge=True)` to stream live progress as your agent works.
+- **`log`** — Scrolling terminal output with ANSI color support. Great for build output, test results, or any streaming text.
+- **`diff`** — Unified diff viewer with line numbers, green/red coloring, and hunk headers. Show code changes without forcing the human to read raw patches.
+- **`table`** — Sortable data table with optional row selection. Good for test results, dependency lists, or any tabular data.
+- **`tabs`** — Client-side tabbed panels. Nest any other section types inside each tab. No server round-trip on tab switch.
+
+### Live Updates
+
+`webview_update()` pushes state changes to the browser without blocking. The agent can continue working while the UI updates in real time:
+
+```json
+webview_update({"status": "processing", "message": "Running tests..."}, merge=True)
+```
+
+Use `merge=True` to update specific fields without replacing the entire state. Or use presets for common patterns:
+
+```json
+webview_update({"tasks": [...], "percentage": 75}, preset="progress")
+```
+
+### Field Validation
+
+Fields support client-side validation that blocks form submission until resolved:
+
+```json
+{"key": "email", "type": "email", "label": "Email", "required": true,
+ "pattern": "^[^@]+@[^@]+$", "errorMessage": "Enter a valid email"}
+```
+
+Available validators: `required`, `pattern` (regex), `minLength`, `maxLength`.
+
+### Conditional Fields
+
+Show or hide fields based on other field values using behaviors:
+
+```json
+{
+  "data": {"sections": [...]},
+  "behaviors": [
+    {"when": {"field": "type", "equals": "custom"}, "show": ["custom_name"]},
+    {"when": {"field": "confirm", "checked": true}, "enable": ["submit"]}
+  ]
+}
+```
+
+Conditions: `equals`, `notEquals`, `in`, `notIn`, `checked`, `unchecked`, `empty`, `notEmpty`, `matches`.
+
+### Multi-Panel Layouts
+
+Use `layout` + `panels` for side-by-side content:
+
+```json
+{
+  "layout": {"type": "sidebar", "sidebarWidth": "280px"},
+  "panels": {
+    "sidebar": {"sections": [{"type": "items", "items": [...]}]},
+    "main": {"sections": [{"type": "text", "content": "..."}]}
+  }
+}
+```
+
+Layout types: `sidebar` (main + nav), `split` (equal columns). Both collapse to single-column on mobile.
 
 ## Custom Apps
 
@@ -285,7 +354,7 @@ These aren't toy demos. They're functional interfaces that handle real workflows
 
 **Multi-step wizard.** For N items that need review, show one at a time. The agent calls `webview` in a loop, advancing to the next item after each response. This avoids overwhelming the user with a wall of decisions.
 
-**Live dashboard.** Agent calls `webview` to display progress, then uses `webview_read` to check for user actions periodically. Useful for long-running operations where the human wants visibility but may occasionally need to act.
+**Live dashboard.** Agent calls `webview` to display initial state, then uses `webview_update(merge=True)` to stream progress, logs, and status changes in real time. The human sees a live-updating UI and can act when ready. Pair with `progress` and `log` sections for build pipelines, test runs, or deployment workflows.
 
 **Batch triage.** Show all items at once with per-item actions — tabs, cards, or a list with inline controls. Works well when the total count is under 10 or so.
 
@@ -305,7 +374,7 @@ Nine defense layers enforce this, all enabled by default:
 - **SecurityGate** — 22 XSS patterns, zero-width character detection, schema validation
 - **Rate limiting** — 30 actions per minute per session
 
-All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 541 tests.
+All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 748 tests.
 
 The tradeoff is real, though. This level of defense adds complexity to the codebase. If you're running in a fully trusted local environment and want to understand what each layer does, the [security tests](scripts/tests/) are the best documentation.
 

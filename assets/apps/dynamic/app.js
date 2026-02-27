@@ -1,11 +1,19 @@
 "use strict";
-// Dynamic UI renderer — reads everything from state.json schema.
-// No custom code needed. Agent writes a schema, this renders it.
+// Dynamic UI renderer — orchestrator module.
+// Reads everything from state.json schema — no custom code needed.
 // Uses addEventListener (CSP-safe) instead of inline event handlers.
+//
+// Depends on: utils.js, sections.js, validation.js, behaviors.js (loaded first)
 
 (function () {
+  var U = window.OWG;
+
+  // Shared state exposed via OWG for use by sub-modules
+  // Use Object.create(null) to prevent prototype chain interference
+  U.formValues = Object.create(null);
+  U.fieldValidators = Object.create(null);
+
   var wv = new OpenWebGoggles();
-  var formValues = {};  // collects field values before submit
   var done = false;
 
   var els = {
@@ -25,72 +33,124 @@
       render(instance.getState());
     })
     .catch(function (err) {
-      safeHTML(els.loading, "<p style='color:var(--red)'>Connection failed: " + esc(String(err)) + "</p>");
+      U.safeHTML(els.loading, "<p style='color:var(--red)'>Connection failed: " + U.esc(String(err)) + "</p>");
     });
 
   wv.on("connected",     function (d) { render(d.state); });
   wv.on("state_updated", function (s) { if (!done) render(s); });
   wv.on("close",         function (d) {
     done = true;
-    safeHTML(els.content, '<div class="done-state"><div class="done-icon">✓</div><div style="color:var(--green);font-weight:600">Session closed</div><div class="done-msg">' + esc((d && d.message) || "") + "</div></div>");
+    U.safeHTML(els.content, '<div class="done-state"><div class="done-icon">\u2713</div><div style="color:var(--green);font-weight:600">Session closed</div><div class="done-msg">' + U.esc((d && d.message) || "") + "</div></div>");
   });
 
-  // ─── Main renderer ───────────────────────────────────────────────────────────
+  // ─── Main renderer ──────────────────────────────────────────────────────────
   function render(state) {
     if (!state) return;
-    formValues = {};
+    U.formValues = Object.create(null);
+    U.fieldValidators = Object.create(null);
 
     // Header
     var title = state.title || "OpenCode";
-    document.title = title + " — OpenWebGoggles";
+    document.title = title + " \u2014 OpenWebGoggles";
     els.hdrTitle.textContent = title;
 
     var status = (state.status || "").replace(/_/g, " ");
     if (status) {
       els.hdrBadge.textContent = status;
-      els.hdrBadge.className = "badge " + statusBadgeClass(state.status);
+      els.hdrBadge.className = "badge " + U.statusBadgeClass(state.status);
     } else {
       els.hdrBadge.textContent = "";
     }
 
-    var ui = (state.data && state.data.ui) || state.data || {};
-    var sections = ui.sections || [];
-    var actions  = state.actions_requested || ui.actions || [];
+    // Inject custom CSS
+    U.injectCustomCSS(state.custom_css || "");
 
+    // Check for layout mode
+    var hasLayout = state.layout && state.layout.type && state.layout.type !== "default";
     var html = "";
 
     // Message
     if (state.message) {
+      var msgCls = "message-box" + U.safeClass(state.message_className);
       if (state.message_format === "markdown") {
-        html += '<div class="message-box">' + markdownBlock(state.message) + "</div>";
+        html += '<div class="' + msgCls + '">' + U.markdownBlock(state.message) + "</div>";
       } else {
-        html += '<div class="message-box">' + esc(state.message) + "</div>";
+        html += '<div class="' + msgCls + '">' + U.esc(state.message) + "</div>";
       }
     }
 
-    // Sections
-    sections.forEach(function (sec, si) {
-      html += renderSection(sec, si);
-    });
+    if (hasLayout) {
+      html += renderLayout(state);
+    } else {
+      // Standard single-column sections
+      var ui = (state.data && state.data.ui) || state.data || {};
+      var sections = ui.sections || [];
+      sections.forEach(function (sec, si) {
+        html += U.renderSection(sec, si);
+      });
+    }
 
-    // Top-level actions (outside sections)
+    // Top-level actions
+    var actions = state.actions_requested || ((state.data && (state.data.ui || state.data)) || {}).actions || [];
     if (actions.length) {
       html += '<div class="section"><div class="actions-bar" id="main-actions">';
       actions.forEach(function (a) {
-        html += renderActionButton(a, "main");
+        html += U.renderActionButton(a, "main");
       });
       html += "</div></div>";
     }
 
     els.loading.classList.add("hidden");
     els.content.classList.remove("hidden");
-    safeHTML(els.content, html);
+    U.safeHTML(els.content, html);
 
-    // Bind event listeners (CSP-safe, no inline handlers)
+    // Bind events + post-render hooks
     bindEvents();
+    U.bindSectionEvents(els.content);
+    U.bindValidation(els.content);
+    U.initBehaviors(state);
+    U.postRenderSections();
   }
 
-  // ─── Event binding (replaces inline onclick/oninput/onchange) ──────────────
+  // ─── Layout renderer ────────────────────────────────────────────────────────
+  function renderLayout(state) {
+    var layout = state.layout;
+    var panels = state.panels || {};
+    var html = "";
+
+    if (layout.type === "sidebar") {
+      var sw = layout.sidebarWidth || "300px";
+      // Validate CSS length on client side (defense-in-depth — server already checks)
+      if (!/^[0-9]+(px|em|rem|%)$/.test(sw)) sw = "300px";
+      html += '<div class="layout-sidebar" style="--sidebar-width:' + U.escAttr(sw) + '">';
+      html += '<div class="layout-panel layout-sidebar-panel">';
+      (panels.sidebar && panels.sidebar.sections || []).forEach(function (sec, si) {
+        html += U.renderSection(sec, "sb-" + si);
+      });
+      html += "</div>";
+      html += '<div class="layout-panel layout-main-panel">';
+      (panels.main && panels.main.sections || []).forEach(function (sec, si) {
+        html += U.renderSection(sec, "main-" + si);
+      });
+      html += "</div></div>";
+    } else if (layout.type === "split") {
+      html += '<div class="layout-split">';
+      html += '<div class="layout-panel">';
+      (panels.left && panels.left.sections || []).forEach(function (sec, si) {
+        html += U.renderSection(sec, "left-" + si);
+      });
+      html += "</div>";
+      html += '<div class="layout-panel">';
+      (panels.right && panels.right.sections || []).forEach(function (sec, si) {
+        html += U.renderSection(sec, "right-" + si);
+      });
+      html += "</div></div>";
+    }
+
+    return html;
+  }
+
+  // ─── Event binding ──────────────────────────────────────────────────────────
   function bindEvents() {
     // Action buttons
     els.content.querySelectorAll("[data-action-id]").forEach(function (btn) {
@@ -104,7 +164,7 @@
       });
     });
 
-    // Text/email/url/number inputs
+    // Form field inputs
     els.content.querySelectorAll("[data-field-key]").forEach(function (el) {
       var key = el.getAttribute("data-field-key");
       var tag = el.tagName.toLowerCase();
@@ -114,204 +174,72 @@
                : "input";
       el.addEventListener(event, function () {
         if (type === "checkbox") {
-          formValues[key] = el.checked;
+          U.formValues[key] = el.checked;
         } else if (type === "number") {
-          formValues[key] = parseFloat(el.value) || 0;
+          U.formValues[key] = parseFloat(el.value) || 0;
         } else {
-          formValues[key] = el.value;
+          U.formValues[key] = el.value;
         }
+        // Re-evaluate behaviors on every change
+        U.evaluateBehaviors();
       });
     });
   }
 
-  // ─── Section renderer ─────────────────────────────────────────────────────────
-  function renderSection(sec, si) {
-    var html = '<div class="section">';
-    if (sec.title) html += '<div class="section-title">' + esc(sec.title) + "</div>";
-
-    switch (sec.type) {
-      case "form":      html += renderForm(sec, si);    break;
-      case "items":     html += renderItems(sec, si);   break;
-      case "text":      html += renderText(sec);        break;
-      case "actions":   html += renderActionsSection(sec); break;
-      default:          html += renderForm(sec, si);    break;
-    }
-
-    html += "</div>";
-    return html;
-  }
-
-  // ─── Form ─────────────────────────────────────────────────────────────────────
-  function renderForm(sec, si) {
-    var fields = sec.fields || [];
-    var cols = sec.columns === 2 ? "cols-2" : "cols-1";
-    var html = '<div class="fields-grid ' + cols + '">';
-    fields.forEach(function (f, fi) {
-      html += renderField(f, si, fi);
-    });
-    html += "</div>";
-    if (sec.actions && sec.actions.length) {
-      html += '<div class="actions-bar" style="margin-top:12px">';
-      sec.actions.forEach(function (a) {
-        html += renderActionButton(a, "sec-" + si);
-      });
-      html += "</div>";
-    }
-    return html;
-  }
-
-  function renderField(f, si, fi) {
-    var id = "f-" + si + "-" + fi;
-    var key = f.key || id;
-    var label = f.label || key;
-    var desc = "";
-    if (f.description) {
-      desc = f.description_format === "markdown"
-        ? '<div class="field-desc">' + markdownBlock(f.description) + "</div>"
-        : '<div class="field-desc">' + esc(f.description) + "</div>";
-    }
-    var dataKey = ' data-field-key="' + escAttr(key) + '"';
-
-    // Pre-populate form values with defaults
-    if (f.value !== undefined) formValues[key] = f.value;
-    else if (f.default !== undefined) formValues[key] = f.default;
-
-    var inner = "";
-    switch (f.type) {
-      case "textarea":
-        inner = '<textarea id="' + id + '" rows="' + (f.rows || 3) + '" placeholder="' + esc(f.placeholder || "") + '"' +
-          dataKey + '>' + esc(f.value || f.default || "") + "</textarea>";
-        break;
-      case "select": {
-        var opts = (f.options || []).map(function (o) {
-          var v = typeof o === "object" ? o.value : o;
-          var l = typeof o === "object" ? o.label : o;
-          var sel = String(v) === String(f.value || f.default || "") ? " selected" : "";
-          return '<option value="' + escAttr(v) + '"' + sel + ">" + esc(l) + "</option>";
-        }).join("");
-        inner = '<select id="' + id + '"' + dataKey + '>' + opts + "</select>";
-        break;
-      }
-      case "checkbox": {
-        var chk = (f.value || f.default) ? " checked" : "";
-        inner = '<label class="checkbox-wrap"><input type="checkbox" id="' + id + '"' + chk +
-          dataKey + '><span class="checkbox-label">' + esc(f.label || "") + "</span></label>";
-        return '<div class="field">' + inner + desc + "</div>";
-      }
-      case "number":
-        inner = '<input type="number" id="' + id + '" value="' + escAttr(String(f.value || f.default || "")) + '" ' +
-          'placeholder="' + escAttr(f.placeholder || "") + '" min="' + escAttr(String(f.min || "")) + '" max="' + escAttr(String(f.max || "")) + '"' +
-          dataKey + '>';
-        break;
-      case "static":
-        if (f.format === "markdown") {
-          inner = '<div class="field-static">' + markdownBlock(f.value || "") + "</div>";
-        } else {
-          inner = '<div class="field-static' + (f.mono ? " mono" : "") + '">' + esc(f.value || "") + "</div>";
-        }
-        break;
-      default: { // text / email / url
-        var ALLOWED_INPUT_TYPES = {text:1, email:1, url:1, tel:1, search:1, password:1, date:1, time:1, color:1};
-        var inputType = (f.type && ALLOWED_INPUT_TYPES[f.type]) ? f.type : "text";
-        inner = '<input type="' + inputType + '" id="' + id + '" value="' + escAttr(String(f.value || f.default || "")) + '" ' +
-          'placeholder="' + escAttr(f.placeholder || "") + '"' + dataKey + '>';
-      }
-    }
-
-    return '<div class="field"><div class="field-label">' + esc(label) + "</div>" + inner + desc + "</div>";
-  }
-
-  // ─── Items list ───────────────────────────────────────────────────────────────
-  function renderItems(sec, si) {
-    var items = sec.items || [];
-    var html = '<div class="items-list">';
-    items.forEach(function (item, ii) {
-      html += '<div class="item-row">';
-      html += '<div class="item-content">';
-      if (item.title) {
-        html += item.format === "markdown"
-          ? '<div class="item-title">' + markdownBlock(item.title) + "</div>"
-          : '<div class="item-title">' + esc(item.title) + "</div>";
-      }
-      if (item.subtitle) {
-        html += item.format === "markdown"
-          ? '<div class="item-subtitle">' + markdownBlock(item.subtitle) + "</div>"
-          : '<div class="item-subtitle">' + esc(item.subtitle) + "</div>";
-      }
-      html += "</div>";
-      if (item.actions && item.actions.length) {
-        html += '<div class="item-actions">';
-        item.actions.forEach(function (a) {
-          var actionWithItem = Object.assign({}, a, { _item_id: item.id || String(ii) });
-          html += renderActionButton(actionWithItem, "item-" + si + "-" + ii);
-        });
-        html += "</div>";
-      }
-      html += "</div>";
-    });
-    html += "</div>";
-    return html;
-  }
-
-  // ─── Text block ───────────────────────────────────────────────────────────────
-  function renderText(sec) {
-    if (sec.format === "markdown") {
-      return '<div class="message-box">' + markdownBlock(sec.content || "") + "</div>";
-    }
-    return '<div class="message-box">' + esc(sec.content || "") + "</div>";
-  }
-
-  // ─── Actions section ──────────────────────────────────────────────────────────
-  function renderActionsSection(sec) {
-    var html = '<div class="actions-bar">';
-    (sec.actions || []).forEach(function (a) {
-      html += renderActionButton(a, "sec-actions");
-    });
-    html += "</div>";
-    return html;
-  }
-
-  // ─── Action button ────────────────────────────────────────────────────────────
-  function renderActionButton(a, scope) {
-    var btnClass = "btn btn-sm";
-    switch (a.style || a.type) {
-      case "approve": case "confirm": case "primary": btnClass += " btn-primary"; break;
-      case "reject":  case "danger":  case "delete":  btnClass += " btn-danger";  break;
-      case "success": case "submit":                  btnClass += " btn-success"; break;
-      case "warning":                                 btnClass += " btn-warning"; break;
-      case "ghost":                                   btnClass += " btn-ghost";   break;
-    }
-    var dataItem = a._item_id !== undefined ? ' data-item="' + escAttr(a._item_id) + '"' : "";
-    return '<button class="' + btnClass + '"' +
-      ' data-action-id="' + escAttr(a.id) + '"' +
-      ' data-action-type="' + escAttr(a.type || "action") + '"' +
-      ' data-action-scope="' + escAttr(scope) + '"' +
-      dataItem + ' title="' + escAttr(a.description || "") + '">' + esc(a.label) + "</button>";
-  }
-
-  // ─── Action handler ──────────────────────────────────────────────────────────
+  // ─── Action handler ─────────────────────────────────────────────────────────
   function handleAction(actionId, type, scope, btn) {
     if (done) return;
 
-    // Collect value: form values, item id, or boolean
-    var value;
-    if (type === "approve" || type === "confirm" || type === "primary") {
-      value = Object.keys(formValues).length ? Object.assign({}, formValues) : true;
-    } else if (type === "reject" || type === "danger" || type === "delete") {
-      value = Object.keys(formValues).length ? Object.assign({}, formValues) : false;
-    } else if (type === "submit") {
-      value = Object.assign({}, formValues);
-    } else {
-      var itemId = btn && btn.dataset && btn.dataset.item;
-      value = itemId !== undefined ? { item_id: itemId, form: Object.assign({}, formValues) } : Object.assign({}, formValues);
+    // Validate required fields before submit
+    if (type === "approve" || type === "confirm" || type === "primary" || type === "submit" || type === "success") {
+      var errors = U.validateAllRequired();
+      if (errors) {
+        U.showAllErrors(errors);
+        return;
+      }
     }
 
-    btn.disabled = true;
-    btn.textContent = "…";
+    // Collect value
+    var value;
+    if (type === "approve" || type === "confirm" || type === "primary") {
+      value = Object.keys(U.formValues).length ? Object.assign({}, U.formValues) : true;
+    } else if (type === "reject" || type === "danger" || type === "delete") {
+      value = Object.keys(U.formValues).length ? Object.assign({}, U.formValues) : false;
+    } else if (type === "submit") {
+      value = Object.assign({}, U.formValues);
+    } else {
+      var itemId = btn && btn.dataset && btn.dataset.item;
+      value = itemId !== undefined ? { item_id: itemId, form: Object.assign({}, U.formValues) } : Object.assign({}, U.formValues);
+    }
 
-    wv.sendAction(actionId, type, value).then(function () {
+    // Build action payload with optional context
+    var context = {};
+    if (btn && btn.dataset) {
+      if (btn.dataset.itemIndex !== undefined) {
+        context.item_index = parseInt(btn.dataset.itemIndex, 10);
+        if (btn.dataset.item) context.item_id = btn.dataset.item;
+      }
+      if (btn.dataset.sectionIndex !== undefined) {
+        context.section_index = parseInt(btn.dataset.sectionIndex, 10) || btn.dataset.sectionIndex;
+      }
+      if (btn.dataset.sectionId) context.section_id = btn.dataset.sectionId;
+    }
+    var hasContext = Object.keys(context).length > 0;
+
+    btn.disabled = true;
+    btn.textContent = "\u2026";
+
+    var actionPromise;
+    if (hasContext) {
+      // Use sendAction with metadata containing context
+      actionPromise = wv.sendAction(actionId, type, value, { context: context });
+    } else {
+      actionPromise = wv.sendAction(actionId, type, value);
+    }
+
+    actionPromise.then(function () {
       if (btn.parentElement) {
-        safeHTML(btn.parentElement, '<span style="color:var(--green);font-size:12px">✓ Sent — waiting for agent...</span>');
+        U.safeHTML(btn.parentElement, '<span style="color:var(--green);font-size:12px">\u2713 Sent \u2014 waiting for agent...</span>');
       }
     }).catch(function (err) {
       btn.disabled = false;
@@ -319,124 +247,10 @@
       console.error("Action failed:", err);
     });
   }
-
-  // ─── Utilities ────────────────────────────────────────────────────────────────
-  function esc(s) {
-    return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function escAttr(s) {
-    return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/'/g, "&#39;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  function statusBadgeClass(s) {
-    s = (s || "").toLowerCase();
-    if (s.includes("error") || s.includes("fail") || s.includes("reject")) return "badge-danger";
-    if (s.includes("warn") || s.includes("pending") || s.includes("review")) return "badge-warn";
-    if (s.includes("ok") || s.includes("success") || s.includes("approv") || s.includes("done") || s.includes("complete")) return "badge-ok";
-    return "badge-info";
-  }
-
-  // ─── Markdown rendering (opt-in) ──────────────────────────────────────────────
-  // Requires marked.js + DOMPurify loaded via <script> tags. Falls back to esc()
-  // if either library is missing. Pipeline: marked.parse → DOMPurify → sanitizeHTML.
-  var PURIFY_CONFIG = {
-    ALLOWED_TAGS: [
-      "h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr",
-      "ul", "ol", "li", "strong", "em", "b", "i", "code", "pre",
-      "blockquote", "a", "table", "thead", "tbody", "tr", "th", "td",
-      "del", "sup", "sub", "span", "div", "details", "summary"
-    ],
-    ALLOWED_ATTR: ["href", "class"],
-    ALLOW_DATA_ATTR: false,
-    RETURN_TRUSTED_TYPE: false
-  };
-
-  // Install DOMPurify hook to force safe link targets (runs once on first call)
-  var _purifyHookInstalled = false;
-  function _ensurePurifyHook() {
-    if (_purifyHookInstalled || typeof DOMPurify === "undefined") return;
-    DOMPurify.addHook("afterSanitizeAttributes", function (node) {
-      if (node.tagName === "A") {
-        node.setAttribute("target", "_blank");
-        node.setAttribute("rel", "noopener noreferrer");
-      }
-    });
-    _purifyHookInstalled = true;
-  }
-
-  /**
-   * Convert markdown text to sanitized HTML string.
-   * Returns escaped plain text if libraries are unavailable.
-   */
-  function renderMarkdown(text) {
-    if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
-      return esc(text);
-    }
-    _ensurePurifyHook();
-    var rawHTML = marked.parse(String(text || ""));
-    return DOMPurify.sanitize(rawHTML, PURIFY_CONFIG);
-  }
-
-  /**
-   * Return HTML for a markdown-formatted content string wrapped in a
-   * .markdown-content container. The output still passes through
-   * sanitizeHTML() as defense-in-depth when assigned via safeHTML().
-   */
-  function markdownBlock(text) {
-    return '<div class="markdown-content">' + renderMarkdown(text) + "</div>";
-  }
-
-  // ─── Defense-in-depth HTML sanitizer ─────────────────────────────────────────
-  // Second line of defense after esc()/escAttr(). Strips dangerous elements
-  // and attributes from HTML before innerHTML assignment, protecting against
-  // any code path that might accidentally skip escaping.
-  var DANGEROUS_TAGS = /^(script|style|iframe|object|embed|form|meta|link|base|svg|math|template|noscript|xmp)$/i;
-  var EVENT_ATTR_RE = /^on/i;
-  // Block all data: URIs (not just text/html) — SVG data URIs can execute scripts
-  // in some browser contexts, and data: is a common XSS exfiltration vector.
-  var DANGEROUS_URL_RE = /^\s*(javascript|data\s*:|vbscript)\s*:/i;
-
-  function sanitizeHTML(html) {
-    try {
-      var doc = new DOMParser().parseFromString(html, "text/html");
-      cleanNode(doc.body);
-      return doc.body.innerHTML;
-    } catch (e) {
-      // If DOMParser fails, return entity-escaped version as safe fallback
-      return esc(html);
-    }
-  }
-
-  function cleanNode(node) {
-    var children = Array.prototype.slice.call(node.childNodes);
-    for (var i = 0; i < children.length; i++) {
-      var child = children[i];
-      if (child.nodeType === 1) { // Element node
-        if (DANGEROUS_TAGS.test(child.tagName)) {
-          child.remove();
-          continue;
-        }
-        // Remove dangerous attributes
-        var attrs = Array.prototype.slice.call(child.attributes);
-        for (var j = 0; j < attrs.length; j++) {
-          var name = attrs[j].name.toLowerCase();
-          if (EVENT_ATTR_RE.test(name)) {
-            child.removeAttribute(attrs[j].name);
-          } else if (
-            (name === "href" || name === "src" || name === "action" || name === "formaction" || name === "xlink:href") &&
-            DANGEROUS_URL_RE.test(attrs[j].value)
-          ) {
-            child.removeAttribute(attrs[j].name);
-          }
-        }
-        cleanNode(child);
-      }
-    }
-  }
-
-  /** Safe innerHTML setter — sanitizes before assignment. */
-  function safeHTML(el, html) {
-    el.innerHTML = sanitizeHTML(html);
-  }
 })();
+
+// Freeze the OWG namespace after all modules are loaded to prevent post-init
+// tampering with escape functions (defense-in-depth against prototype pollution).
+if (typeof Object.freeze === "function") {
+  Object.freeze(window.OWG);
+}

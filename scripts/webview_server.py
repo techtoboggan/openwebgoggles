@@ -158,6 +158,7 @@ class WebviewHTTPHandler:
         session_token: str,
         http_port: int = 18420,
         ws_port: int = 18421,
+        security_gate: SecurityGate | None = None,
     ):
         self.contract = contract
         self.apps_dir = apps_dir
@@ -165,6 +166,7 @@ class WebviewHTTPHandler:
         self.session_token = session_token
         self.http_port = http_port
         self.ws_port = ws_port
+        self._security_gate = security_gate
         self.start_time = time.time()
         self.ws_clients: set = set()
         self._csp_nonce: str | None = None  # set per-HTML-response
@@ -381,6 +383,11 @@ class WebviewHTTPHandler:
                 opts = {}
             delay_ms = max(0, min(int(opts.get("delay_ms", 1500)), 10000))
             message = str(opts.get("message", "Session complete."))[:500]  # Limit close message length
+            # XSS-scan close message before broadcasting to browser
+            if self._security_gate:
+                xss = self._security_gate._scan_xss(message, "close.message")
+                if xss:
+                    message = "Session complete."  # Fallback to safe default
             await self._broadcast({"type": "close", "data": {"message": message, "delay_ms": delay_ms}})
             await self._send_response(writer, 200, {"ok": True, "clients_notified": len(self.ws_clients)})
 
@@ -588,6 +595,7 @@ class WebviewServer:
             self.session_token,
             http_port=self.http_port,
             ws_port=self.ws_port,
+            security_gate=self._security_gate,
         )
         self.http_handler.ws_clients = self._ws_clients
         self.http_handler._public_key_hex = self._public_key_hex
@@ -811,7 +819,13 @@ class WebviewServer:
                 elif name == "manifest":
                     data = self.contract.get_manifest()
                     if data:
-                        await self._broadcast({"type": "manifest_updated", "data": data})
+                        # Strip session token before broadcasting (same as HTTP endpoint)
+                        import copy as _copy
+
+                        safe_data = _copy.deepcopy(data)
+                        if "session" in safe_data and "token" in safe_data["session"]:
+                            safe_data["session"]["token"] = "REDACTED"  # noqa: S105 — redacting, not setting a password
+                        await self._broadcast({"type": "manifest_updated", "data": safe_data})
                         last_broadcast["manifest"] = time.time()
                 elif name == "actions":
                     data = self.contract.get_actions()

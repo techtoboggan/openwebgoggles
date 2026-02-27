@@ -26,6 +26,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -64,6 +65,109 @@ except Exception as exc:
 
 logger = logging.getLogger("openwebgoggles")
 
+# SecurityGate — imported eagerly for validation in MCP tools
+_security_gate = None
+try:
+    from security_gate import SecurityGate
+
+    _security_gate = SecurityGate()
+except ImportError:
+    logger.warning("SecurityGate not available — state validation disabled")
+except Exception:
+    logger.error("SecurityGate failed to initialize — state validation disabled", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Deep merge utility
+# ---------------------------------------------------------------------------
+
+
+def _deep_merge(base: dict, override: dict) -> None:
+    """Recursively merge *override* into *base*, mutating *base* in place.
+
+    Rules:
+    - dict + dict → recurse
+    - list + list → replace (NOT append — append is surprising and hard to undo)
+    - anything else → override wins
+    """
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+
+
+# ---------------------------------------------------------------------------
+# State presets — expand shorthand into full state schemas
+# ---------------------------------------------------------------------------
+
+
+def _expand_preset(preset: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Expand a preset name into a full state schema, merging user overrides."""
+    s = dict(state)  # shallow copy so we can pop
+
+    if preset == "progress":
+        tasks = s.pop("tasks", [])
+        pct = s.pop("percentage", None)
+        base: dict[str, Any] = {
+            "title": s.get("title", "Progress"),
+            "status": "processing",
+            "data": {
+                "sections": [
+                    {
+                        "type": "progress",
+                        "title": s.get("title", ""),
+                        "tasks": tasks,
+                    }
+                ]
+            },
+        }
+        if pct is not None:
+            base["data"]["sections"][0]["percentage"] = pct
+        _deep_merge(base, s)
+        return base
+
+    if preset == "confirm":
+        details = s.pop("details", None)
+        base = {
+            "title": s.get("title", "Confirm"),
+            "message": s.get("message", ""),
+            "status": "pending_review",
+            "data": {"sections": []},
+            "actions_requested": [
+                {"id": "confirm", "label": "Confirm", "type": "approve"},
+                {"id": "cancel", "label": "Cancel", "type": "reject"},
+            ],
+        }
+        if details:
+            base["data"]["sections"].append({"type": "text", "content": details, "format": "markdown"})
+        _deep_merge(base, s)
+        return base
+
+    if preset == "log":
+        lines = s.pop("lines", [])
+        max_lines = s.pop("maxLines", 500)
+        base = {
+            "title": s.get("title", "Log"),
+            "status": "processing",
+            "data": {
+                "sections": [
+                    {
+                        "type": "log",
+                        "title": s.get("title", ""),
+                        "lines": lines,
+                        "autoScroll": True,
+                        "maxLines": max_lines,
+                    }
+                ]
+            },
+        }
+        _deep_merge(base, s)
+        return base
+
+    raise ValueError(f"Unknown preset: {preset!r}")
+
+
 # ---------------------------------------------------------------------------
 # WebviewSession — manages one webview server subprocess + data contract
 # ---------------------------------------------------------------------------
@@ -89,6 +193,7 @@ class WebviewSession:
         self.ws_port: int = self.DEFAULT_WS_PORT
         self._started: bool = False
         self._state_version: int = 0
+        self._state_lock = threading.Lock()  # Protects read-merge-write in merge_state
         self._open_browser_on_start: bool = open_browser
         self._chrome_process: subprocess.Popen | None = None
         self._chrome_profile: str | None = None
@@ -282,6 +387,21 @@ class WebviewSession:
         state.setdefault("updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         state.setdefault("status", "waiting_input")
         self._write_json(self.data_dir / "state.json", state)
+
+    def read_state(self) -> dict[str, Any]:
+        """Read current state.json."""
+        return self._read_json(self.data_dir / "state.json") or {}
+
+    def merge_state(self, partial: dict[str, Any]) -> dict[str, Any]:
+        """Deep merge partial state into current state, then write.
+
+        Uses _state_lock to prevent TOCTOU races between read and write.
+        """
+        with self._state_lock:
+            current = self.read_state()
+            _deep_merge(current, partial)
+            self.write_state(current)
+            return current
 
     def read_actions(self) -> dict[str, Any]:
         """Read current actions.json."""
@@ -1032,6 +1152,91 @@ Example — text section with markdown:
 ```
 {"type": "text", "content": "## Summary\\n\\n- **Fixed** auth bug\\n- Added `retry` logic\\n\\n```python\\ndef retry(fn):\\n    ...\\n```", "format": "markdown"}
 ```
+
+## Rich section types
+
+Beyond form/items/text/actions, these section types are available:
+
+**progress** — Task progress tracker (pair with `webview_update` for live updates):
+```
+{"type": "progress", "title": "Running Tests", "tasks": [
+  {"label": "Unit tests", "status": "completed"},
+  {"label": "Integration", "status": "in_progress"},
+  {"label": "E2E", "status": "pending"}
+], "percentage": 45}
+```
+Task statuses: pending, in_progress, completed, failed, skipped.
+
+**log** — Scrolling terminal output (supports ANSI colors):
+```
+{"type": "log", "title": "Build Output", "lines": ["$ npm run build", "Building..."], "autoScroll": true, "maxLines": 500}
+```
+
+**diff** — Unified diff with line numbers and color:
+```
+{"type": "diff", "title": "Changes", "content": "--- a/file.py\\n+++ b/file.py\\n@@ -1,3 +1,3 @@\\n def hello():\\n-    print('old')\\n+    print('new')"}
+```
+
+**table** — Sortable data table (optional row selection):
+```
+{"type": "table", "title": "Results", "columns": [
+  {"key": "name", "label": "Test"}, {"key": "status", "label": "Status"}
+], "rows": [{"name": "auth", "status": "pass"}], "selectable": true}
+```
+
+**tabs** — Tabbed content (client-side switching, no round-trip):
+```
+{"type": "tabs", "tabs": [
+  {"id": "overview", "label": "Overview", "sections": [{"type": "text", "content": "..."}]},
+  {"id": "details", "label": "Details", "sections": [{"type": "form", "fields": [...]}]}
+]}
+```
+
+## Non-blocking updates with webview_update
+
+Use `webview_update` to push UI changes without waiting for user action. \
+This is ideal for progress tracking, streaming logs, and live status:
+
+```
+webview_update({"status": "processing", "message": "Running tests..."}, merge=True)
+```
+
+Or use presets for common patterns:
+```
+webview_update({"tasks": [...], "percentage": 50}, preset="progress")
+```
+
+## Field validation
+
+Fields support client-side validation with `required`, `pattern`, `minLength`, `maxLength`:
+```
+{"key": "email", "type": "email", "label": "Email", "required": true,
+ "pattern": "^[^@]+@[^@]+$", "errorMessage": "Enter a valid email"}
+```
+Required fields block form submission until filled. Errors show inline.
+
+## Conditional fields (behaviors)
+
+Show/hide fields or enable/disable buttons based on other field values:
+```
+{"data": {"sections": [...]},
+ "behaviors": [
+   {"when": {"field": "type", "equals": "custom"}, "show": ["custom_name"]},
+   {"when": {"field": "confirm", "checked": true}, "enable": ["submit"]}
+]}
+```
+
+## Layout system
+
+Use `layout` + `panels` for multi-panel layouts:
+```
+{"layout": {"type": "sidebar", "sidebarWidth": "280px"},
+ "panels": {
+   "sidebar": {"sections": [{"type": "items", "items": [...]}]},
+   "main": {"sections": [{"type": "text", "content": "..."}]}
+}}
+```
+Layout types: sidebar, split.
 """,
     lifespan=lifespan,
 )
@@ -1043,6 +1248,7 @@ async def webview(
     state: dict[str, Any],
     timeout: int = 300,
     app: str = "dynamic",
+    preset: str | None = None,
     ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Show an interactive webview UI and wait for the user to respond.
@@ -1055,27 +1261,60 @@ async def webview(
       - title (str): Header title
       - message (str, optional): Description/instructions shown to the user
       - message_format (str, optional): Set to "markdown" to render message as markdown
+      - message_className (str, optional): CSS class(es) to add to the message box
       - status (str, optional): Badge text (e.g. "pending_review", "waiting_input")
+      - custom_css (str, optional): Custom CSS injected as a <style> tag (validated for safety)
       - data (dict): UI layout with optional "sections" array. Each section has:
-          - type: "form" | "items" | "text" | "actions"
+          - type: "form" | "items" | "text" | "actions" | "progress" | "log" | "diff" | "table" | "tabs"
           - title (str, optional): Section heading
+          - id (str, optional): Section identifier (included in action context)
           - format (str, optional): Set to "markdown" for markdown rendering
+          - className (str, optional): CSS class(es) to add to this section
           - fields (list): For "form" sections — input fields
           - items (list): For "items" sections — list rows
-          - content (str): For "text" sections
+          - content (str): For "text" and "diff" sections
           - actions (list): Buttons within the section
+          - tasks (list): For "progress" sections — [{label, status}]
+          - percentage (number): For "progress" sections — 0-100
+          - lines (list): For "log" sections — array of log line strings
+          - columns (list): For "table" sections — [{key, label}]
+          - rows (list): For "table" sections — array of row objects
+          - tabs (list): For "tabs" sections — [{id, label, sections: [...]}]
       - actions_requested (list): Top-level action buttons, each with:
           - id (str): Unique action identifier
           - label (str): Button text
           - type/style: "approve"|"reject"|"submit"|"primary"|"danger"|"success"|"warning"|"ghost"
+      - behaviors (list, optional): Client-side conditional field rules.
+          Each: {when: {field, equals|in|checked|...}, show|hide|enable|disable: [keys]}
+      - layout (dict, optional): Multi-panel layout. {type: "sidebar"|"split", sidebarWidth?}
+      - panels (dict, optional): Panel content. {sidebar: {sections}, main: {sections}}
 
     Field types: text, textarea, number, select, checkbox, email, url, static
-    Each field: {key, label, type, value?, default?, placeholder?, description?, options?, format?}
+    Each field: {key, label, type, value?, default?, placeholder?, description?, options?, format?,
+                 required?, pattern?, minLength?, maxLength?, errorMessage?}
+    Items: {title, subtitle?, id?, format?, className?, actions?}
+
+    Custom styling:
+      - className: Available on sections, fields, and items. Alphanumeric + hyphens + spaces.
+      - custom_css: Raw CSS string. Dangerous patterns (expression, @import, javascript:url, etc.) are blocked.
+      - Built-in utility classes (no custom_css needed):
+        owg-diff-add, owg-diff-remove, owg-diff-context (diff highlighting)
+        owg-mono, owg-code (monospace text)
+        owg-pill, owg-pill-green/red/blue/yellow/neutral (badge pills)
+        owg-callout-info/warn/error/success (callout boxes)
+        owg-text-green/red/blue/yellow/muted/dim (text colors)
+        owg-compact, owg-no-border, owg-zebra (layout helpers for item lists)
+
+    Presets (shorthand for common patterns):
+      - preset="progress": state={tasks: [...], percentage: N}
+      - preset="confirm": state={title, message, details?}
+      - preset="log": state={lines: [...], maxLines?}
 
     Returns the user's response with an "actions" array, where each action has:
       - action_id: Which button was clicked
       - type: Action type
       - value: Collected form data (dict) or boolean
+      - context (optional): {item_index, item_id, section_index, section_id} for per-item actions
 
     Example:
         result = webview({
@@ -1116,6 +1355,19 @@ async def webview(
             ]
         })
     """
+    if preset:
+        try:
+            state = _expand_preset(preset, state)
+        except ValueError as e:
+            return {"error": str(e)}
+
+    # Validate eagerly so the agent gets a clear error
+    if _security_gate:
+        raw = json.dumps(state, separators=(",", ":"))
+        valid, err, _ = _security_gate.validate_state(raw)
+        if not valid:
+            return {"error": f"State validation failed: {err}"}
+
     session = await _get_session()
     try:
         await session.ensure_started(app)
@@ -1158,6 +1410,83 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
         session.clear_actions()
 
     return actions
+
+
+@mcp.tool()
+@_track_tool_call
+async def webview_update(
+    state: dict[str, Any],
+    merge: bool = False,
+    preset: str | None = None,
+    app: str = "dynamic",
+) -> dict[str, Any]:
+    """Update the webview state without blocking for a response.
+
+    Use this to push UI updates (progress, status changes, new data) while
+    the webview is open, without waiting for user action.
+
+    Args:
+        state: The state object (same schema as webview).
+        merge: If True, deep-merge into existing state instead of full replacement.
+               Dicts are merged recursively. Lists are replaced, not appended.
+        preset: Optional preset name to expand state from shorthand.
+                "progress" — takes {tasks: [...], percentage: N}
+                "confirm" — takes {title, message, details?}
+                "log" — takes {lines: [...], maxLines?}
+        app: App to use (default: "dynamic").
+
+    Returns: {"updated": true, "version": N}
+    """
+    if preset:
+        try:
+            state = _expand_preset(preset, state)
+        except ValueError as e:
+            return {"error": str(e)}
+
+    # Validate eagerly so the agent gets a clear error
+    if _security_gate:
+        raw = json.dumps(state, separators=(",", ":"))
+        valid, err, _ = _security_gate.validate_state(raw)
+        if not valid:
+            return {"error": f"State validation failed: {err}"}
+
+    session = await _get_session()
+    try:
+        await session.ensure_started(app)
+    except Exception as e:
+        return {"error": f"Failed to start webview: {e}"}
+
+    # Do NOT clear actions — preserve pending user actions
+    if merge:
+        merged = session.merge_state(state)
+        # Re-validate the FINAL merged state (partial + existing may produce invalid composite)
+        if _security_gate:
+            merged_raw = json.dumps(merged, separators=(",", ":"))
+            valid, err, _ = _security_gate.validate_state(merged_raw)
+            if not valid:
+                return {"error": f"Merged state validation failed: {err}"}
+        return {"updated": True, "version": merged.get("version", 0)}
+    else:
+        session.write_state(state)
+        return {"updated": True, "version": session._state_version}
+
+
+@mcp.tool()
+@_track_tool_call
+async def webview_status() -> dict[str, Any]:
+    """Check whether a webview session is currently active.
+
+    Returns the session state without modifying anything.
+    """
+    global _session
+    if _session is None or not _session._started:
+        return {"active": False}
+    return {
+        "active": True,
+        "alive": _session.is_alive(),
+        "url": _session.url,
+        "session_id": _session.session_id,
+    }
 
 
 @mcp.tool()
@@ -1221,8 +1550,7 @@ def _resolve_binary() -> str:
 _CLAUDE_SETTINGS = {
     "permissions": {
         "allow": [
-            "mcp__openwebgoggles__webview_ask",
-            "mcp__openwebgoggles__webview_show",
+            "mcp__openwebgoggles__webview",
             "mcp__openwebgoggles__webview_read",
             "mcp__openwebgoggles__webview_close",
         ]

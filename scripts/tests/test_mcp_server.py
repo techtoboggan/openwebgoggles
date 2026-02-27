@@ -18,7 +18,7 @@ import pytest
 # Ensure scripts/ is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mcp_server import WebviewSession
+from mcp_server import WebviewSession, _deep_merge, _expand_preset
 
 
 # ---------------------------------------------------------------------------
@@ -649,3 +649,179 @@ class TestMarkdownAssetCopy:
         assert (app_dir / "marked.min.js").is_file()
         assert (app_dir / "purify.min.js").is_file()
         assert (app_dir / "openwebgoggles-sdk.js").is_file()
+
+
+# ---------------------------------------------------------------------------
+# V2: Deep Merge
+# ---------------------------------------------------------------------------
+
+
+class TestDeepMerge:
+    """Tests for _deep_merge utility."""
+
+    def test_basic_merge(self):
+        base = {"a": 1, "b": 2}
+        _deep_merge(base, {"b": 3, "c": 4})
+        assert base == {"a": 1, "b": 3, "c": 4}
+
+    def test_nested_dict_merge(self):
+        base = {"data": {"x": 1, "y": 2}}
+        _deep_merge(base, {"data": {"y": 3, "z": 4}})
+        assert base == {"data": {"x": 1, "y": 3, "z": 4}}
+
+    def test_list_replacement(self):
+        """Lists should be replaced, not appended."""
+        base = {"items": [1, 2, 3]}
+        _deep_merge(base, {"items": [4, 5]})
+        assert base == {"items": [4, 5]}
+
+    def test_override_dict_with_non_dict(self):
+        base = {"data": {"x": 1}}
+        _deep_merge(base, {"data": "replaced"})
+        assert base == {"data": "replaced"}
+
+    def test_override_non_dict_with_dict(self):
+        base = {"data": "string"}
+        _deep_merge(base, {"data": {"x": 1}})
+        assert base == {"data": {"x": 1}}
+
+    def test_deeply_nested_merge(self):
+        base = {"a": {"b": {"c": 1, "d": 2}}}
+        _deep_merge(base, {"a": {"b": {"c": 99}}})
+        assert base == {"a": {"b": {"c": 99, "d": 2}}}
+
+    def test_empty_override(self):
+        base = {"a": 1}
+        _deep_merge(base, {})
+        assert base == {"a": 1}
+
+    def test_new_key_added(self):
+        base = {}
+        _deep_merge(base, {"new_key": "value"})
+        assert base == {"new_key": "value"}
+
+
+# ---------------------------------------------------------------------------
+# V2: State Presets
+# ---------------------------------------------------------------------------
+
+
+class TestPresetExpansion:
+    """Tests for _expand_preset function."""
+
+    def test_progress_preset(self):
+        tasks = [{"label": "Test", "status": "completed"}]
+        result = _expand_preset("progress", {"tasks": tasks, "percentage": 50, "title": "Build"})
+        assert result["title"] == "Build"
+        assert result["status"] == "processing"
+        sections = result["data"]["sections"]
+        assert len(sections) == 1
+        assert sections[0]["type"] == "progress"
+        assert sections[0]["tasks"] == tasks
+        assert sections[0]["percentage"] == 50
+
+    def test_confirm_preset(self):
+        result = _expand_preset("confirm", {"title": "Delete?", "message": "Are you sure?"})
+        assert result["title"] == "Delete?"
+        assert result["message"] == "Are you sure?"
+        assert result["status"] == "pending_review"
+        actions = result["actions_requested"]
+        assert len(actions) == 2
+        assert actions[0]["id"] == "confirm"
+        assert actions[1]["id"] == "cancel"
+
+    def test_confirm_preset_with_details(self):
+        result = _expand_preset("confirm", {"title": "T", "message": "M", "details": "Extra info"})
+        sections = result["data"]["sections"]
+        assert len(sections) == 1
+        assert sections[0]["type"] == "text"
+        assert sections[0]["content"] == "Extra info"
+        assert sections[0]["format"] == "markdown"
+
+    def test_log_preset(self):
+        lines = ["line1", "line2"]
+        result = _expand_preset("log", {"lines": lines, "title": "Output"})
+        assert result["title"] == "Output"
+        sections = result["data"]["sections"]
+        assert len(sections) == 1
+        assert sections[0]["type"] == "log"
+        assert sections[0]["lines"] == lines
+
+    def test_unknown_preset_raises(self):
+        with pytest.raises(ValueError):
+            _expand_preset("unknown", {})
+
+    def test_preset_merges_user_overrides(self):
+        result = _expand_preset("progress", {"tasks": [], "status": "completed"})
+        # User override of status should be merged in
+        assert result["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# V2: read_state and merge_state
+# ---------------------------------------------------------------------------
+
+
+class TestReadMergeState:
+    """Tests for WebviewSession.read_state() and merge_state()."""
+
+    def test_read_state_empty(self, session):
+        """read_state() returns empty dict when no state written."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        result = session.read_state()
+        assert result == {}
+
+    def test_read_state_after_write(self, session):
+        """read_state() returns what was written."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        session.write_state({"title": "Hello", "status": "ready"})
+        result = session.read_state()
+        assert result["title"] == "Hello"
+
+    def test_merge_state(self, session):
+        """merge_state() deep-merges into current state."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        session.write_state({"title": "Original", "status": "ready", "data": {"x": 1, "y": 2}})
+        merged = session.merge_state({"data": {"y": 99, "z": 3}})
+        assert merged["title"] == "Original"
+        assert merged["data"]["x"] == 1
+        assert merged["data"]["y"] == 99
+        assert merged["data"]["z"] == 3
+
+    def test_merge_state_preserves_version(self, session):
+        """merge_state() preserves version tracking from write_state."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        session.write_state({"title": "V1"})
+        v1 = session.read_state().get("version", 0)
+        session.merge_state({"title": "V2"})
+        v2 = session.read_state().get("version", 0)
+        # version should increase
+        assert v2 > v1
+
+
+# ---------------------------------------------------------------------------
+# V2: Module files copied on _copy_app
+# ---------------------------------------------------------------------------
+
+
+class TestModuleFileCopy:
+    """Ensure the new JS module files are copied during _copy_app."""
+
+    def test_new_module_files_copied(self, session):
+        """utils.js, sections.js, validation.js, behaviors.js must be copied."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        (session.data_dir / "apps").mkdir(exist_ok=True)
+        session._copy_app("dynamic")
+
+        app_dir = session.data_dir / "apps" / "dynamic"
+        for name in ["utils.js", "sections.js", "validation.js", "behaviors.js"]:
+            assert (app_dir / name).is_file(), f"{name} not copied to app dir"
+
+    def test_app_js_still_present(self, session):
+        """app.js (orchestrator) must still be copied."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        (session.data_dir / "apps").mkdir(exist_ok=True)
+        session._copy_app("dynamic")
+
+        app_dir = session.data_dir / "apps" / "dynamic"
+        assert (app_dir / "app.js").is_file()

@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-27
+
+### Added
+
+- **`webview_update()` tool** — non-blocking state updates for live progress tracking, streaming logs, and real-time status changes. Supports `merge=True` for incremental updates without replacing the full state
+- **`webview_status()` tool** — check whether a webview session is currently active and alive
+- **5 new section types** for rich content rendering:
+  - `progress` — task progress tracker with status icons and percentage bar (pair with `webview_update` for live updates)
+  - `log` — scrolling terminal output with ANSI color support (red, green, yellow, blue, bold, dim)
+  - `diff` — unified diff viewer with line numbers, color-coded additions/deletions, and hunk headers
+  - `table` — sortable data table with optional row selection via checkboxes
+  - `tabs` — client-side tabbed content with nested sections (no server round-trip)
+- **Field validation** — `required`, `pattern` (regex), `minLength`, `maxLength`, and custom `errorMessage` for client-side form validation that blocks submission until resolved
+- **Conditional behaviors** — show/hide fields and enable/disable buttons based on other field values. Conditions: `equals`, `notEquals`, `in`, `notIn`, `checked`, `unchecked`, `empty`, `notEmpty`, `matches` (regex)
+- **Layout system** — multi-panel layouts via `layout` + `panels`. Types: `sidebar` (configurable width), `split` (equal columns). Responsive with mobile breakpoint
+- **State presets** — shorthand patterns for common UIs: `progress` (task list), `confirm` (approve/cancel dialog), `log` (terminal output)
+- **Action context** — per-item action buttons include `item_index`, `item_id`, `section_index`, `section_id` in the response so agents can identify exactly which item was acted on
+- **Deep merge** — `webview_update(state, merge=True)` recursively merges dicts, replaces lists, preserving existing state
+- 748 tests (up from 541)
+
+### Changed
+
+- **Modular JS architecture** — `app.js` refactored from monolith into 4 focused modules: `utils.js` (escaping, sanitization), `sections.js` (renderers), `validation.js` (field validation engine), `behaviors.js` (conditional logic). All share the `window.OWG` namespace
+- `OWG` namespace frozen via `Object.freeze()` after initialization to prevent prototype pollution
+- Form values use `Object.create(null)` to avoid prototype chain interference
+
+### Security
+
+- **H1**: Blocked ALL `url()` in custom CSS (prevents data exfiltration via attribute selectors + external requests)
+- **H2**: Merged state re-validated through SecurityGate after `webview_update(merge=True)` — prevents post-merge injection
+- **H3**: ReDoS detection for field `pattern` values — rejects nested quantifiers like `(a+)+` that cause catastrophic backtracking
+- **H4**: ReDoS detection for behavior `matches` conditions
+- **M1**: Thread-safe `merge_state()` with lock around read-merge-write cycle (TOCTOU prevention)
+- **M2**: Top-level state key allowlist — rejects unknown keys to prevent LLM-injected payloads
+- **M3**: Custom CSS scoped to `#content` — prevents defacing security-critical UI elements (header, session badge, connection indicator)
+- **M5**: Client-side CSS filter synced with server (unicode/hex escape detection, `@font-face` blocking)
+- **M6**: Log section line type enforcement — each line must be a string (rejects object/number/null injection)
+- **M7**: ANSI span balancing — tracks open/close count to prevent unclosed `<span>` tag accumulation
+- **M8**: Section nesting depth limit (`MAX_SECTION_DEPTH=3`) prevents deeply nested tabs-within-tabs DoS
+- **M9**: `message_className` validated against safe pattern
+- **M10**: Field `rows` (1-50 int) and `placeholder` (string, max 500 chars) validation
+- **M11**: Close message XSS-scanned before WebSocket broadcast
+- **M12**: Session token stripped from WebSocket manifest broadcast (matching HTTP endpoint behavior)
+- **L1**: Narrowed SecurityGate import exception handling (`ImportError` + logged fallback)
+- **L3**: `Object.freeze(window.OWG)` prevents post-init namespace tampering
+- **L4**: URL protocol allowlist in HTML sanitizer (only `https?:`, `mailto:`, `#`, `/`)
+- **L5**: Null-prototype objects for form values and field validators
+- **L6**: Client-side CSS length validation for `sidebarWidth` with regex + fallback to `300px`
+
 ## [0.7.1] - 2026-02-27
 
 ### Added

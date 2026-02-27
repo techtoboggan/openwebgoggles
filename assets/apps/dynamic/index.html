@@ -12,6 +12,12 @@
       --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
       --radius: 6px;
     }
+    /* Light theme (activated by data-theme="light" on body) */
+    [data-theme="light"] {
+      --bg: #ffffff; --bg2: #f6f8fa; --bg3: #e1e4e8; --border: #d0d7de;
+      --text: #1f2328; --text2: #636c76; --text3: #8b949e;
+      --green: #1a7f37; --red: #cf222e; --yellow: #9a6700; --blue: #0969da;
+    }
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 14px; }
     #app { display: flex; flex-direction: column; min-height: 100vh; }
 
@@ -46,6 +52,12 @@
     .field:focus-within { border-color: var(--blue); }
     .field-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text3); margin-bottom: 5px; font-weight: 500; }
     .field-desc { font-size: 11px; color: var(--text3); margin-top: 4px; }
+    .field-required { color: var(--red); margin-left: 3px; }
+
+    /* Validation */
+    .field-error { color: var(--red); font-size: 11px; margin-top: 4px; min-height: 0; }
+    .field-invalid { border-color: var(--red); }
+    .field-invalid:focus-within { border-color: var(--red); box-shadow: 0 0 0 1px rgba(248,81,73,.3); }
 
     .field input[type=text], .field input[type=number], .field input[type=email], .field input[type=url],
     .field textarea, .field select {
@@ -123,6 +135,99 @@
     .markdown-content details { margin: 0 0 10px; }
     .markdown-content summary { cursor: pointer; font-weight: 500; }
     .markdown-content details[open] summary { margin-bottom: 6px; }
+
+    /* ─── Built-in utility classes (agents can use without custom_css) ─── */
+
+    /* Diff highlighting */
+    .owg-diff-add { background: rgba(63,185,80,.15); border-left: 3px solid var(--green); }
+    .owg-diff-remove { background: rgba(248,81,73,.15); border-left: 3px solid var(--red); }
+    .owg-diff-context { background: transparent; border-left: 3px solid var(--border); opacity: .7; }
+
+    /* Code / monospace */
+    .owg-mono { font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+    .owg-code { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; background: var(--bg3); padding: 2px 8px; border-radius: 3px; }
+
+    /* Badge pills */
+    .owg-pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; letter-spacing: .03em; }
+    .owg-pill-green { background: rgba(63,185,80,.15); color: var(--green); }
+    .owg-pill-red { background: rgba(248,81,73,.15); color: var(--red); }
+    .owg-pill-blue { background: rgba(88,166,255,.15); color: var(--blue); }
+    .owg-pill-yellow { background: rgba(210,153,34,.15); color: var(--yellow); }
+    .owg-pill-neutral { background: var(--bg3); color: var(--text2); }
+
+    /* Callout boxes */
+    .owg-callout { padding: 10px 14px; border-radius: var(--radius); border-left: 3px solid; margin-bottom: 10px; }
+    .owg-callout-info { border-color: var(--blue); background: rgba(88,166,255,.08); }
+    .owg-callout-warn { border-color: var(--yellow); background: rgba(210,153,34,.08); }
+    .owg-callout-error { border-color: var(--red); background: rgba(248,81,73,.08); }
+    .owg-callout-success { border-color: var(--green); background: rgba(63,185,80,.08); }
+
+    /* Semantic text colors */
+    .owg-text-green { color: var(--green); }
+    .owg-text-red { color: var(--red); }
+    .owg-text-blue { color: var(--blue); }
+    .owg-text-yellow { color: var(--yellow); }
+    .owg-text-muted { color: var(--text2); }
+    .owg-text-dim { color: var(--text3); }
+
+    /* Layout helpers (applied to sections, affect child items) */
+    .owg-compact .item-row { padding: 4px 10px; }
+    .owg-no-border .item-row { border: none; }
+    .owg-zebra .item-row:nth-child(even) { background: var(--bg3); }
+
+    /* ─── Progress section ─── */
+    .progress-bar-wrap { height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; margin-bottom: 12px; position: relative; }
+    .progress-bar-fill { height: 100%; background: var(--blue); border-radius: 4px; transition: width 0.3s ease; }
+    .progress-pct { position: absolute; right: 0; top: -20px; font-size: 11px; color: var(--text2); }
+    .progress-tasks { display: flex; flex-direction: column; gap: 2px; }
+    .progress-task { padding: 4px 0; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .progress-icon { width: 16px; text-align: center; flex-shrink: 0; }
+
+    /* ─── Log section ─── */
+    .log-container { background: #0a0e14; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12px; max-height: 400px; overflow-y: auto; }
+    .log-line { white-space: pre-wrap; word-break: break-all; padding: 1px 0; line-height: 1.5; }
+    .ansi-red { color: #f85149; }
+    .ansi-green { color: #3fb950; }
+    .ansi-yellow { color: #d29922; }
+    .ansi-blue { color: #58a6ff; }
+    .ansi-bold { font-weight: 700; }
+    .ansi-dim { opacity: 0.6; }
+    [data-theme="light"] .log-container { background: #f6f8fa; }
+
+    /* ─── Diff section ─── */
+    .diff-container { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; line-height: 1.5; }
+    .diff-line { display: flex; white-space: pre; min-height: 20px; }
+    .diff-line.diff-add { background: rgba(63,185,80,.15); }
+    .diff-line.diff-remove { background: rgba(248,81,73,.15); }
+    .diff-line.diff-hunk { background: rgba(88,166,255,.1); color: var(--text2); font-style: italic; }
+    .diff-line.diff-meta { color: var(--text3); font-weight: 600; }
+    .diff-line.diff-context { }
+    .diff-gutter { color: var(--text3); width: 40px; flex-shrink: 0; text-align: right; padding: 0 6px; user-select: none; border-right: 1px solid var(--border); }
+    .diff-gutter-new { border-right: 1px solid var(--border); }
+    .diff-text { flex: 1; padding: 0 8px; }
+
+    /* ─── Table section ─── */
+    .table-container { overflow-x: auto; }
+    .owg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .owg-table th, .owg-table td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+    .owg-table th { background: var(--bg3); font-weight: 600; user-select: none; }
+    .table-sortable { cursor: pointer; }
+    .table-sortable:hover { background: var(--bg2); }
+    .table-check-col { width: 30px; text-align: center; }
+    .sort-indicator { font-size: 10px; color: var(--text3); }
+
+    /* ─── Tabs section ─── */
+    .tabs-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; }
+    .tabs-btn { padding: 8px 16px; border: none; background: none; color: var(--text2); cursor: pointer; font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; white-space: nowrap; }
+    .tabs-btn:hover { color: var(--text); }
+    .tabs-btn.tabs-active { color: var(--blue); border-bottom-color: var(--blue); }
+
+    /* ─── Layout system ─── */
+    .layout-sidebar { display: grid; grid-template-columns: var(--sidebar-width, 300px) 1fr; gap: 20px; }
+    .layout-split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 768px) {
+      .layout-sidebar, .layout-split { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -143,6 +248,10 @@
   <script src="openwebgoggles-sdk.js"></script>
   <script src="marked.min.js"></script>
   <script src="purify.min.js"></script>
+  <script src="utils.js"></script>
+  <script src="sections.js"></script>
+  <script src="validation.js"></script>
+  <script src="behaviors.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

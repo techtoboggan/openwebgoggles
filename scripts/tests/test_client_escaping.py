@@ -446,8 +446,8 @@ class TestSourceCodePatterns:
         """Every app.js must define an HTML escape function. Apps using DOM API
         (setAttribute, textContent) don't need escAttr since the DOM auto-escapes."""
         apps = {
-            # Dynamic app still uses innerHTML with esc/escAttr for rendering
-            "assets/apps/dynamic/app.js": ("esc", "escAttr"),
+            # Dynamic app: escape functions moved to utils.js during modular refactor
+            "assets/apps/dynamic/utils.js": ("esc", "escAttr"),
             # Refactored apps use DOM API — only need HTML escape for innerHTML fallback
             "examples/approval-review/app.js": ("escapeHtml",),
             "examples/security-qa/app.js": ("escHtml",),
@@ -456,7 +456,9 @@ class TestSourceCodePatterns:
         for path, required_fns in apps.items():
             src = self._read_js(path)
             for fn in required_fns:
-                assert f"function {fn}" in src, f"{path} missing {fn}"
+                # Handle both declaration styles: "function esc" and "OWG.esc = function"
+                has_fn = f"function {fn}" in src or f".{fn} = function" in src
+                assert has_fn, f"{path} missing {fn}"
 
 
 class TestMarkdownRendering:
@@ -474,22 +476,22 @@ class TestMarkdownRendering:
 
     @pytest.mark.owasp_a03
     def test_render_markdown_function_exists(self):
-        """app.js must define a renderMarkdown function."""
-        src = self._read_js("assets/apps/dynamic/app.js")
-        assert "function renderMarkdown" in src, "renderMarkdown function not found"
+        """utils.js must define a renderMarkdown function."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        assert "renderMarkdown" in src, "renderMarkdown function not found"
 
     @pytest.mark.owasp_a03
     def test_markdown_block_function_exists(self):
-        """app.js must define a markdownBlock function."""
-        src = self._read_js("assets/apps/dynamic/app.js")
-        assert "function markdownBlock" in src, "markdownBlock function not found"
+        """utils.js must define a markdownBlock function."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        assert "markdownBlock" in src, "markdownBlock function not found"
 
     # ── Graceful fallback when libraries are missing ──────────────────────
 
     @pytest.mark.owasp_a03
     def test_markdown_graceful_fallback(self):
         """renderMarkdown must check for library availability before use."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/utils.js")
         # Must check that marked and DOMPurify are available
         assert "typeof marked" in src, "renderMarkdown must check for marked availability"
         assert "typeof DOMPurify" in src, "renderMarkdown must check for DOMPurify availability"
@@ -499,14 +501,14 @@ class TestMarkdownRendering:
     @pytest.mark.owasp_a03
     def test_purify_config_allowlist_present(self):
         """PURIFY_CONFIG must define ALLOWED_TAGS and ALLOWED_ATTR."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/utils.js")
         assert "ALLOWED_TAGS" in src, "DOMPurify ALLOWED_TAGS config missing"
         assert "ALLOWED_ATTR" in src, "DOMPurify ALLOWED_ATTR config missing"
 
     @pytest.mark.owasp_a03
     def test_purify_config_no_script_tag(self):
         """PURIFY_CONFIG ALLOWED_TAGS must NOT include 'script'."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/utils.js")
         # Find the PURIFY_CONFIG block
         config_start = src.find("PURIFY_CONFIG")
         assert config_start != -1, "PURIFY_CONFIG not found"
@@ -520,7 +522,7 @@ class TestMarkdownRendering:
     @pytest.mark.owasp_a03
     def test_purify_config_no_dangerous_attrs(self):
         """PURIFY_CONFIG ALLOWED_ATTR must not include event handlers or src."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/utils.js")
         config_start = src.find("PURIFY_CONFIG")
         assert config_start != -1
         config_block = src[config_start : config_start + 800]
@@ -531,7 +533,7 @@ class TestMarkdownRendering:
     @pytest.mark.owasp_a03
     def test_purify_data_attrs_disabled(self):
         """ALLOW_DATA_ATTR must be false to prevent data-* exfiltration."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/utils.js")
         assert "ALLOW_DATA_ATTR: false" in src or "ALLOW_DATA_ATTR:false" in src, (
             "DOMPurify ALLOW_DATA_ATTR must be explicitly set to false"
         )
@@ -541,7 +543,7 @@ class TestMarkdownRendering:
     @pytest.mark.owasp_a03
     def test_links_get_target_blank(self):
         """DOMPurify hook must force target='_blank' on links."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/utils.js")
         assert "target" in src and "_blank" in src, "Links must be forced to target=_blank"
         assert "noopener" in src, "Links must include rel=noopener"
         assert "noreferrer" in src, "Links must include rel=noreferrer"
@@ -560,6 +562,53 @@ class TestMarkdownRendering:
         assert ".markdown-content blockquote" in html, "Markdown blockquote style missing"
         assert ".markdown-content table" in html, "Markdown table style missing"
         assert ".markdown-content a" in html, "Markdown link style missing"
+
+    # ── V2: New section type CSS ─────────────────────────────────────────
+
+    def test_progress_css_defined(self):
+        """index.html must define CSS for progress sections."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".progress-bar-fill" in html, "Progress bar CSS missing"
+        assert ".progress-task" in html, "Progress task CSS missing"
+
+    def test_log_css_defined(self):
+        """index.html must define CSS for log sections."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".log-container" in html, "Log container CSS missing"
+        assert ".log-line" in html, "Log line CSS missing"
+
+    def test_diff_css_defined(self):
+        """index.html must define CSS for diff sections."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".diff-container" in html, "Diff container CSS missing"
+
+    def test_table_css_defined(self):
+        """index.html must define CSS for table sections."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".owg-table" in html, "Table CSS missing"
+
+    def test_tabs_css_defined(self):
+        """index.html must define CSS for tabs sections."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".tabs-bar" in html, "Tabs bar CSS missing"
+        assert ".tabs-btn" in html, "Tabs button CSS missing"
+
+    def test_layout_css_defined(self):
+        """index.html must define CSS for layout system."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".layout-sidebar" in html, "Sidebar layout CSS missing"
+        assert ".layout-split" in html, "Split layout CSS missing"
+
+    def test_validation_css_defined(self):
+        """index.html must define CSS for field validation states."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert ".field-error" in html, "Field error CSS missing"
+        assert ".field-invalid" in html, "Field invalid CSS missing"
+
+    def test_light_theme_css_defined(self):
+        """index.html must define a light theme."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        assert 'data-theme="light"' in html, "Light theme CSS missing"
 
     # ── Script tags for vendored libraries ────────────────────────────────
 
@@ -582,6 +631,45 @@ class TestMarkdownRendering:
         assert marked_pos < app_pos, "marked.min.js must load before app.js"
         assert purify_pos < app_pos, "purify.min.js must load before app.js"
 
+    # ── Module file structure ─────────────────────────────────────────────
+
+    def test_module_script_tags_present(self):
+        """index.html must include script tags for all module files."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        for module in ["utils.js", "sections.js", "validation.js", "behaviors.js"]:
+            assert f'src="{module}"' in html, f"{module} script tag missing"
+
+    def test_module_load_order(self):
+        """Module files must load before app.js, after libraries."""
+        html = self._read_html("assets/apps/dynamic/index.html")
+        utils_pos = html.find('src="utils.js"')
+        sections_pos = html.find('src="sections.js"')
+        validation_pos = html.find('src="validation.js"')
+        behaviors_pos = html.find('src="behaviors.js"')
+        app_pos = html.find('src="app.js"')
+        purify_pos = html.find('src="purify.min.js"')
+
+        # All modules must come after libraries
+        assert utils_pos > purify_pos, "utils.js must load after purify.min.js"
+        # All modules must come before app.js
+        assert utils_pos < app_pos, "utils.js must load before app.js"
+        assert sections_pos < app_pos, "sections.js must load before app.js"
+        assert validation_pos < app_pos, "validation.js must load before app.js"
+        assert behaviors_pos < app_pos, "behaviors.js must load before app.js"
+
+    def test_modules_use_owg_namespace(self):
+        """All module files must register on window.OWG."""
+        for module in ["utils.js", "sections.js", "validation.js", "behaviors.js"]:
+            src = self._read_js(f"assets/apps/dynamic/{module}")
+            assert "window.OWG" in src, f"{module} must use window.OWG namespace"
+
+    def test_modules_are_iife(self):
+        """All module files must be wrapped in an IIFE."""
+        for module in ["utils.js", "sections.js", "validation.js", "behaviors.js"]:
+            src = self._read_js(f"assets/apps/dynamic/{module}")
+            assert "(function" in src, f"{module} must be an IIFE"
+            assert "use strict" in src, f"{module} must use strict mode"
+
     # ── Opt-in checks in render paths ─────────────────────────────────────
 
     def test_message_format_check_in_render(self):
@@ -591,22 +679,22 @@ class TestMarkdownRendering:
 
     def test_section_format_check_in_render(self):
         """renderText() must check sec.format for markdown opt-in."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/sections.js")
         assert "sec.format" in src, "sec.format check missing from renderText()"
 
     def test_field_format_check_in_render(self):
         """renderField() must check f.format for static field markdown."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/sections.js")
         assert "f.format" in src, "f.format check missing from renderField()"
 
     def test_item_format_check_in_render(self):
         """renderItems() must check item.format for markdown opt-in."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/sections.js")
         assert "item.format" in src, "item.format check missing from renderItems()"
 
     def test_description_format_check_in_render(self):
         """renderField() must check f.description_format for markdown opt-in."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/sections.js")
         assert "description_format" in src, "description_format check missing from renderField()"
 
     # ── Defense in depth ──────────────────────────────────────────────────
@@ -614,7 +702,7 @@ class TestMarkdownRendering:
     @pytest.mark.owasp_a03
     def test_markdown_output_wraps_in_container(self):
         """markdownBlock() must wrap output in .markdown-content div."""
-        src = self._read_js("assets/apps/dynamic/app.js")
+        src = self._read_js("assets/apps/dynamic/utils.js")
         assert "markdown-content" in src, "Markdown output must use .markdown-content wrapper"
 
 
