@@ -21,6 +21,7 @@ import logging
 import os
 import platform
 import secrets
+import signal
 import shutil
 import socket
 import subprocess
@@ -878,6 +879,19 @@ _reload_pending: bool = False
 _reload_task: asyncio.Task | None = None
 _RELOAD_CHECK_INTERVAL = 30  # seconds
 
+# Signal-triggered restart (SIGUSR1 from `openwebgoggles restart`)
+_signal_reload_requested: bool = False
+
+
+def _sigusr1_handler(signum: int, frame: Any) -> None:  # noqa: ARG001
+    """Handle SIGUSR1 by setting a flag for the event loop to pick up."""
+    global _signal_reload_requested
+    _signal_reload_requested = True
+
+
+# MCP server PID file — written on startup so `openwebgoggles restart` can find us
+_MCP_PID_DIR: Path | None = None
+
 
 def _get_installed_version_info() -> tuple[str, Path | None]:
     """Return (version_string, dist_info_path) for the installed package.
@@ -1016,6 +1030,38 @@ async def _version_monitor() -> None:
             logger.exception("Version monitor error (will retry)")
 
 
+async def _signal_reload_monitor() -> None:
+    """Background task: poll for SIGUSR1 flag and trigger seamless restart."""
+    global _reload_pending
+
+    while True:
+        await asyncio.sleep(0.5)
+        if not _signal_reload_requested:
+            continue
+
+        logger.info("SIGUSR1 received — reloading server.")
+        _reload_pending = True
+
+        # Wait for in-flight tool calls to drain (up to 60s)
+        drain_deadline = time.monotonic() + 60
+        while time.monotonic() < drain_deadline:
+            async with _active_tool_calls_lock:
+                if _active_tool_calls == 0:
+                    break
+            await asyncio.sleep(1)
+
+        # Close webview session gracefully
+        global _session
+        if _session is not None:
+            try:
+                await _session.close(message="Server reloading (restart requested).")
+            except Exception:
+                pass
+            _session = None
+
+        _exec_reload()
+
+
 def _track_tool_call(fn):  # type: ignore[no-untyped-def]
     """Decorator: track in-flight tool calls for safe reload."""
 
@@ -1040,15 +1086,41 @@ def _track_tool_call(fn):  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
+def _write_mcp_pid() -> None:
+    """Write our PID to .openwebgoggles/.mcp.pid so restart/status can find us."""
+    global _MCP_PID_DIR
+    data_dir = Path.cwd() / ".opencode" / "webview"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pid_file = data_dir / ".mcp.pid"
+    pid_file.write_text(str(os.getpid()))
+    _MCP_PID_DIR = data_dir
+
+
+def _cleanup_mcp_pid() -> None:
+    """Remove .mcp.pid on shutdown."""
+    if _MCP_PID_DIR is not None:
+        pid_file = _MCP_PID_DIR / ".mcp.pid"
+        try:
+            # Only remove if it's our PID (os.execv reuses PID, so check)
+            if pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+                pid_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP):
-    """MCP server lifecycle: version monitor on start, cleanup on shutdown."""
+    """MCP server lifecycle: version monitor + signal monitor on start, cleanup on shutdown."""
     global _reload_task
     _reload_task = asyncio.create_task(_version_monitor())
+    signal_task = asyncio.create_task(_signal_reload_monitor())
+
+    # Write PID file so `openwebgoggles restart` and `openwebgoggles status` can find us
+    _write_mcp_pid()
 
     yield
 
-    # Cancel version monitor
+    # Cancel monitors
     if _reload_task is not None:
         _reload_task.cancel()
         try:
@@ -1057,7 +1129,15 @@ async def lifespan(server: FastMCP):
             pass
         _reload_task = None
 
-    # Clean up webview session
+    signal_task.cancel()
+    try:
+        await signal_task
+    except asyncio.CancelledError:
+        pass
+
+    # Clean up PID file and webview session
+    _cleanup_mcp_pid()
+
     global _session
     if _session is not None:
         try:
@@ -1746,8 +1826,313 @@ _INIT_DISPATCH = {
 
 
 # ---------------------------------------------------------------------------
+# CLI subcommands: restart, status, doctor
+# ---------------------------------------------------------------------------
+
+
+def _find_data_dir(explicit: Path | None = None) -> Path:
+    """Resolve the .opencode/webview data directory."""
+    if explicit is not None:
+        return explicit / ".opencode" / "webview"
+    return Path.cwd() / ".opencode" / "webview"
+
+
+def _read_pid_file(path: Path) -> int | None:
+    """Read a PID file and return the PID if the process is alive."""
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text().strip()
+        if not raw.isdigit():
+            return None
+        pid = int(raw)
+        os.kill(pid, 0)  # existence check
+        return pid
+    except (OSError, ValueError):
+        return None
+
+
+# -- restart ----------------------------------------------------------------
+
+def _cmd_restart() -> None:
+    """Find the running MCP server and trigger a seamless restart via SIGUSR1."""
+    data_dir_arg = None
+    if len(sys.argv) > 2:
+        data_dir_arg = Path(sys.argv[2])
+
+    data_dir = _find_data_dir(data_dir_arg)
+    mcp_pid_file = data_dir / ".mcp.pid"
+
+    pid = _read_pid_file(mcp_pid_file)
+    if pid is None:
+        # Try the webview server PID as a fallback hint
+        webview_pid = _read_pid_file(data_dir / ".server.pid")
+        if webview_pid is not None:
+            print("Found a running webview server but no MCP server PID file.")
+            print("The MCP server may be running under an older version.")
+            print(f"You can manually kill the webview server (PID {webview_pid}) and restart your editor.")
+        else:
+            print("No running MCP server found.")
+            print()
+            print("To start one:")
+            print("  openwebgoggles init claude    # set up for Claude Code")
+            print("  openwebgoggles init opencode  # set up for OpenCode")
+            print("  Then restart your editor.")
+        sys.exit(1)
+
+    if platform.system() == "Windows":
+        # No SIGUSR1 on Windows — kill the process (editor will restart it)
+        print(f"Windows: terminating MCP server (PID {pid}) — your editor will restart it.")
+        try:
+            os.kill(pid, 15)  # SIGTERM
+        except OSError as e:
+            print(f"Failed to terminate process: {e}", file=sys.stderr)
+            sys.exit(1)
+        print("Done. The editor should restart the MCP server automatically.")
+        return
+
+    # Unix: send SIGUSR1 for seamless in-place restart
+    print(f"Sending restart signal to MCP server (PID {pid})...")
+    try:
+        os.kill(pid, signal.SIGUSR1)
+    except OSError as e:
+        print(f"Failed to send signal: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Wait briefly and verify the process is still alive (it should be — same PID after execv)
+    time.sleep(1)
+    try:
+        os.kill(pid, 0)
+        print(f"MCP server restarted successfully (PID {pid}).")
+    except OSError:
+        print(f"MCP server (PID {pid}) exited — your editor should restart it automatically.")
+
+
+# -- status -----------------------------------------------------------------
+
+def _cmd_status() -> None:
+    """Show the current state of the MCP server and webview."""
+    data_dir_arg = None
+    if len(sys.argv) > 2:
+        data_dir_arg = Path(sys.argv[2])
+
+    data_dir = _find_data_dir(data_dir_arg)
+
+    print("OpenWebGoggles Status")
+    print()
+
+    # MCP server
+    mcp_pid = _read_pid_file(data_dir / ".mcp.pid")
+    if mcp_pid is not None:
+        print(f"  MCP server:    running (PID {mcp_pid})")
+    else:
+        print("  MCP server:    not running")
+
+    # Webview server
+    webview_pid = _read_pid_file(data_dir / ".server.pid")
+    manifest = None
+    manifest_path = data_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if webview_pid is not None and manifest:
+        http_port = manifest.get("server", {}).get("http_port", "?")
+        print(f"  Webview:       running (PID {webview_pid}, port {http_port})")
+
+        # Try hitting the health endpoint
+        try:
+            url = f"http://127.0.0.1:{http_port}/_health"
+            req = urllib.request.Request(url, method="GET")
+            resp = urllib.request.urlopen(req, timeout=2)  # nosec B310
+            health = json.loads(resp.read())
+            uptime_s = health.get("uptime", 0)
+            ws_clients = health.get("ws_clients", 0)
+            mins, secs = divmod(int(uptime_s), 60)
+            if mins > 0:
+                print(f"  Uptime:        {mins}m {secs}s")
+            else:
+                print(f"  Uptime:        {secs}s")
+            print(f"  WS clients:    {ws_clients}")
+        except Exception:
+            print("  Health:        unreachable (server may be starting up)")
+
+        # Session info
+        session = manifest.get("session", {})
+        app_name = manifest.get("app", {}).get("name", "unknown")
+        session_id = session.get("id", "unknown")
+        print(f"  Session:       {session_id[:8]} ({app_name} app)")
+    elif webview_pid is not None:
+        print(f"  Webview:       running (PID {webview_pid})")
+    else:
+        print("  Webview:       not running")
+
+    if mcp_pid is None and webview_pid is None:
+        print()
+        print("  To start: openwebgoggles init claude  (then restart your editor)")
+
+
+# -- doctor -----------------------------------------------------------------
+
+def _cmd_doctor() -> None:
+    """Diagnose the OpenWebGoggles setup and environment."""
+    data_dir_arg = None
+    if len(sys.argv) > 2:
+        data_dir_arg = Path(sys.argv[2])
+
+    print("OpenWebGoggles Doctor")
+    print()
+
+    ok_count = 0
+    warn_count = 0
+
+    def ok(msg: str) -> None:
+        nonlocal ok_count
+        ok_count += 1
+        print(f"  [ok] {msg}")
+
+    def warn(msg: str) -> None:
+        nonlocal warn_count
+        warn_count += 1
+        print(f"  [!!] {msg}")
+
+    # Python version
+    v = sys.version_info
+    if v >= (3, 11):
+        ok(f"Python {v.major}.{v.minor}.{v.micro}")
+    else:
+        warn(f"Python {v.major}.{v.minor}.{v.micro} — 3.11+ required")
+
+    # Core dependencies
+    for pkg in ("websockets", "PyNaCl", "mcp"):
+        try:
+            dist = importlib.metadata.distribution(pkg)
+            ok(f"{pkg} {dist.metadata['Version']}")
+        except importlib.metadata.PackageNotFoundError:
+            warn(f"{pkg} not installed")
+
+    # Binary resolution
+    binary = shutil.which("openwebgoggles")
+    if binary:
+        ok(f"Binary: {binary}")
+    else:
+        warn("Binary not on PATH (run with full path or check pipx)")
+
+    # Config files
+    cwd = Path(data_dir_arg) if data_dir_arg else Path.cwd()
+
+    # Check for Claude Code config
+    mcp_json = cwd / ".mcp.json"
+    if mcp_json.exists():
+        try:
+            cfg = json.loads(mcp_json.read_text())
+            servers = cfg.get("mcpServers", {})
+            if "openwebgoggles" in servers:
+                ok(".mcp.json: openwebgoggles configured")
+                # Verify binary path matches
+                cmd = servers["openwebgoggles"].get("command", "")
+                if binary and cmd and Path(cmd).resolve() == Path(binary).resolve():
+                    ok("Config binary path matches installed binary")
+                elif binary and cmd:
+                    warn(f"Config binary ({cmd}) differs from installed ({binary})")
+            else:
+                warn(".mcp.json exists but openwebgoggles not configured")
+        except (json.JSONDecodeError, OSError):
+            warn(".mcp.json exists but is invalid JSON")
+    else:
+        # Check OpenCode config
+        opencode_json = cwd / "opencode.json"
+        global_opencode = Path.home() / ".config" / "opencode" / "opencode.json"
+        found_config = False
+        for cfg_path in (opencode_json, global_opencode):
+            if cfg_path.exists():
+                try:
+                    cfg = json.loads(cfg_path.read_text())
+                    if "openwebgoggles" in cfg.get("mcp", {}):
+                        ok(f"{cfg_path.name}: openwebgoggles configured")
+                        found_config = True
+                        break
+                except (json.JSONDecodeError, OSError):
+                    pass
+        if not found_config:
+            warn("No editor config found (run: openwebgoggles init claude)")
+
+    # Stale processes
+    data_dir = _find_data_dir(data_dir_arg)
+    stale_cleaned = False
+
+    for pid_name in (".mcp.pid", ".server.pid"):
+        pid_file = data_dir / pid_name
+        if pid_file.exists():
+            try:
+                raw = pid_file.read_text().strip()
+                if raw.isdigit():
+                    pid = int(raw)
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        # PID is dead — stale file
+                        pid_file.unlink(missing_ok=True)
+                        warn(f"Stale {pid_name} (PID {pid}) — cleaned up")
+                        stale_cleaned = True
+            except OSError:
+                pass
+
+    if not stale_cleaned:
+        ok("No stale PID files")
+
+    # Lock file
+    lock_file = data_dir / ".server.lock"
+    if lock_file.exists():
+        # Check if it's held by a live process
+        import fcntl
+        try:
+            fd = os.open(str(lock_file), os.O_RDONLY)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                # Lock was free — if no server is running, it's stale
+                webview_pid = _read_pid_file(data_dir / ".server.pid")
+                if webview_pid is None:
+                    ok("Lock file present but not held (no conflict)")
+                else:
+                    ok("Lock file OK")
+            except OSError:
+                ok("Lock file held by running server")
+            finally:
+                os.close(fd)
+        except OSError:
+            ok("No lock conflicts")
+    else:
+        ok("No lock file (clean state)")
+
+    print()
+    if warn_count == 0:
+        print(f"  All {ok_count} checks passed!")
+    else:
+        print(f"  {ok_count} passed, {warn_count} issue(s) found.")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+_SUBCOMMANDS: dict[str, Any] = {}  # populated after all functions are defined
+
+
+def _print_usage() -> None:
+    """Print top-level usage."""
+    print("Usage: openwebgoggles <command> [options]\n")
+    print("Commands:")
+    print("  (none)        Run MCP server (stdio transport)")
+    print("  init          Bootstrap config for your editor")
+    print("  restart       Restart the running MCP server")
+    print("  status        Show server status and health")
+    print("  doctor        Diagnose setup and environment")
+    print()
+    print("Run 'openwebgoggles <command>' for command-specific help.")
 
 
 def main():
@@ -1756,12 +2141,16 @@ def main():
     Usage:
         openwebgoggles                        # Run MCP server (stdio transport)
         openwebgoggles init <editor> [dir]    # Bootstrap for an editor
+        openwebgoggles restart [dir]          # Restart running MCP server
+        openwebgoggles status [dir]           # Show server status
+        openwebgoggles doctor [dir]           # Diagnose setup
     """
-    if len(sys.argv) > 1 and sys.argv[1] == "init":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else None
+
+    if cmd == "init":
         if len(sys.argv) < 3 or sys.argv[2] not in _INIT_DISPATCH:
             _init_usage()
             return
-
         editor = sys.argv[2]
         if len(sys.argv) > 3:
             target = Path(sys.argv[3])
@@ -1770,11 +2159,35 @@ def main():
         _INIT_DISPATCH[editor](target)
         return
 
-    # Init commands don't need mcp, but the server does.
+    if cmd == "restart":
+        _cmd_restart()
+        return
+
+    if cmd == "status":
+        _cmd_status()
+        return
+
+    if cmd == "doctor":
+        _cmd_doctor()
+        return
+
+    if cmd in ("help", "--help", "-h"):
+        _print_usage()
+        return
+
+    if cmd is not None and cmd.startswith("-"):
+        _print_usage()
+        return
+
+    # Default: run MCP server (stdio transport)
     if _mcp_import_error is not None:
         print(f"Error: failed to load mcp library: {_mcp_import_error}", file=sys.stderr)
         print("Install with: pipx install openwebgoggles  (or: pip install openwebgoggles)", file=sys.stderr)
         sys.exit(1)
+
+    # Register SIGUSR1 handler for `openwebgoggles restart`
+    if platform.system() != "Windows":
+        signal.signal(signal.SIGUSR1, _sigusr1_handler)
 
     logging.basicConfig(
         level=logging.INFO,

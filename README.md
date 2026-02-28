@@ -151,6 +151,18 @@ Tell your agent:
 
 The agent figures out the JSON schema, calls `webview`, and a panel opens in your browser. You make your decisions, click approve, and the agent continues with your structured response.
 
+### Lifecycle Commands
+
+Once installed, three CLI commands help you manage the server:
+
+```bash
+openwebgoggles restart       # seamless restart (same PID, editor never notices)
+openwebgoggles status        # check what's running, ports, uptime
+openwebgoggles doctor        # diagnose setup problems
+```
+
+See the [Restart & Lifecycle Guide](references/restart-guide.md) for details on automatic recovery, manual restart, and troubleshooting.
+
 ### What Gets Installed
 
 Five MCP tools — that's the entire API surface:
@@ -397,6 +409,7 @@ For the full details:
 - [Data Contract](references/data-contract.md) — JSON file formats, state lifecycle, status values
 - [SDK API](references/sdk-api.md) — Complete client SDK reference
 - [Integration Guide](references/integration-guide.md) — Step-by-step patterns for connecting from other tools
+- [Restart & Lifecycle Guide](references/restart-guide.md) — Automatic recovery, manual restart, diagnostics
 
 ## License
 
