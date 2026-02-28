@@ -20,14 +20,17 @@
     if (value === undefined || value === null || value === "") return null;
 
     // Pattern (regex) — only for string values
+    // Defense-in-depth: skip regex on oversized patterns/values to prevent ReDoS
     if (config.pattern && typeof value === "string") {
-      try {
-        var re = new RegExp(config.pattern);
-        if (!re.test(value)) {
-          return config.errorMessage || "Invalid format";
+      if (config.pattern.length <= 500 && value.length <= 10000) {
+        try {
+          var re = new RegExp(config.pattern);
+          if (!re.test(value)) {
+            return config.errorMessage || "Invalid format";
+          }
+        } catch (e) {
+          // Invalid regex — skip validation
         }
-      } catch (e) {
-        // Invalid regex — skip validation
       }
     }
 

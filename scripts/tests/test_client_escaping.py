@@ -832,3 +832,67 @@ class TestSecurityHardening:
         assert "_noncePruneTimer" in src, "SDK must have a periodic nonce prune timer"
         assert "setInterval" in src, "Prune timer must use setInterval"
         assert "clearInterval" in src, "Timer must be cleaned up on disconnect"
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: Client-side ReDoS length guards (validation.js + behaviors.js)
+# ---------------------------------------------------------------------------
+
+
+class TestClientReDoSLengthGuards:
+    """Verify pattern/value length limits exist in client-side JS."""
+
+    @staticmethod
+    def _read_js(rel_path):
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    @pytest.mark.owasp_a03
+    def test_validation_js_has_pattern_length_guard(self):
+        """validation.js must limit pattern length before new RegExp()."""
+        src = self._read_js("assets/apps/dynamic/validation.js")
+        assert "config.pattern.length" in src, "validation.js must check config.pattern.length before creating RegExp"
+        assert "value.length" in src, "validation.js must check value.length before regex test"
+
+    @pytest.mark.owasp_a03
+    def test_behaviors_js_has_matches_length_guard(self):
+        """behaviors.js must limit matches pattern length before new RegExp()."""
+        src = self._read_js("assets/apps/dynamic/behaviors.js")
+        assert "when.matches.length" in src, "behaviors.js must check when.matches.length before creating RegExp"
+        assert "value.length" in src, "behaviors.js must check value.length before regex test"
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: Array.isArray guards in behaviors.js
+# ---------------------------------------------------------------------------
+
+
+class TestBehaviorsArrayGuards:
+    """Verify behaviors.js checks Array.isArray before calling forEach."""
+
+    @staticmethod
+    def _read_js(rel_path):
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    @pytest.mark.owasp_a03
+    def test_behaviors_uses_array_isarray_for_show(self):
+        """behaviors.js must check Array.isArray(rule.show) before iteration."""
+        src = self._read_js("assets/apps/dynamic/behaviors.js")
+        assert "Array.isArray(rule.show)" in src
+
+    @pytest.mark.owasp_a03
+    def test_behaviors_uses_array_isarray_for_hide(self):
+        """behaviors.js must check Array.isArray(rule.hide) before iteration."""
+        src = self._read_js("assets/apps/dynamic/behaviors.js")
+        assert "Array.isArray(rule.hide)" in src
+
+    @pytest.mark.owasp_a03
+    def test_behaviors_uses_array_isarray_for_enable(self):
+        """behaviors.js must check Array.isArray(rule.enable) before iteration."""
+        src = self._read_js("assets/apps/dynamic/behaviors.js")
+        assert "Array.isArray(rule.enable)" in src
+
+    @pytest.mark.owasp_a03
+    def test_behaviors_uses_array_isarray_for_disable(self):
+        """behaviors.js must check Array.isArray(rule.disable) before iteration."""
+        src = self._read_js("assets/apps/dynamic/behaviors.js")
+        assert "Array.isArray(rule.disable)" in src

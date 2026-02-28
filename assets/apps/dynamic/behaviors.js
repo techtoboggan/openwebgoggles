@@ -23,10 +23,10 @@
       var value = fv[fieldKey];
       var met = checkCondition(when, value);
 
-      if (rule.show) applyVisibility(rule.show, met);
-      if (rule.hide) applyVisibility(rule.hide, !met);
-      if (rule.enable) applyInteractivity(rule.enable, met);
-      if (rule.disable) applyInteractivity(rule.disable, !met);
+      if (Array.isArray(rule.show)) applyVisibility(rule.show, met);
+      if (Array.isArray(rule.hide)) applyVisibility(rule.hide, !met);
+      if (Array.isArray(rule.enable)) applyInteractivity(rule.enable, met);
+      if (Array.isArray(rule.disable)) applyInteractivity(rule.disable, !met);
     });
   };
 
@@ -42,6 +42,8 @@
     if ("notEmpty" in when) return value !== "" && value !== undefined && value !== null;
     if ("matches" in when) {
       if (typeof value !== "string") return false;
+      // Defense-in-depth: skip regex on oversized patterns/values to prevent ReDoS
+      if (when.matches.length > 500 || value.length > 10000) return false;
       try { return new RegExp(when.matches).test(value); } catch (e) { return false; }
     }
     return false;

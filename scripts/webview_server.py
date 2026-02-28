@@ -788,7 +788,7 @@ class WebviewServer:
                 continue
             try:
                 await client.send(envelope)
-            except websockets.exceptions.ConnectionClosed:
+            except Exception:
                 self._ws_clients.discard(client)
 
     async def _file_watcher(self):

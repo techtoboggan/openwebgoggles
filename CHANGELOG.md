@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-02-27
+
+### Security
+
+- **`_deep_merge` recursion depth limit** — added `MAX_MERGE_DEPTH=20` to prevent stack overflow from deeply nested merge payloads (defense-in-depth alongside SecurityGate's `MAX_NESTING_DEPTH=10`)
+- **Pre-write validation for merged state** — `merge_state()` now validates the merged result via a validator callback *before* writing to disk, preventing invalid composite states from being persisted and broadcast
+- **Broadened broadcast exception handling** — WebSocket broadcast now catches all exceptions (not just `ConnectionClosed`) to prevent one failing client from blocking delivery to remaining clients
+- **Client-side ReDoS length guards** — `validation.js` and `behaviors.js` now skip regex evaluation when pattern length exceeds 500 chars or value length exceeds 10,000 chars (defense-in-depth alongside server-side `_is_redos_safe()`)
+- **`Array.isArray` guards in behaviors engine** — behavior rule effects (`show`/`hide`/`enable`/`disable`) are now type-checked before iteration, preventing crashes from malformed state
+
+### Changed
+
+- Test count: 748 → 772
+
 ## [0.8.0] - 2026-02-27
 
 ### Added

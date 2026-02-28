@@ -82,17 +82,25 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 
-def _deep_merge(base: dict, override: dict) -> None:
+MAX_MERGE_DEPTH = 20
+
+
+def _deep_merge(base: dict, override: dict, _depth: int = 0) -> None:
     """Recursively merge *override* into *base*, mutating *base* in place.
 
     Rules:
-    - dict + dict → recurse
+    - dict + dict → recurse (up to MAX_MERGE_DEPTH levels)
     - list + list → replace (NOT append — append is surprising and hard to undo)
     - anything else → override wins
+
+    Raises ValueError if nesting exceeds MAX_MERGE_DEPTH (defense-in-depth
+    against stack overflow — SecurityGate also limits JSON nesting to 10).
     """
+    if _depth > MAX_MERGE_DEPTH:
+        raise ValueError(f"Merge depth exceeds maximum ({MAX_MERGE_DEPTH})")
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
+            _deep_merge(base[key], value, _depth + 1)
         else:
             base[key] = value
 
@@ -392,14 +400,26 @@ class WebviewSession:
         """Read current state.json."""
         return self._read_json(self.data_dir / "state.json") or {}
 
-    def merge_state(self, partial: dict[str, Any]) -> dict[str, Any]:
+    def merge_state(
+        self,
+        partial: dict[str, Any],
+        validator: Any | None = None,
+    ) -> dict[str, Any]:
         """Deep merge partial state into current state, then write.
 
         Uses _state_lock to prevent TOCTOU races between read and write.
+
+        Args:
+            partial: Partial state to merge into current state.
+            validator: Optional callable(merged_dict) that raises on invalid
+                state.  Called **after** merge but **before** writing to disk,
+                so invalid merged states never touch the filesystem.
         """
         with self._state_lock:
             current = self.read_state()
             _deep_merge(current, partial)
+            if validator:
+                validator(current)  # raises on failure — write is skipped
             self.write_state(current)
             return current
 
@@ -1458,13 +1478,19 @@ async def webview_update(
 
     # Do NOT clear actions — preserve pending user actions
     if merge:
-        merged = session.merge_state(state)
-        # Re-validate the FINAL merged state (partial + existing may produce invalid composite)
-        if _security_gate:
-            merged_raw = json.dumps(merged, separators=(",", ":"))
-            valid, err, _ = _security_gate.validate_state(merged_raw)
-            if not valid:
-                return {"error": f"Merged state validation failed: {err}"}
+        # Validate the FINAL merged state BEFORE writing to disk.
+        # Two individually valid payloads can merge into an invalid composite.
+        def _validate_merged(merged_state: dict) -> None:
+            if _security_gate:
+                merged_raw = json.dumps(merged_state, separators=(",", ":"))
+                valid, err, _ = _security_gate.validate_state(merged_raw)
+                if not valid:
+                    raise ValueError(f"Merged state validation failed: {err}")
+
+        try:
+            merged = session.merge_state(state, validator=_validate_merged)
+        except ValueError as e:
+            return {"error": str(e)}
         return {"updated": True, "version": merged.get("version", 0)}
     else:
         session.write_state(state)

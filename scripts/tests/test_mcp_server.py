@@ -18,7 +18,7 @@ import pytest
 # Ensure scripts/ is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mcp_server import WebviewSession, _deep_merge, _expand_preset
+from mcp_server import MAX_MERGE_DEPTH, WebviewSession, _deep_merge, _expand_preset
 
 
 # ---------------------------------------------------------------------------
@@ -825,3 +825,107 @@ class TestModuleFileCopy:
 
         app_dir = session.data_dir / "apps" / "dynamic"
         assert (app_dir / "app.js").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: _deep_merge recursion depth limit
+# ---------------------------------------------------------------------------
+
+
+class TestDeepMergeDepthLimit:
+    """Ensure _deep_merge rejects excessively nested dicts (defense-in-depth)."""
+
+    @staticmethod
+    def _make_nested(depth, leaf_value="ok"):
+        """Build a dict nested to `depth` levels: {n: {n: {... leaf: val}}}."""
+        root = {}
+        inner = root
+        for _ in range(depth):
+            inner["nested"] = {}
+            inner = inner["nested"]
+        inner["leaf"] = leaf_value
+        return root
+
+    def test_within_limit_passes(self):
+        """15-level nested dict merges successfully (well under MAX_MERGE_DEPTH)."""
+        # Both base and override must have dicts at each key for recursion
+        base = self._make_nested(15, "old")
+        override = self._make_nested(15, "new")
+
+        _deep_merge(base, override)
+        node = base
+        for _ in range(15):
+            node = node["nested"]
+        assert node["leaf"] == "new"
+
+    def test_exceeds_limit_rejects(self):
+        """Nesting beyond MAX_MERGE_DEPTH raises ValueError."""
+        depth = MAX_MERGE_DEPTH + 5
+        # Both must have matching nested dicts so _deep_merge actually recurses
+        base = self._make_nested(depth, "old")
+        override = self._make_nested(depth, "boom")
+
+        with pytest.raises(ValueError, match="Merge depth exceeds maximum"):
+            _deep_merge(base, override)
+
+    def test_flat_merge_unaffected(self):
+        """Flat merges (depth 0) still work normally."""
+        base = {"a": 1, "b": 2}
+        _deep_merge(base, {"b": 3, "c": 4})
+        assert base == {"a": 1, "b": 3, "c": 4}
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: merge_state pre-write validation via validator callback
+# ---------------------------------------------------------------------------
+
+
+class TestMergeStateValidator:
+    """Ensure merge_state validator runs BEFORE writing to disk."""
+
+    def test_validator_prevents_write(self, session):
+        """When validator raises, state.json must NOT be updated."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        state_file = session.data_dir / "state.json"
+
+        # Write initial good state
+        initial = {"title": "Before", "version": 1}
+        state_file.write_text(json.dumps(initial))
+
+        def bad_validator(merged):
+            raise ValueError("Invalid merged state")
+
+        with pytest.raises(ValueError, match="Invalid merged state"):
+            session.merge_state({"title": "After"}, validator=bad_validator)
+
+        # State on disk must be unchanged
+        on_disk = json.loads(state_file.read_text())
+        assert on_disk["title"] == "Before"
+
+    def test_validator_passes_allows_write(self, session):
+        """When validator passes (no exception), state is written."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        state_file = session.data_dir / "state.json"
+
+        initial = {"title": "Before", "version": 1}
+        state_file.write_text(json.dumps(initial))
+
+        def ok_validator(merged):
+            pass  # No exception — accept
+
+        result = session.merge_state({"title": "After"}, validator=ok_validator)
+        assert result["title"] == "After"
+
+        on_disk = json.loads(state_file.read_text())
+        assert on_disk["title"] == "After"
+
+    def test_no_validator_still_works(self, session):
+        """merge_state without validator behaves as before."""
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        state_file = session.data_dir / "state.json"
+
+        initial = {"title": "Old", "version": 1}
+        state_file.write_text(json.dumps(initial))
+
+        result = session.merge_state({"title": "New"})
+        assert result["title"] == "New"
