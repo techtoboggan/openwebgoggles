@@ -43,11 +43,15 @@
     U.safeHTML(els.content, '<div class="done-state"><div class="done-icon">\u2713</div><div style="color:var(--green);font-weight:600">Session closed</div><div class="done-msg">' + U.esc((d && d.message) || "") + "</div></div>");
   });
 
+  // Clear all keys from an Object.create(null) dict without replacing it
+  // (OWG namespace is frozen — properties can't be reassigned, but inner objects are mutable)
+  function clearObj(obj) { for (var k in obj) delete obj[k]; }
+
   // ─── Main renderer ──────────────────────────────────────────────────────────
   function render(state) {
     if (!state) return;
-    U.formValues = Object.create(null);
-    U.fieldValidators = Object.create(null);
+    clearObj(U.formValues);
+    clearObj(U.fieldValidators);
 
     // Header
     var title = state.title || "OpenCode";
