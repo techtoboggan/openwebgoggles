@@ -18,6 +18,11 @@ Thumbs.db
 *.swp
 *.swo
 
+# Coverage
+.coverage
+coverage.json
+htmlcov/
+
 # Editor / tool config
 .claude/
 .mcp.json
