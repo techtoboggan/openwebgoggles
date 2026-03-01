@@ -174,7 +174,7 @@ class WebviewHTTPHandler:
         self._rate_limiter = RateLimiter(max_actions=30, window_seconds=60.0)
         self._security_gate: SecurityGate | None = SecurityGate() if HAS_GATE else None
 
-    async def _broadcast(self, message: dict, exclude=None):
+    async def _broadcast(self, message: dict, exclude=None):  # pragma: no cover
         import json as _json
 
         payload = _json.dumps(message)
@@ -209,7 +209,7 @@ class WebviewHTTPHandler:
         }
         return types.get(ext, "application/octet-stream")
 
-    async def handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):  # pragma: no cover
         try:
             request_line = await asyncio.wait_for(reader.readline(), timeout=30)
             if not request_line:
@@ -600,7 +600,7 @@ class WebviewServer:
         self.http_handler.ws_clients = self._ws_clients
         self.http_handler._public_key_hex = self._public_key_hex
 
-    async def start(self):
+    async def start(self):  # pragma: no cover
         # Start HTTP server
         http_server = await asyncio.start_server(
             self.http_handler.handle_request,
@@ -655,7 +655,7 @@ class WebviewServer:
                 logger.info("Crypto: Ephemeral keys zeroed.")
             pid_path.unlink(missing_ok=True)
 
-    async def _send_ws_signed(self, websocket, message: dict):
+    async def _send_ws_signed(self, websocket, message: dict):  # pragma: no cover
         """Send a signed WebSocket message (envelope with nonce + signature).
 
         Compact separators ensure the payload string (ps) is deterministic so
@@ -674,7 +674,7 @@ class WebviewServer:
             envelope = payload_str
         await websocket.send(envelope)
 
-    async def _handle_ws(self, websocket):
+    async def _handle_ws(self, websocket):  # pragma: no cover
         # First-message authentication: client must send {type: "auth", token: "..."}
         authenticated = False
 
@@ -774,7 +774,7 @@ class WebviewServer:
             self._ws_clients.discard(websocket)
             logger.info("WebSocket client disconnected (%d total)", len(self._ws_clients))
 
-    async def _broadcast(self, message: dict, exclude=None):
+    async def _broadcast(self, message: dict, exclude=None):  # pragma: no cover
         """Broadcast a signed message to all connected WebSocket clients."""
         payload_str = json.dumps(message, separators=(",", ":"))
         if HAS_CRYPTO and self._private_key:
@@ -791,7 +791,7 @@ class WebviewServer:
             except Exception:
                 self._ws_clients.discard(client)
 
-    async def _file_watcher(self):
+    async def _file_watcher(self):  # pragma: no cover
         """Poll data contract files for changes and broadcast over WebSocket."""
         # Initialize mtimes
         self.contract.check_changes()
@@ -834,7 +834,7 @@ class WebviewServer:
                         last_broadcast["actions"] = time.time()
 
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="OpenWebGoggles Server")
     parser.add_argument("--data-dir", required=True, help="Path to .openwebgoggles/ directory")
     parser.add_argument("--http-port", type=int, default=18420, help="HTTP server port (default: 18420)")

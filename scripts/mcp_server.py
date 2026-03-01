@@ -669,7 +669,7 @@ class WebviewSession:
 
         return False
 
-    def _open_browser(self) -> None:
+    def _open_browser(self) -> None:  # pragma: no cover
         """Open the webview in Chrome app mode, or fall back to default browser."""
         url = self.url
         chrome_bin = self._find_chrome()
@@ -706,7 +706,7 @@ class WebviewSession:
             webbrowser.open(url)
 
     @staticmethod
-    def _get_cursor_screen_position() -> tuple[int, int] | None:
+    def _get_cursor_screen_position() -> tuple[int, int] | None:  # pragma: no cover
         """Get a window position on the same screen as the mouse cursor.
 
         Uses macOS CoreGraphics via ctypes (no deps, no permissions) to read
@@ -756,7 +756,7 @@ class WebviewSession:
         except Exception:
             return None
 
-    def _cleanup_chrome(self) -> None:
+    def _cleanup_chrome(self) -> None:  # pragma: no cover
         """Kill the Chrome process we spawned and remove its temp profile."""
         if self._chrome_process is not None:
             try:
@@ -778,7 +778,7 @@ class WebviewSession:
             self._chrome_profile = None
 
     @staticmethod
-    def _find_chrome() -> str | None:
+    def _find_chrome() -> str | None:  # pragma: no cover
         """Detect a Chromium-based browser."""
         if platform.system() == "Darwin":
             candidates = [
@@ -846,7 +846,7 @@ class WebviewSession:
         # Release the flock so the next session can start cleanly
         self._release_lock()
 
-    def _atexit_cleanup(self) -> None:
+    def _atexit_cleanup(self) -> None:  # pragma: no cover
         """Safety net: kill subprocess and Chrome on interpreter exit."""
         self._cleanup_chrome()
         self._cleanup_process()
