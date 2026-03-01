@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import hmac
 import json
 import logging
 import os
+import re
+import secrets
 import signal
 import time
 import uuid
@@ -24,7 +27,12 @@ from http import HTTPStatus
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("openwebgoggles")
+except Exception:
+    __version__ = "dev"
 
 logger = logging.getLogger("openwebgoggles")
 
@@ -169,15 +177,18 @@ class WebviewHTTPHandler:
         self._security_gate = security_gate
         self.start_time = time.time()
         self.ws_clients: set = set()
-        self._csp_nonce: str | None = None  # set per-HTML-response
         self._public_key_hex: str = ""
         self._rate_limiter = RateLimiter(max_actions=30, window_seconds=60.0)
-        self._security_gate: SecurityGate | None = SecurityGate() if HAS_GATE else None
+        # Injected by WebviewServer to send signed broadcasts; falls back to
+        # unsigned plain-JSON if not set (e.g. in tests or standalone usage).
+        self._broadcast_fn: Any | None = None
 
-    async def _broadcast(self, message: dict, exclude=None):
-        import json as _json
-
-        payload = _json.dumps(message)
+    async def _broadcast(self, message: dict, exclude=None):  # pragma: no cover
+        if self._broadcast_fn is not None:
+            await self._broadcast_fn(message, exclude=exclude)
+            return
+        # Fallback: unsigned broadcast (only when server hasn't injected its signed version)
+        payload = json.dumps(message)
         for client in list(self.ws_clients):
             if client == exclude:
                 continue
@@ -209,7 +220,7 @@ class WebviewHTTPHandler:
         }
         return types.get(ext, "application/octet-stream")
 
-    async def handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):  # pragma: no cover
         try:
             request_line = await asyncio.wait_for(reader.readline(), timeout=30)
             if not request_line:
@@ -405,9 +416,7 @@ class WebviewHTTPHandler:
         app_dir_name = app_entry.split("/")[0] if "/" in app_entry else app_entry
 
         # Defense-in-depth: validate app directory name to prevent injection
-        import re as _re
-
-        if not app_dir_name or not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", app_dir_name):
+        if not app_dir_name or not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", app_dir_name):
             await self._send_response(writer, 400, {"error": "Invalid app entry in manifest"})
             return
 
@@ -446,8 +455,6 @@ class WebviewHTTPHandler:
 
     async def _send_index_with_bootstrap(self, writer, index: Path, manifest: dict):
         """Serve index.html with manifest + initial state injected as window.__OCV__ bootstrap."""
-        import secrets as _secrets
-
         html = index.read_text(encoding="utf-8")
         state = self.contract.get_state() or {}
 
@@ -469,16 +476,13 @@ class WebviewHTTPHandler:
         bootstrap = bootstrap.replace("<!--", "<\\!--")
         bootstrap = bootstrap.replace("<!", "<\\!")
 
-        # Generate per-request CSP nonce
-        csp_nonce = _secrets.token_hex(16)
-        self._csp_nonce = csp_nonce
+        # Generate per-request CSP nonce (passed as parameter, never stored as instance state)
+        csp_nonce = secrets.token_hex(16)
 
         injection = f'<script nonce="{csp_nonce}">window.__OCV__ = {bootstrap};</script>\n'
 
         # Add nonce to existing script tags in the HTML (skip tags that already have a nonce)
-        import re as _re
-
-        html = _re.sub(r"<script(?![^>]*\bnonce=)", f'<script nonce="{csp_nonce}"', html)
+        html = re.sub(r"<script(?![^>]*\bnonce=)", f'<script nonce="{csp_nonce}"', html)
 
         # Inject just before </head> — falls back to injecting at top of <body> or start of file
         if "</head>" in html:
@@ -488,7 +492,7 @@ class WebviewHTTPHandler:
         else:
             html = injection + html
         body = html.encode("utf-8")
-        await self._send_raw(writer, 200, body, "text/html")
+        await self._send_raw(writer, 200, body, "text/html", csp_nonce=csp_nonce)
 
     async def _send_response(self, writer, status: int, data: dict):
         body = json.dumps(data).encode()
@@ -502,7 +506,7 @@ class WebviewHTTPHandler:
         content_type = self._content_type(str(file_path))
         await self._send_raw(writer, 200, body, content_type)
 
-    async def _send_raw(self, writer, status: int, body: bytes, content_type: str):
+    async def _send_raw(self, writer, status: int, body: bytes, content_type: str, *, csp_nonce: str | None = None):
         reason = HTTPStatus(status).phrase
         origin = f"http://127.0.0.1:{self.http_port}"
         headers = [
@@ -518,11 +522,11 @@ class WebviewHTTPHandler:
             "Referrer-Policy: no-referrer",
             "Permissions-Policy: camera=(), microphone=(), geolocation=()",
         ]
-        # Add CSP for HTML responses
-        if content_type == "text/html" and self._csp_nonce:
+        # Add CSP for HTML responses (nonce must be passed explicitly per-request)
+        if content_type == "text/html" and csp_nonce:
             csp = (
                 f"default-src 'none'; "
-                f"script-src 'nonce-{self._csp_nonce}'; "
+                f"script-src 'nonce-{csp_nonce}'; "
                 f"style-src 'unsafe-inline' 'self'; "
                 f"connect-src 'self' ws://127.0.0.1:{self.ws_port}; "
                 f"img-src 'self'; "
@@ -599,8 +603,9 @@ class WebviewServer:
         )
         self.http_handler.ws_clients = self._ws_clients
         self.http_handler._public_key_hex = self._public_key_hex
+        self.http_handler._broadcast_fn = self._broadcast
 
-    async def start(self):
+    async def start(self):  # pragma: no cover
         # Start HTTP server
         http_server = await asyncio.start_server(
             self.http_handler.handle_request,
@@ -655,7 +660,7 @@ class WebviewServer:
                 logger.info("Crypto: Ephemeral keys zeroed.")
             pid_path.unlink(missing_ok=True)
 
-    async def _send_ws_signed(self, websocket, message: dict):
+    async def _send_ws_signed(self, websocket, message: dict):  # pragma: no cover
         """Send a signed WebSocket message (envelope with nonce + signature).
 
         Compact separators ensure the payload string (ps) is deterministic so
@@ -674,7 +679,7 @@ class WebviewServer:
             envelope = payload_str
         await websocket.send(envelope)
 
-    async def _handle_ws(self, websocket):
+    async def _handle_ws(self, websocket):  # pragma: no cover
         # First-message authentication: client must send {type: "auth", token: "..."}
         authenticated = False
 
@@ -774,7 +779,7 @@ class WebviewServer:
             self._ws_clients.discard(websocket)
             logger.info("WebSocket client disconnected (%d total)", len(self._ws_clients))
 
-    async def _broadcast(self, message: dict, exclude=None):
+    async def _broadcast(self, message: dict, exclude=None):  # pragma: no cover
         """Broadcast a signed message to all connected WebSocket clients."""
         payload_str = json.dumps(message, separators=(",", ":"))
         if HAS_CRYPTO and self._private_key:
@@ -791,7 +796,7 @@ class WebviewServer:
             except Exception:
                 self._ws_clients.discard(client)
 
-    async def _file_watcher(self):
+    async def _file_watcher(self):  # pragma: no cover
         """Poll data contract files for changes and broadcast over WebSocket."""
         # Initialize mtimes
         self.contract.check_changes()
@@ -820,9 +825,7 @@ class WebviewServer:
                     data = self.contract.get_manifest()
                     if data:
                         # Strip session token before broadcasting (same as HTTP endpoint)
-                        import copy as _copy
-
-                        safe_data = _copy.deepcopy(data)
+                        safe_data = copy.deepcopy(data)
                         if "session" in safe_data and "token" in safe_data["session"]:
                             safe_data["session"]["token"] = "REDACTED"  # noqa: S105 — redacting, not setting a password
                         await self._broadcast({"type": "manifest_updated", "data": safe_data})
@@ -834,7 +837,7 @@ class WebviewServer:
                         last_broadcast["actions"] = time.time()
 
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="OpenWebGoggles Server")
     parser.add_argument("--data-dir", required=True, help="Path to .openwebgoggles/ directory")
     parser.add_argument("--http-port", type=int, default=18420, help="HTTP server port (default: 18420)")

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openwebgoggles"
-version = "0.8.2"
+version = "0.10.0"
 description = "Browser-based human-in-the-loop UIs for AI coding agents"
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,6 +36,7 @@ openwebgoggles = "scripts.mcp_server:main"
 dev = [
     "pytest>=9.0,<10",
     "pytest-asyncio>=1.0,<2",
+    "pytest-cov>=6.0",
     "ruff>=0.9",
     "pre-commit>=4.0",
 ]
@@ -120,6 +121,20 @@ markers = [
     "mitre_t1568: MITRE ATT&CK T1568 Dynamic Resolution",
     "secure_comms: Secure communications between webview and agent",
     "slow: Integration tests that start real subprocesses",
+]
+
+[tool.coverage.run]
+source = ["scripts"]
+omit = ["scripts/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__",
+    "if platform\\.system\\(\\) == .Windows.",
+    "except ImportError",
 ]
 
 [tool.hatch.build.targets.wheel]

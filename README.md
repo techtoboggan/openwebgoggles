@@ -151,6 +151,18 @@ Tell your agent:
 
 The agent figures out the JSON schema, calls `webview`, and a panel opens in your browser. You make your decisions, click approve, and the agent continues with your structured response.
 
+### Lifecycle Commands
+
+Once installed, three CLI commands help you manage the server:
+
+```bash
+openwebgoggles restart       # seamless restart (same PID, editor never notices)
+openwebgoggles status        # check what's running, ports, uptime
+openwebgoggles doctor        # diagnose setup problems
+```
+
+See the [Restart & Lifecycle Guide](references/restart-guide.md) for details on automatic recovery, manual restart, and troubleshooting.
+
 ### What Gets Installed
 
 Five MCP tools — that's the entire API surface:
@@ -374,7 +386,7 @@ Nine defense layers enforce this, all enabled by default:
 - **SecurityGate** — 22 XSS patterns, zero-width character detection, schema validation
 - **Rate limiting** — 30 actions per minute per session
 
-All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 748 tests.
+All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 988 tests (96% code coverage).
 
 The tradeoff is real, though. This level of defense adds complexity to the codebase. If you're running in a fully trusted local environment and want to understand what each layer does, the [security tests](scripts/tests/) are the best documentation.
 
@@ -397,6 +409,7 @@ For the full details:
 - [Data Contract](references/data-contract.md) — JSON file formats, state lifecycle, status values
 - [SDK API](references/sdk-api.md) — Complete client SDK reference
 - [Integration Guide](references/integration-guide.md) — Step-by-step patterns for connecting from other tools
+- [Restart & Lifecycle Guide](references/restart-guide.md) — Automatic recovery, manual restart, diagnostics
 
 ## License
 

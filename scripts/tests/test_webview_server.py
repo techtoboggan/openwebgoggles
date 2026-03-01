@@ -88,6 +88,8 @@ def contract(tmp_data_dir):
 def handler(contract, tmp_data_dir):
     sdk_path = tmp_data_dir / "sdk.js"
     sdk_path.write_text("// SDK placeholder")
+    from security_gate import SecurityGate
+
     h = WebviewHTTPHandler(
         contract=contract,
         apps_dir=tmp_data_dir / "apps",
@@ -95,6 +97,7 @@ def handler(contract, tmp_data_dir):
         session_token="secret_token_abc",
         http_port=18420,
         ws_port=18421,
+        security_gate=SecurityGate(),
     )
     h._public_key_hex = "deadbeef" * 8
     return h

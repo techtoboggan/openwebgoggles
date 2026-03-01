@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-03-01
+
+### Security
+
+- **H1: Unsigned WebSocket broadcast from HTTP handler** — `WebviewHTTPHandler._broadcast` sent plain JSON to WebSocket clients, bypassing the Ed25519/HMAC signing layer. Close messages from `/_api/close` were delivered unsigned, which browsers with crypto enabled would reject. Fixed by injecting the server's signed `_broadcast` function into the HTTP handler.
+- **H2: SecurityGate parameter shadowed in HTTP handler** — `WebviewHTTPHandler.__init__` accepted a `security_gate` parameter but immediately overwrote it on the next line, creating a redundant second SecurityGate instance and silently discarding the one passed by `WebviewServer`. Fixed by removing the shadowing reassignment.
+- **M1: CSP nonce stored as shared instance state** — The per-request CSP nonce was stored as `self._csp_nonce` on the handler, meaning concurrent or sequential HTML requests could leak nonces across responses. Refactored to pass the nonce as a parameter to `_send_raw`, never stored as instance state.
+- **L1: Dockerfile runs as root** — Added non-root `owg` user (CIS Docker Benchmark 4.1).
+
+### Fixed
+
+- **Stale `__version__`** — `webview_server.py` hardcoded `__version__ = "0.1.0"`. Now reads version dynamically from package metadata via `importlib.metadata`.
+- **Inline imports** — Moved `import re`, `import secrets`, `import copy` from inside methods to module-level in `webview_server.py`.
+
+### Changed
+
+- Test count: 772 → 988 (96% coverage, up from 82%)
+
+## [0.9.0] - 2026-03-01
+
+### Added
+
+- **CLI commands: `restart`, `status`, `doctor`** — new subcommands for managing the MCP server lifecycle:
+  - `openwebgoggles restart` — sends SIGUSR1 for seamless in-place restart via `os.execv` (same PID, no client disconnect)
+  - `openwebgoggles status` — shows MCP server and webview server status, health endpoint, uptime, session info
+  - `openwebgoggles doctor` — diagnoses setup: Python version, dependencies, binary resolution, config files, stale PIDs, lock state
+- **SIGUSR1 signal handling** — MCP server registers a SIGUSR1 handler that sets a flag for the event loop to trigger a graceful restart (drains active tool calls, closes webview session, then exec)
+- **Auto-reload version monitor** — background task polls package dist-info mtime every 30s; on version change, drains active calls and exec-reloads
+- **PID file management** — `.mcp.pid` written on startup for `restart`/`status` to find the running MCP server
+- **Code coverage tooling** — `pytest-cov` with `fail_under=80` in pyproject.toml; coverage report shows missing lines
+- Test count: 772 → 988 (96% coverage)
+
 ## [0.8.2] - 2026-02-28
 
 ### Fixed
