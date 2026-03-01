@@ -20,6 +20,7 @@ OWASP references:
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from typing import Any
@@ -62,6 +63,8 @@ class SecurityGate:
             "diff",
             "table",
             "tabs",
+            "metric",
+            "chart",
         }
     )
     ALLOWED_ACTION_STYLES = frozenset(
@@ -162,6 +165,7 @@ class SecurityGate:
     MAX_LOG_LINES = 5000
     MAX_TABLE_COLUMNS = 50
     MAX_TABS = 20
+    MAX_PAGES = 20
     ALLOWED_TASK_STATUSES = frozenset({"pending", "in_progress", "completed", "failed", "skipped"})
     ALLOWED_BEHAVIOR_CONDITIONS = frozenset(
         {"equals", "notEquals", "in", "notIn", "checked", "unchecked", "empty", "notEmpty", "matches"}
@@ -183,11 +187,28 @@ class SecurityGate:
         re.compile(r"\\[0-9a-fA-F]{1,6}"),  # CSS hex escape obfuscation
     ]
 
+    # --- Metric section ---
+    ALLOWED_CHANGE_DIRECTIONS = frozenset({"up", "down", "neutral"})
+    MAX_SPARKLINE_POINTS = 100
+    MAX_METRIC_COLUMNS = 6
+
+    # --- Chart section ---
+    ALLOWED_CHART_TYPES = frozenset({"bar", "line", "area", "pie", "donut", "sparkline"})
+    ALLOWED_THEME_COLORS = frozenset({"blue", "green", "red", "yellow", "purple", "orange", "cyan", "pink"})
+    # Only allow valid CSS hex colors: #rgb (3), #rrggbb (6), or #rrggbbaa (8)
+    COLOR_PATTERN = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+    MAX_DATA_POINTS = 500
+    MAX_DATASETS = 20
+    MAX_CHART_LABELS = 500
+    MAX_CHART_WIDTH = 2000
+    MAX_CHART_HEIGHT = 1500
+
     # --- className validation (alphanumeric, hyphens, underscores, spaces) ---
     CLASS_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_ -]*$")
 
     # --- Key name validation (for form field keys used in data attributes) ---
-    KEY_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
+    # Require leading alpha to be consistent with CLASS_NAME_PATTERN and valid CSS selectors
+    KEY_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.\-]*$")
 
     # --- ReDoS detection: reject patterns with nested quantifiers ---
     # Catches (a+)+, (a*)+, (a+)*, (a{1,})+, etc.
@@ -252,6 +273,8 @@ class SecurityGate:
                 "behaviors",
                 "layout",
                 "panels",
+                "pages",
+                "activePage",
             }
         )
         unknown = set(state.keys()) - ALLOWED_TOP_KEYS
@@ -325,6 +348,45 @@ class SecurityGate:
             ok, err = self._validate_layout(layout, state.get("panels", {}))
             if not ok:
                 return False, err, {}
+
+        # 11. Validate pages if present
+        pages = state.get("pages")
+        if pages is not None:
+            if not isinstance(pages, dict):
+                return False, "pages must be an object", {}
+            if len(pages) > self.MAX_PAGES:
+                return False, f"Too many pages: {len(pages)} (max {self.MAX_PAGES})", {}
+            for pk, page in pages.items():
+                if not isinstance(pk, str) or not self.KEY_PATTERN.match(pk):
+                    return False, f"pages: invalid key {pk!r}", {}
+                if not isinstance(page, dict):
+                    return False, f"pages.{pk} must be an object", {}
+                page_label = page.get("label", "")
+                if page_label and not isinstance(page_label, str):
+                    return False, f"pages.{pk}.label must be a string", {}
+                if isinstance(page_label, str) and len(page_label) > 500:
+                    return False, f"pages.{pk}.label: too long (max 500)", {}
+                page_data = page.get("data", {})
+                if isinstance(page_data, dict):
+                    page_ui = page_data.get("ui", page_data)
+                    if isinstance(page_ui, dict):
+                        ok, err = self._validate_ui(page_ui)
+                        if not ok:
+                            return False, f"pages.{pk}: {err}", {}
+                page_actions = page.get("actions_requested", [])
+                if isinstance(page_actions, list) and page_actions:
+                    ok, err = self._validate_actions(page_actions, f"pages.{pk}")
+                    if not ok:
+                        return False, err, {}
+
+        active_page = state.get("activePage", "")
+        if active_page:
+            if not isinstance(active_page, str):
+                return False, "activePage must be a string", {}
+            if not self.KEY_PATTERN.match(active_page):
+                return False, "activePage: invalid format", {}
+            if pages and active_page not in pages:
+                return False, f"activePage {active_page!r} not in pages", {}
 
         return True, "", state
 
@@ -632,8 +694,11 @@ class SecurityGate:
 
         for prop in ("min", "max"):
             val = field.get(prop)
-            if val is not None and not isinstance(val, int | float):
-                return False, f"{path}.{prop} must be a number"
+            if val is not None:
+                if not isinstance(val, int | float):
+                    return False, f"{path}.{prop} must be a number"
+                if isinstance(val, float) and not math.isfinite(val):
+                    return False, f"{path}.{prop} must be a finite number"
 
         err_msg = field.get("errorMessage")
         if err_msg is not None:
@@ -683,6 +748,8 @@ class SecurityGate:
             if pct is not None:
                 if not isinstance(pct, int | float):
                     return False, f"{prefix}.percentage must be a number"
+                if isinstance(pct, float) and not math.isfinite(pct):
+                    return False, f"{prefix}.percentage must be a finite number"
                 if pct < 0 or pct > 100:
                     return False, f"{prefix}.percentage must be 0-100"
 
@@ -727,6 +794,133 @@ class SecurityGate:
             selectable = sec.get("selectable", False)
             if not isinstance(selectable, bool):
                 return False, f"{prefix}.selectable must be a boolean"
+            # Clickable rows (drill-down on row click)
+            clickable = sec.get("clickable", False)
+            if not isinstance(clickable, bool):
+                return False, f"{prefix}.clickable must be a boolean"
+            click_action_id = sec.get("clickActionId", "")
+            if click_action_id:
+                if not isinstance(click_action_id, str):
+                    return False, f"{prefix}.clickActionId must be a string"
+                if len(click_action_id) > 200:
+                    return False, f"{prefix}.clickActionId too long (max 200)"
+                if not self.KEY_PATTERN.match(click_action_id):
+                    return False, f"{prefix}.clickActionId: invalid format"
+
+        elif sec_type == "metric":
+            cards = sec.get("cards", [])
+            if not isinstance(cards, list):
+                return False, f"{prefix}.cards must be an array"
+            if len(cards) > self.MAX_ITEMS_PER_SECTION:
+                return False, f"{prefix}: too many cards ({len(cards)})"
+            for ci, card in enumerate(cards):
+                if not isinstance(card, dict):
+                    return False, f"{prefix}.cards[{ci}] must be an object"
+                label = card.get("label")
+                if not isinstance(label, str) or not label:
+                    return False, f"{prefix}.cards[{ci}].label: required string"
+                if len(label) > 500:
+                    return False, f"{prefix}.cards[{ci}].label: too long (max 500)"
+                value = card.get("value")
+                if not isinstance(value, str | int | float):
+                    return False, f"{prefix}.cards[{ci}].value: must be string or number"
+                if isinstance(value, float) and not math.isfinite(value):
+                    return False, f"{prefix}.cards[{ci}].value: must be finite"
+                unit = card.get("unit", "")
+                if unit and (not isinstance(unit, str) or len(unit) > 50):
+                    return False, f"{prefix}.cards[{ci}].unit: invalid"
+                change = card.get("change", "")
+                if change and (not isinstance(change, str) or len(change) > 100):
+                    return False, f"{prefix}.cards[{ci}].change: invalid"
+                cd = card.get("changeDirection", "")
+                if cd and cd not in self.ALLOWED_CHANGE_DIRECTIONS:
+                    return False, f"{prefix}.cards[{ci}].changeDirection: invalid {cd!r}"
+                sparkline = card.get("sparkline")
+                if sparkline is not None:
+                    if not isinstance(sparkline, list):
+                        return False, f"{prefix}.cards[{ci}].sparkline must be an array"
+                    if len(sparkline) > self.MAX_SPARKLINE_POINTS:
+                        return False, f"{prefix}.cards[{ci}].sparkline: too many points"
+                    for si_val, pt in enumerate(sparkline):
+                        if not isinstance(pt, int | float):
+                            return False, f"{prefix}.cards[{ci}].sparkline[{si_val}]: must be number"
+                        if isinstance(pt, float) and not math.isfinite(pt):
+                            return False, f"{prefix}.cards[{ci}].sparkline[{si_val}]: must be finite"
+                icon = card.get("icon", "")
+                if icon and (not isinstance(icon, str) or not self.KEY_PATTERN.match(icon)):
+                    return False, f"{prefix}.cards[{ci}].icon: invalid"
+            cols = sec.get("columns", 4)
+            if not isinstance(cols, int) or cols < 1 or cols > self.MAX_METRIC_COLUMNS:
+                return False, f"{prefix}.columns must be 1-{self.MAX_METRIC_COLUMNS}"
+
+        elif sec_type == "chart":
+            chart_type = sec.get("chartType", "")
+            if not chart_type or chart_type not in self.ALLOWED_CHART_TYPES:
+                return False, f"{prefix}.chartType: invalid {chart_type!r}"
+            data = sec.get("data")
+            if not isinstance(data, dict):
+                return False, f"{prefix}.data must be an object"
+            labels = data.get("labels", [])
+            if not isinstance(labels, list):
+                return False, f"{prefix}.data.labels must be an array"
+            if len(labels) > self.MAX_CHART_LABELS:
+                return False, f"{prefix}.data.labels: too many ({len(labels)})"
+            for li, lbl in enumerate(labels):
+                if not isinstance(lbl, str):
+                    return False, f"{prefix}.data.labels[{li}]: must be string"
+                if len(lbl) > 500:
+                    return False, f"{prefix}.data.labels[{li}]: too long (max 500)"
+            datasets = data.get("datasets", [])
+            if not isinstance(datasets, list):
+                return False, f"{prefix}.data.datasets must be an array"
+            if len(datasets) > self.MAX_DATASETS:
+                return False, f"{prefix}.data.datasets: too many"
+            for di, ds in enumerate(datasets):
+                if not isinstance(ds, dict):
+                    return False, f"{prefix}.data.datasets[{di}] must be an object"
+                values = ds.get("values", [])
+                if not isinstance(values, list):
+                    return False, f"{prefix}.data.datasets[{di}].values must be an array"
+                if len(values) > self.MAX_DATA_POINTS:
+                    return False, f"{prefix}.data.datasets[{di}].values: too many points"
+                for vi, v in enumerate(values):
+                    if not isinstance(v, int | float):
+                        return False, f"{prefix}.data.datasets[{di}].values[{vi}]: must be number"
+                    if isinstance(v, float) and not math.isfinite(v):
+                        return False, f"{prefix}.data.datasets[{di}].values[{vi}]: must be finite"
+                color = ds.get("color", "")
+                if color:
+                    if not isinstance(color, str):
+                        return False, f"{prefix}.data.datasets[{di}].color: must be string"
+                    if color not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(color):
+                        return False, f"{prefix}.data.datasets[{di}].color: invalid"
+                colors = ds.get("colors", [])
+                if colors:
+                    if not isinstance(colors, list):
+                        return False, f"{prefix}.data.datasets[{di}].colors must be an array"
+                    for cci, c in enumerate(colors):
+                        if not isinstance(c, str):
+                            return False, f"{prefix}.data.datasets[{di}].colors[{cci}]: must be string"
+                        if c not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(c):
+                            return False, f"{prefix}.data.datasets[{di}].colors[{cci}]: invalid"
+                ds_label = ds.get("label", "")
+                if ds_label and not isinstance(ds_label, str):
+                    return False, f"{prefix}.data.datasets[{di}].label: must be string"
+                if isinstance(ds_label, str) and len(ds_label) > 500:
+                    return False, f"{prefix}.data.datasets[{di}].label: too long (max 500)"
+            options = sec.get("options", {})
+            if not isinstance(options, dict):
+                return False, f"{prefix}.options must be an object"
+            w = options.get("width")
+            if w is not None and (not isinstance(w, int) or w < 50 or w > self.MAX_CHART_WIDTH):
+                return False, f"{prefix}.options.width: must be 50-{self.MAX_CHART_WIDTH}"
+            h = options.get("height")
+            if h is not None and (not isinstance(h, int) or h < 50 or h > self.MAX_CHART_HEIGHT):
+                return False, f"{prefix}.options.height: must be 50-{self.MAX_CHART_HEIGHT}"
+            for bool_opt in ("showLegend", "showGrid", "showValues", "stacked"):
+                val = options.get(bool_opt)
+                if val is not None and not isinstance(val, bool):
+                    return False, f"{prefix}.options.{bool_opt}: must be boolean"
 
         elif sec_type == "tabs":
             tabs = sec.get("tabs", [])

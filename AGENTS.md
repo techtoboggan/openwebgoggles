@@ -10,7 +10,7 @@ scripts/              Python source (NOT src/)
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (748+ tests)
+  tests/              pytest suite (1429+ tests)
     conftest.py       Shared fixtures: gate, session_keys, nonce_tracker, session_token
     test_security_gate.py
     test_client_escaping.py
@@ -19,9 +19,10 @@ assets/
   sdk/                Client JS SDK (openwebgoggles-sdk.js)
   apps/dynamic/       Built-in dynamic renderer
     index.html        Entry point — CSS variables, section styles, CSP nonce injection
-    app.js            Orchestrator — WebSocket, state rendering, action dispatch
+    app.js            Orchestrator — WebSocket, state rendering, action dispatch, pages
     utils.js          Escaping, sanitization, CSS validation, markdown rendering
-    sections.js       Section type renderers (progress, log, diff, table, tabs, etc.)
+    sections.js       Section type renderers (progress, log, diff, table, tabs, metric)
+    charts.js         Data-driven SVG chart renderer (bar, line, area, pie, donut, sparkline)
     validation.js     Field validation engine (required, pattern, minLength, maxLength)
     behaviors.js      Conditional show/hide/enable/disable logic
   template/           App scaffold template for init_webview_app.sh
@@ -49,9 +50,10 @@ All JS uses vanilla IIFE modules sharing `window.OWG`. No webpack, no bundler, n
 **Load order matters.** In `index.html`:
 1. `utils.js` (no dependencies)
 2. `sections.js` (depends on utils)
-3. `validation.js` (depends on utils)
-4. `behaviors.js` (depends on utils)
-5. `app.js` (orchestrator — depends on all above)
+3. `charts.js` (depends on utils — SVG chart renderer)
+4. `validation.js` (depends on utils)
+5. `behaviors.js` (depends on utils)
+6. `app.js` (orchestrator — depends on all above)
 
 All script tags must have the CSP nonce: `<script nonce="{{NONCE}}" src="...">`. The server injects the nonce at request time.
 
@@ -95,7 +97,12 @@ This is intentional. Mutation-based sanitization is fragile (bypass via encoding
 | Custom CSS | 50KB, no `url()`, no `@import`, no `@font-face` | `DANGEROUS_CSS_PATTERNS` |
 | Field patterns | No nested quantifiers (ReDoS) | `_is_redos_safe()` |
 | Class names | `^[a-zA-Z][a-zA-Z0-9_ -]*$` | `CLASS_NAME_PATTERN` |
-| Top-level keys | Allowlisted set only | `ALLOWED_TOP_KEYS` in `validate_state()` |
+| Top-level keys | Allowlisted set only (incl. `pages`, `activePage`) | `ALLOWED_TOP_KEYS` in `validate_state()` |
+| Pages | 20 max, keys must match `KEY_PATTERN` | `MAX_PAGES` |
+| Metric cards | 500 max, sparkline max 100 points, columns 1-6 | `MAX_ITEMS_PER_SECTION`, `MAX_SPARKLINE_POINTS`, `MAX_METRIC_COLUMNS` |
+| Chart data | 500 labels, 20 datasets, 500 data points each | `MAX_CHART_LABELS`, `MAX_DATASETS`, `MAX_DATA_POINTS` |
+| Chart dimensions | width 50-2000, height 50-1500 | `MAX_CHART_WIDTH`, `MAX_CHART_HEIGHT` |
+| Chart colors | Hex (`#RGB`/`#RRGGBB`/`#RRGGBBAA`) or theme alias | `COLOR_PATTERN`, `ALLOWED_THEME_COLORS` |
 | Log lines | Each must be `str` | `_validate_section_specific()` |
 | Field rows | int, 1-50 | `_validate_field()` |
 | Field placeholder | str, max 500 chars | `_validate_field()` |

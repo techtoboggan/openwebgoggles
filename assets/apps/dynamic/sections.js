@@ -1,6 +1,6 @@
 "use strict";
 // Section renderers for the dynamic UI — form, items, text, actions, plus
-// new rich section types: progress, log, diff, table, tabs.
+// rich section types: progress, log, diff, table, tabs, metric, chart.
 
 (function (OWG) {
   var esc = OWG.esc;
@@ -27,6 +27,8 @@
       case "diff":      html += renderDiff(sec);                break;
       case "table":     html += renderTable(sec, si);           break;
       case "tabs":      html += renderTabs(sec, si);            break;
+      case "metric":    html += renderMetric(sec, si);          break;
+      case "chart":     html += OWG.renderChart(sec, si);       break;
       default:          html += renderForm(sec, si);            break;
     }
 
@@ -311,12 +313,18 @@
     var cols = sec.columns || [];
     var rows = sec.rows || [];
     var selectable = !!sec.selectable;
+    var clickable = !!sec.clickable;
+    var clickAction = sec.clickActionId || "_table_row_click";
     var tableKey = "_table_" + si + "_selected";
 
     // Initialize selection in formValues
     if (selectable) OWG.formValues[tableKey] = [];
 
-    var html = '<div class="table-container"><table class="owg-table" data-table-index="' + si + '">';
+    var tableAttrs = ' data-table-index="' + si + '"';
+    if (clickable) {
+      tableAttrs += ' data-clickable="true" data-click-action="' + escAttr(clickAction) + '"';
+    }
+    var html = '<div class="table-container"><table class="owg-table"' + tableAttrs + '>';
 
     // Header
     html += "<thead><tr>";
@@ -330,7 +338,8 @@
     // Body
     html += "<tbody>";
     rows.forEach(function (row, ri) {
-      html += "<tr>";
+      var trCls = clickable ? ' class="owg-table-clickable"' : "";
+      html += "<tr" + trCls + ">";
       if (selectable) html += '<td><input type="checkbox" data-table-row="' + si + '" data-row-index="' + ri + '"></td>';
       cols.forEach(function (col) {
         var cellVal = row[col.key];
@@ -341,6 +350,66 @@
     html += "</tbody></table></div>";
     return html;
   }
+
+  // ─── Metric cards ──────────────────────────────────────────────────────────
+  function renderMetric(sec) {
+    var cards = sec.cards || [];
+    var cols = sec.columns || 4;
+    if (cols < 1 || cols > 6) cols = 4;
+    var html = '<div class="metric-grid" style="grid-template-columns: repeat(' + cols + ', 1fr)">';
+    cards.forEach(function (card) {
+      html += '<div class="metric-card">';
+      html += '<div class="metric-label">' + esc(card.label || "") + "</div>";
+      html += '<div class="metric-value-row">';
+      html += '<span class="metric-value">' + esc(String(card.value != null ? card.value : "")) + "</span>";
+      if (card.unit) html += '<span class="metric-unit">' + esc(card.unit) + "</span>";
+      html += "</div>";
+      if (card.change) {
+        var dirClass = card.changeDirection === "up" ? "metric-up"
+          : card.changeDirection === "down" ? "metric-down"
+          : "metric-neutral";
+        var arrow = card.changeDirection === "up" ? "\u25B2"
+          : card.changeDirection === "down" ? "\u25BC"
+          : "\u25CF";
+        html += '<div class="metric-change ' + dirClass + '">';
+        html += '<span class="metric-arrow">' + arrow + "</span> " + esc(card.change);
+        html += "</div>";
+      }
+      if (card.sparkline && card.sparkline.length > 1) {
+        html += OWG.renderSparkline(card.sparkline, 120, 32);
+      }
+      html += "</div>";
+    });
+    html += "</div>";
+    return html;
+  }
+
+  // ─── Sparkline (inline SVG from data array) ───────────────────────────────
+  OWG.renderSparkline = function (values, width, height) {
+    if (!values || values.length < 2) return "";
+    width = width || 120;
+    height = height || 32;
+    var min = Infinity, max = -Infinity;
+    for (var i = 0; i < values.length; i++) {
+      var v = Number(values[i]);
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    var range = max - min || 1;
+    var pad = 1; // 1px padding so line isn't clipped at edges
+    var drawH = height - pad * 2;
+    var points = [];
+    for (var j = 0; j < values.length; j++) {
+      var x = (j / (values.length - 1)) * width;
+      var y = pad + drawH - ((Number(values[j]) - min) / range) * drawH;
+      points.push(x.toFixed(1) + "," + y.toFixed(1));
+    }
+    return '<svg class="owg-sparkline" viewBox="0 0 ' + width + " " + height +
+      '" width="' + width + '" height="' + height +
+      '" xmlns="http://www.w3.org/2000/svg">' +
+      '<polyline points="' + escAttr(points.join(" ")) +
+      '" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  };
 
   // ─── Tabs ───────────────────────────────────────────────────────────────────
   function renderTabs(sec, si) {
@@ -439,6 +508,39 @@
           if (r.checked) selected.push(i);
         });
         OWG.formValues["_table_" + ti + "_selected"] = selected;
+      });
+    });
+
+    // Clickable table rows (drill-down)
+    root.querySelectorAll('.owg-table[data-clickable="true"]').forEach(function (table) {
+      var tbody = table.querySelector("tbody");
+      if (!tbody) return;
+      var actionId = table.getAttribute("data-click-action") || "_table_row_click";
+      var ti = table.getAttribute("data-table-index");
+      // Collect column keys from header for building row data
+      var colKeys = [];
+      table.querySelectorAll("thead th[data-sort-key]").forEach(function (th) {
+        colKeys.push(th.getAttribute("data-sort-key"));
+      });
+      tbody.querySelectorAll("tr").forEach(function (tr, ri) {
+        tr.addEventListener("click", function (e) {
+          // Don't fire row click if user clicked a checkbox (selectable coexistence)
+          if (e.target.type === "checkbox") return;
+          var rowData = {};
+          var cells = tr.querySelectorAll("td");
+          // If selectable, skip the checkbox column
+          var offset = table.querySelector("[data-table-select-all]") ? 1 : 0;
+          colKeys.forEach(function (key, ci) {
+            var cell = cells[ci + offset];
+            rowData[key] = cell ? cell.textContent : "";
+          });
+          if (typeof OWG.emitAction === "function") {
+            OWG.emitAction(actionId, "action", rowData, {
+              section_index: ti,
+              row_index: ri
+            });
+          }
+        });
       });
     });
 

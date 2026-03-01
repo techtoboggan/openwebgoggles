@@ -202,6 +202,62 @@ For navigation-heavy interfaces, use a multi-panel layout with a sidebar:
 }
 ```
 
+### Metrics Dashboard
+
+Your agent monitors server health and shows real-time KPIs with sparklines, charts, and a clickable server table:
+
+```json
+{
+  "title": "Server Dashboard",
+  "status": "ready",
+  "pages": {
+    "overview": {
+      "label": "Overview",
+      "data": { "sections": [
+        { "type": "metric", "title": "Key Metrics", "columns": 4, "cards": [
+          { "label": "Requests/sec", "value": "2,847", "change": "+12%", "changeDirection": "up",
+            "sparkline": [1200, 1800, 2100, 2400, 2600, 2847] },
+          { "label": "Error Rate", "value": "0.3%", "change": "-0.1%", "changeDirection": "down" },
+          { "label": "P95 Latency", "value": "142", "unit": "ms", "changeDirection": "neutral" },
+          { "label": "Active Users", "value": 1205 }
+        ]},
+        { "type": "chart", "chartType": "line", "title": "Request Volume (24h)",
+          "data": {
+            "labels": ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"],
+            "datasets": [
+              { "label": "Requests", "values": [800, 400, 1200, 2800, 3200, 2100], "color": "blue" },
+              { "label": "Errors", "values": [2, 1, 5, 12, 8, 4], "color": "red" }
+            ]
+          },
+          "options": { "width": 700, "height": 280, "showLegend": true, "showGrid": true }
+        }
+      ]}
+    },
+    "servers": {
+      "label": "Servers",
+      "data": { "sections": [
+        { "type": "table", "title": "Server Fleet", "clickable": true, "clickActionId": "server_detail",
+          "columns": [
+            { "key": "name", "label": "Server" },
+            { "key": "status", "label": "Status" },
+            { "key": "cpu", "label": "CPU" },
+            { "key": "memory", "label": "Memory" }
+          ],
+          "rows": [
+            { "name": "web-01", "status": "healthy", "cpu": "34%", "memory": "2.1 GB" },
+            { "name": "web-02", "status": "healthy", "cpu": "67%", "memory": "3.4 GB" },
+            { "name": "api-01", "status": "warning", "cpu": "89%", "memory": "5.8 GB" }
+          ]
+        }
+      ]}
+    }
+  },
+  "activePage": "overview"
+}
+```
+
+The agent decides what to show — metric cards, charts, clickable drill-down tables — and composes them into a multi-page dashboard. Click a table row and the agent gets an action with the row data. Switch pages instantly without a server round-trip.
+
 The agent doesn't need to know HTML. It writes a JSON object describing what it wants to show, and the built-in dynamic renderer handles the rest. Structured data in, structured data out — the browser is just the rendering layer in between.
 
 ## Quick Start

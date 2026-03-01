@@ -1,0 +1,159 @@
+{
+  "title": "Server Dashboard",
+  "status": "ready",
+  "pages": {
+    "overview": {
+      "label": "Overview",
+      "data": {
+        "sections": [
+          {
+            "type": "metric",
+            "title": "Key Metrics",
+            "columns": 4,
+            "cards": [
+              {
+                "label": "Requests/sec",
+                "value": "2,847",
+                "change": "+12.5%",
+                "changeDirection": "up",
+                "sparkline": [1200, 1500, 1800, 2100, 2400, 2600, 2750, 2847]
+              },
+              {
+                "label": "Error Rate",
+                "value": "0.3%",
+                "change": "-0.1%",
+                "changeDirection": "down"
+              },
+              {
+                "label": "P95 Latency",
+                "value": "142",
+                "unit": "ms",
+                "changeDirection": "neutral",
+                "sparkline": [180, 165, 155, 148, 145, 143, 142, 142]
+              },
+              {
+                "label": "Active Users",
+                "value": 1205,
+                "change": "+89",
+                "changeDirection": "up"
+              }
+            ]
+          },
+          {
+            "type": "chart",
+            "chartType": "line",
+            "title": "Request Volume (24h)",
+            "data": {
+              "labels": ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "Now"],
+              "datasets": [
+                {
+                  "label": "Requests",
+                  "values": [800, 420, 1200, 2800, 3200, 2100, 2847],
+                  "color": "blue"
+                },
+                {
+                  "label": "Errors",
+                  "values": [2, 1, 5, 12, 8, 4, 3],
+                  "color": "red"
+                }
+              ]
+            },
+            "options": {
+              "width": 700,
+              "height": 280,
+              "showLegend": true,
+              "showGrid": true
+            }
+          },
+          {
+            "type": "chart",
+            "chartType": "bar",
+            "title": "Response Codes",
+            "data": {
+              "labels": ["200", "201", "301", "400", "404", "500"],
+              "datasets": [
+                {
+                  "label": "Count",
+                  "values": [24500, 3200, 180, 45, 320, 12],
+                  "color": "green"
+                }
+              ]
+            },
+            "options": {
+              "width": 500,
+              "height": 220,
+              "showLegend": false
+            }
+          }
+        ]
+      }
+    },
+    "servers": {
+      "label": "Servers",
+      "data": {
+        "sections": [
+          {
+            "type": "table",
+            "title": "Server Fleet",
+            "clickable": true,
+            "clickActionId": "server_detail",
+            "columns": [
+              { "key": "name", "label": "Server" },
+              { "key": "status", "label": "Status" },
+              { "key": "cpu", "label": "CPU" },
+              { "key": "memory", "label": "Memory" },
+              { "key": "uptime", "label": "Uptime" }
+            ],
+            "rows": [
+              { "name": "web-01", "status": "healthy", "cpu": "34%", "memory": "2.1 GB", "uptime": "14d 3h" },
+              { "name": "web-02", "status": "healthy", "cpu": "67%", "memory": "3.4 GB", "uptime": "14d 3h" },
+              { "name": "api-01", "status": "warning", "cpu": "89%", "memory": "5.8 GB", "uptime": "7d 12h" },
+              { "name": "api-02", "status": "healthy", "cpu": "42%", "memory": "2.8 GB", "uptime": "7d 12h" },
+              { "name": "worker-01", "status": "healthy", "cpu": "78%", "memory": "4.2 GB", "uptime": "3d 6h" },
+              { "name": "db-primary", "status": "healthy", "cpu": "23%", "memory": "12.4 GB", "uptime": "30d 0h" }
+            ]
+          },
+          {
+            "type": "chart",
+            "chartType": "pie",
+            "title": "Fleet Health",
+            "data": {
+              "labels": ["Healthy", "Warning", "Critical"],
+              "datasets": [
+                {
+                  "values": [5, 1, 0],
+                  "colors": ["green", "yellow", "red"]
+                }
+              ]
+            },
+            "options": { "width": 300, "height": 300 }
+          }
+        ]
+      }
+    },
+    "logs": {
+      "label": "Logs",
+      "data": {
+        "sections": [
+          {
+            "type": "log",
+            "title": "Recent Events",
+            "lines": [
+              "\u001b[32m[INFO]\u001b[0m  2026-03-01 14:23:01  web-01  Request rate normalized",
+              "\u001b[33m[WARN]\u001b[0m  2026-03-01 14:22:45  api-01  CPU usage above 85% threshold",
+              "\u001b[32m[INFO]\u001b[0m  2026-03-01 14:22:30  worker-01  Batch job completed (1,247 items)",
+              "\u001b[32m[INFO]\u001b[0m  2026-03-01 14:21:15  db-primary  Vacuum completed on users table",
+              "\u001b[32m[INFO]\u001b[0m  2026-03-01 14:20:00  web-02  Deployed v2.4.1 successfully",
+              "\u001b[33m[WARN]\u001b[0m  2026-03-01 14:19:30  api-01  Slow query detected (2.3s)"
+            ],
+            "autoScroll": true
+          }
+        ]
+      },
+      "actions_requested": [
+        { "id": "refresh_logs", "type": "primary", "label": "Refresh Logs" }
+      ]
+    }
+  },
+  "activePage": "overview"
+}

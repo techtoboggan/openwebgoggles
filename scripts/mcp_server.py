@@ -99,7 +99,11 @@ def _deep_merge(base: dict, override: dict, _depth: int = 0) -> None:
     """
     if _depth > MAX_MERGE_DEPTH:
         raise ValueError(f"Merge depth exceeds maximum ({MAX_MERGE_DEPTH})")
+    # Block prototype-pollution keys that could be dangerous when serialized to JS
+    _DANGEROUS_KEYS = frozenset({"__proto__", "constructor", "prototype"})
     for key, value in override.items():
+        if key in _DANGEROUS_KEYS:
+            raise ValueError(f"Merge rejected: dangerous key {key!r}")
         if isinstance(value, dict) and isinstance(base.get(key), dict):
             _deep_merge(base[key], value, _depth + 1)
         else:
@@ -1381,7 +1385,7 @@ async def webview(
       - status (str, optional): Badge text (e.g. "pending_review", "waiting_input")
       - custom_css (str, optional): Custom CSS injected as a <style> tag (validated for safety)
       - data (dict): UI layout with optional "sections" array. Each section has:
-          - type: "form" | "items" | "text" | "actions" | "progress" | "log" | "diff" | "table" | "tabs"
+          - type: "form" | "items" | "text" | "actions" | "progress" | "log" | "diff" | "table" | "tabs" | "metric" | "chart"
           - title (str, optional): Section heading
           - id (str, optional): Section identifier (included in action context)
           - format (str, optional): Set to "markdown" for markdown rendering
@@ -1395,7 +1399,15 @@ async def webview(
           - lines (list): For "log" sections — array of log line strings
           - columns (list): For "table" sections — [{key, label}]
           - rows (list): For "table" sections — array of row objects
+          - clickable (bool): For "table" sections — enable row click drill-down
+          - clickActionId (str): For "table" sections — action ID sent on row click
           - tabs (list): For "tabs" sections — [{id, label, sections: [...]}]
+          - cards (list): For "metric" sections — [{label, value, unit?, change?, changeDirection?, sparkline?}]
+          - chartType (str): For "chart" sections — "bar"|"line"|"area"|"pie"|"donut"|"sparkline"
+      - pages (dict, optional): Multi-page SPA navigation. Each key is a page ID:
+          {page_id: {label, data: {sections: [...]}, actions_requested?: [...]}}
+          When present, renders a navigation bar for instant client-side page switching.
+      - activePage (str, optional): Which page to show initially (must be a key in pages)
       - actions_requested (list): Top-level action buttons, each with:
           - id (str): Unique action identifier
           - label (str): Button text
