@@ -919,23 +919,23 @@ def _read_version_fresh() -> str:
         return "unknown"
 
 
-def _exec_reload() -> None:
-    """Replace the current process with a fresh interpreter via os.execv.
+_stale_version_msg: str = ""
 
-    On Unix this is seamless — same PID, same stdin/stdout/stderr pipes.
-    The MCP client never sees a disconnect.
+
+def _mark_stale(old_version: str, new_version: str) -> None:
+    """Mark the server as stale after a package upgrade.
+
+    Instead of os.execv() (which breaks the MCP stdio protocol by restarting
+    the handshake mid-session), we set a flag so subsequent tool calls return
+    a clear error asking the user/agent to restart the MCP server.
     """
-    executable = sys.executable
-    args = [executable] + sys.argv
-
-    logger.info("Reloading: exec %s %s", executable, " ".join(sys.argv))
-
-    if platform.system() == "Windows":
-        logger.warning("Windows does not support in-place exec. The MCP client will need to restart the server.")
-
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os.execv(executable, args)  # noqa: S606 — intentional self-restart
+    global _stale_version_msg
+    _stale_version_msg = (
+        f"OpenWebGoggles was updated ({old_version} → {new_version}) "
+        f"but the MCP server is still running the old version. "
+        f"Please restart the MCP server to pick up the new version."
+    )
+    logger.warning(_stale_version_msg)
 
 
 async def _version_monitor() -> None:
@@ -997,32 +997,26 @@ async def _version_monitor() -> None:
                     last_mtime = dist_info_path.stat().st_mtime
                 continue
 
-            # Version changed — trigger reload
+            # Version changed — mark server as stale
             logger.info(
-                "Package updated: %s -> %s — reloading server",
+                "Package updated: %s -> %s — marking server as stale",
                 startup_version,
                 current_version,
             )
             _reload_pending = True
+            _mark_stale(startup_version, current_version)
 
-            # Wait for in-flight tool calls to drain (up to 60s)
-            drain_deadline = time.monotonic() + 60
-            while time.monotonic() < drain_deadline:
-                async with _active_tool_calls_lock:
-                    if _active_tool_calls == 0:
-                        break
-                await asyncio.sleep(1)
-
-            # Close webview session gracefully
+            # Close webview session gracefully so a restart gets a clean slate
             global _session
             if _session is not None:
                 try:
-                    await _session.close(message="Server reloading (package updated).")
+                    await _session.close(message="Server needs restart (package updated).")
                 except Exception:
                     pass
                 _session = None
 
-            _exec_reload()
+            # Stop monitoring — we've already flagged the staleness
+            return
 
         except asyncio.CancelledError:
             return
@@ -1069,7 +1063,7 @@ def _track_tool_call(fn):  # type: ignore[no-untyped-def]
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         global _active_tool_calls
         if _reload_pending:
-            return {"error": "Server is reloading after a package update. Please retry in a moment."}
+            return {"error": _stale_version_msg or "Server needs restart after a package update."}
         async with _active_tool_calls_lock:
             _active_tool_calls += 1
         try:
