@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-03-01
+
+### Added
+
+- **Metric cards section** (`type: "metric"`) — KPI widgets with label, value, unit, change indicator (up/down/neutral), optional inline sparkline, and responsive grid layout (1-6 columns).
+- **Chart section** (`type: "chart"`) — Data-driven SVG charts rendered client-side from validated numeric arrays. Supports bar, line, area, pie, donut, and sparkline chart types. Colors via hex codes or named theme aliases (blue, green, red, yellow, purple, orange, cyan, pink). Options for legend, grid lines, stacked bars, and custom dimensions.
+- **Clickable table rows** — Extended `table` section with `clickable: true` and optional `clickActionId`. Row clicks emit an action with row data and context (section_index, row_index). Coexists with `selectable` checkboxes.
+- **SPA-style pages / navigation** — New top-level `pages` dict and `activePage` key. Renders an auto-generated navigation bar with instant client-side page switching. Each page has its own sections and actions. Emits `_page_switch` action so agents can react to navigation.
+- **New file: `charts.js`** — Vanilla JS IIFE module for safe SVG chart generation. All SVG built from data (no raw SVG injection). Text through `esc()`, attributes through `escAttr()`, colors pre-validated by SecurityGate.
+- **`OWG.emitAction()`** — Exposed action dispatch function for sub-modules (used by clickable table rows and page navigation).
+- **360+ new tests** — End-to-end MCP integration tests, SecurityGate validation, client-side escaping, SVG safety, and security audit regression tests.
+- Test count: 1025 → 1529 (0 failures, 16 skipped, 95.97% coverage)
+
+### Security
+
+- **SG-1: `math.isfinite()` on float fields** — Progress percentage, metric card values, sparkline points, chart data values, and field min/max now reject `NaN` and `Infinity`.
+- **SG-2: COLOR_PATTERN strict hex lengths** — Color validation now only accepts 3, 6, or 8 hex digit colors. Previously accepted invalid lengths like 4, 5, or 7 digits.
+- **SG-3: String length limits** — Metric card labels, chart data labels, dataset labels, and page labels are now capped at 500 characters.
+- **SG-4: KEY_PATTERN leading alpha** — Form field keys must now start with a letter (not a digit), preventing CSS selector edge cases.
+- **SG-5: Chart label length validation** — Per-label length check added for chart data labels (500 char max).
+- **TR-1: WebSocket auth token length** — Token length capped at 1024 bytes to prevent memory allocation DoS.
+- **TR-2: Prototype pollution in `_deep_merge()`** — Keys `__proto__`, `constructor`, and `prototype` are now rejected with a `ValueError`.
+- **TR-3: Rate limiting on manifest endpoint** — Unauthenticated `/_api/manifest` endpoint now rate-limited to 60 requests per minute.
+- **TR-4: Nonce tracker thread safety** — `NonceTracker.check_and_record()` now uses `threading.Lock` to prevent TOCTOU races.
+- **CS-0: `sanitizeHTML()` no longer strips buttons/inputs** — The v0.11.0 security hardening inadvertently added `button`, `input`, `select`, `textarea` to `DANGEROUS_TAGS`, breaking all UI interactivity. Removed form elements from the blocklist.
+- **SVG sanitization strategy** — Replaced blanket SVG stripping with context-aware sanitization: `DANGEROUS_SVG_TAGS` strips `script`, `foreignObject`, `use`, `set`, `animate*`, and `handler`/`listener` inside SVG; `SAFE_SVG_TAGS` allowlists structural SVG elements (`svg`, `g`, `rect`, `circle`, `line`, `polyline`, `polygon`, `path`, `text`, etc.).
+
 ## [0.11.0] - 2026-03-01
 
 ### Security
