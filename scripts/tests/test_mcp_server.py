@@ -501,6 +501,7 @@ class TestTrackToolCall:
         import mcp_server
 
         mcp_server._reload_pending = True
+        mcp_server._stale_version_msg = ""
 
         @mcp_server._track_tool_call
         async def dummy():
@@ -508,31 +509,43 @@ class TestTrackToolCall:
 
         result = await dummy()
         assert "error" in result
-        assert "reloading" in result["error"].lower()
+        assert "restart" in result["error"].lower()
         mcp_server._reload_pending = False
 
 
-class TestExecReload:
-    """Test the _exec_reload function constructs correct arguments."""
+class TestMarkStale:
+    """Test the _mark_stale function sets the correct stale message."""
 
-    def test_exec_constructs_correct_args(self, monkeypatch):
-        """Should call os.execv with sys.executable and sys.argv."""
-        from mcp_server import _exec_reload
+    def test_mark_stale_sets_message(self):
+        """Should set _stale_version_msg with old and new versions."""
+        from mcp_server import _mark_stale
 
-        captured = {}
+        import mcp_server
 
-        def fake_execv(executable, args):
-            captured["executable"] = executable
-            captured["args"] = args
-            raise SystemExit(0)  # Prevent actual exec
+        _mark_stale("0.8.0", "0.8.1")
+        assert "0.8.0" in mcp_server._stale_version_msg
+        assert "0.8.1" in mcp_server._stale_version_msg
+        assert "restart" in mcp_server._stale_version_msg.lower()
+        # Clean up
+        mcp_server._stale_version_msg = ""
 
-        monkeypatch.setattr(os, "execv", fake_execv)
+    def test_stale_message_in_tool_error(self):
+        """Stale message should be returned verbatim in tool call errors."""
+        import mcp_server
 
-        with pytest.raises(SystemExit):
-            _exec_reload()
+        mcp_server._reload_pending = True
+        mcp_server._stale_version_msg = "Custom stale message for testing."
 
-        assert captured["executable"] == sys.executable
-        assert captured["args"][0] == sys.executable
+        @mcp_server._track_tool_call
+        async def dummy():
+            return {"ok": True}
+
+        import asyncio
+
+        result = asyncio.get_event_loop().run_until_complete(dummy())
+        assert result["error"] == "Custom stale message for testing."
+        mcp_server._reload_pending = False
+        mcp_server._stale_version_msg = ""
 
 
 class TestVersionMonitor:

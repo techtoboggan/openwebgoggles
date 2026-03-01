@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-02-28
+
+### Fixed
+
+- **Auto-reload no longer breaks MCP connection** — `os.execv()` self-restart was incompatible with MCP's stateful stdio protocol (the new process sent a fresh handshake mid-session, breaking the client connection). Replaced with graceful stale-version detection: the server marks itself as stale and returns a clear "please restart" error in subsequent tool calls instead of crashing the connection
+
+### Changed
+
+- Test count: 772 → 773
+
 ## [0.8.1] - 2026-02-27
 
 ### Security
