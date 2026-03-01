@@ -896,3 +896,508 @@ class TestBehaviorsArrayGuards:
         """behaviors.js must check Array.isArray(rule.disable) before iteration."""
         src = self._read_js("assets/apps/dynamic/behaviors.js")
         assert "Array.isArray(rule.disable)" in src
+
+
+# ---------------------------------------------------------------------------
+# Charts.js SVG Safety Tests
+# ---------------------------------------------------------------------------
+
+
+class TestChartsSVGSafety:
+    """Verify that charts.js generates SVG safely — no raw SVG injection,
+    all values escaped via esc()/escAttr(), numeric coercion via toFixed()."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    def _charts_src(self) -> str:
+        return self._read_js("assets/apps/dynamic/charts.js")
+
+    # ── File existence and IIFE structure ─────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_charts_js_exists(self):
+        """charts.js must exist in the dynamic app directory."""
+        path = _PROJECT_ROOT / "assets/apps/dynamic/charts.js"
+        assert path.exists(), "charts.js not found"
+
+    @pytest.mark.owasp_a03
+    def test_charts_js_is_iife(self):
+        """charts.js must be wrapped in an IIFE on window.OWG."""
+        src = self._charts_src()
+        assert "window.OWG" in src, "charts.js must reference window.OWG"
+        assert src.strip().startswith('"use strict"') or src.strip().startswith("'use strict'"), (
+            "charts.js must start with 'use strict'"
+        )
+
+    @pytest.mark.owasp_a03
+    def test_charts_uses_esc_from_owg(self):
+        """charts.js must reference OWG.esc for HTML escaping."""
+        src = self._charts_src()
+        assert "OWG.esc" in src or "var esc = OWG.esc" in src, "charts.js must use OWG.esc"
+
+    @pytest.mark.owasp_a03
+    def test_charts_uses_escattr_from_owg(self):
+        """charts.js must reference OWG.escAttr for attribute escaping."""
+        src = self._charts_src()
+        assert "OWG.escAttr" in src or "var escAttr = OWG.escAttr" in src, "charts.js must use OWG.escAttr"
+
+    # ── No dangerous SVG elements ─────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_no_foreignobject(self):
+        """charts.js must never generate <foreignObject> elements."""
+        src = self._charts_src()
+        assert "foreignObject" not in src.lower(), "charts.js must not use foreignObject"
+
+    @pytest.mark.owasp_a03
+    def test_no_script_element(self):
+        """charts.js must never generate <script> elements."""
+        src = self._charts_src()
+        assert "<script" not in src.lower(), "charts.js must not contain script tags"
+
+    @pytest.mark.owasp_a03
+    def test_no_use_element(self):
+        """charts.js must never generate <use> elements (href injection risk)."""
+        src = self._charts_src()
+        assert "<use" not in src, "charts.js must not use <use> elements"
+
+    @pytest.mark.owasp_a03
+    def test_no_xlink_href(self):
+        """charts.js must never use xlink:href attributes."""
+        src = self._charts_src()
+        assert "xlink:href" not in src, "charts.js must not use xlink:href"
+        assert "xlink" not in src.lower(), "charts.js must not reference xlink namespace"
+
+    @pytest.mark.owasp_a03
+    def test_no_event_handler_attrs(self):
+        """charts.js must not include any on* event handler attributes."""
+        src = self._charts_src()
+        # Search for common SVG event handlers in generated SVG strings
+        dangerous_attrs = ["onclick", "onload", "onerror", "onmouseover", "onfocus", "onanimationend"]
+        for attr in dangerous_attrs:
+            # Check inside string literals (quotes indicate SVG template code)
+            assert f'"{attr}' not in src.lower(), f"charts.js must not generate {attr} attributes"
+            assert f"'{attr}" not in src.lower(), f"charts.js must not generate {attr} attributes"
+
+    @pytest.mark.owasp_a03
+    def test_no_innerHTML_assignment(self):
+        """charts.js must not use innerHTML/outerHTML directly (returns strings instead)."""
+        src = self._charts_src()
+        assert "innerHTML" not in src, "charts.js must return HTML strings, not set innerHTML"
+        assert "outerHTML" not in src, "charts.js must return HTML strings, not set outerHTML"
+
+    # ── Numeric coercion ──────────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_uses_number_coercion(self):
+        """charts.js must use Number() for coercing values (defense against NaN injection)."""
+        src = self._charts_src()
+        assert "Number(" in src, "charts.js must use Number() for value coercion"
+
+    @pytest.mark.owasp_a03
+    def test_uses_tofixed(self):
+        """charts.js must use toFixed() for formatting SVG coordinates."""
+        src = self._charts_src()
+        assert ".toFixed(" in src, "charts.js must use toFixed() for SVG coordinate precision"
+
+    # ── Chart type dispatcher ─────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_render_chart_exported(self):
+        """OWG.renderChart must be defined and exported."""
+        src = self._charts_src()
+        assert "OWG.renderChart" in src, "OWG.renderChart must be exported"
+
+    @pytest.mark.owasp_a03
+    def test_all_chart_types_handled(self):
+        """charts.js must handle all 6 chart types: bar, line, area, pie, donut, sparkline."""
+        src = self._charts_src()
+        for ct in ("bar", "line", "area", "pie", "donut", "sparkline"):
+            assert f'"{ct}"' in src, f'charts.js must handle chart type "{ct}"'
+
+    # ── Color safety ──────────────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_theme_color_mapping_exists(self):
+        """charts.js must define theme color aliases mapping to CSS variables."""
+        src = self._charts_src()
+        assert "THEME_COLORS" in src or "resolveColor" in src, "charts.js must have theme color resolution"
+
+    @pytest.mark.owasp_a03
+    def test_theme_colors_use_css_vars(self):
+        """Theme color aliases must map to CSS variables (var(--color))."""
+        src = self._charts_src()
+        assert "var(--blue)" in src, "blue must map to var(--blue)"
+        assert "var(--green)" in src, "green must map to var(--green)"
+        assert "var(--red)" in src, "red must map to var(--red)"
+
+    @pytest.mark.owasp_a03
+    def test_color_values_use_escattr(self):
+        """Color values in fill/stroke attributes must go through escAttr()."""
+        src = self._charts_src()
+        # Colors inserted via escAttr for fill/stroke attributes
+        assert "escAttr(color)" in src, "Color values in attributes must use escAttr()"
+
+    # ── SVG dimension clamping ────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_dimension_clamping(self):
+        """charts.js must clamp chart dimensions with Math.max/Math.min."""
+        src = self._charts_src()
+        assert "Math.max" in src, "charts.js must clamp dimensions with Math.max"
+        assert "Math.min" in src, "charts.js must clamp dimensions with Math.min"
+
+    # ── Label escaping ────────────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_labels_use_esc(self):
+        """Chart labels (text content) must be escaped via esc()."""
+        src = self._charts_src()
+        # All text content in SVG <text> elements must go through esc()
+        # Look for esc(lbl) or esc(label) patterns
+        assert "esc(lbl)" in src or "esc(label)" in src or "esc(labels[" in src, (
+            "Chart label text must use esc() for HTML escaping"
+        )
+
+    @pytest.mark.owasp_a03
+    def test_legend_labels_use_esc(self):
+        """Legend labels must be escaped via esc()."""
+        src = self._charts_src()
+        # Look for esc() usage in the legend rendering section
+        assert "esc(ds.label)" in src or "esc(lbl)" in src, "Legend labels must use esc() for escaping"
+
+    # ── Sparkline ─────────────────────────────────────────────────────────
+
+    @pytest.mark.owasp_a03
+    def test_sparkline_exported(self):
+        """OWG.renderSparkline must be available for metric cards."""
+        src = self._read_js("assets/apps/dynamic/sections.js")
+        assert "renderSparkline" in src, "renderSparkline must be defined for metric sparklines"
+
+
+# ---------------------------------------------------------------------------
+# Metric Card Rendering Safety Tests
+# ---------------------------------------------------------------------------
+
+
+class TestMetricCardRenderingSafety:
+    """Verify metric card rendering in sections.js uses proper escaping."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    def _sections_src(self) -> str:
+        return self._read_js("assets/apps/dynamic/sections.js")
+
+    @pytest.mark.owasp_a03
+    def test_metric_case_exists(self):
+        """sections.js must have a case for 'metric' section type."""
+        src = self._sections_src()
+        assert '"metric"' in src, "sections.js must handle metric section type"
+
+    @pytest.mark.owasp_a03
+    def test_chart_case_exists(self):
+        """sections.js must have a case for 'chart' section type."""
+        src = self._sections_src()
+        assert '"chart"' in src, "sections.js must handle chart section type"
+
+    @pytest.mark.owasp_a03
+    def test_metric_uses_esc_for_labels(self):
+        """Metric card labels must be escaped via esc()."""
+        src = self._sections_src()
+        # The actual code uses esc(card.label || "")
+        assert "esc(card.label" in src, "Metric card label must use esc()"
+
+    @pytest.mark.owasp_a03
+    def test_metric_uses_esc_for_values(self):
+        """Metric card values must be escaped via esc()."""
+        src = self._sections_src()
+        assert "esc(" in src, "Metric card rendering must use esc() for values"
+
+    @pytest.mark.owasp_a03
+    def test_metric_change_direction_classes(self):
+        """Metric cards must use CSS classes for change direction, not inline JS."""
+        src = self._sections_src()
+        assert "metric-up" in src or "metric-down" in src, "Metric cards must use CSS classes for direction styling"
+
+
+# ---------------------------------------------------------------------------
+# Clickable Table Row Safety Tests
+# ---------------------------------------------------------------------------
+
+
+class TestClickableTableSafety:
+    """Verify clickable table rendering in sections.js is safe."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    def _sections_src(self) -> str:
+        return self._read_js("assets/apps/dynamic/sections.js")
+
+    @pytest.mark.owasp_a03
+    def test_clickable_uses_data_attribute(self):
+        """Clickable tables must use data attributes, not inline onclick."""
+        src = self._sections_src()
+        assert "data-clickable" in src or "data-click-action" in src, "Clickable tables must use data attributes"
+        assert "onclick=" not in src.lower(), "sections.js must not use inline onclick handlers"
+
+    @pytest.mark.owasp_a03
+    def test_clickable_uses_escattr_for_action_id(self):
+        """Click action IDs must be escaped via escAttr()."""
+        src = self._sections_src()
+        assert "escAttr(" in src, "Action IDs in attributes must use escAttr()"
+
+    @pytest.mark.owasp_a03
+    def test_clickable_skips_checkbox_clicks(self):
+        """Row click handler must skip clicks on checkbox inputs."""
+        src = self._sections_src()
+        assert "checkbox" in src, "Click handler must detect and skip checkbox clicks"
+
+    @pytest.mark.owasp_a03
+    def test_emit_action_used_for_row_clicks(self):
+        """Row clicks must dispatch via OWG.emitAction, not direct DOM mutation."""
+        src = self._sections_src()
+        assert "emitAction" in src, "Row clicks must use emitAction for dispatch"
+
+
+# ---------------------------------------------------------------------------
+# Pages Navigation Safety Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPagesNavigationSafety:
+    """Verify SPA pages rendering in app.js uses proper escaping."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    def _app_src(self) -> str:
+        return self._read_js("assets/apps/dynamic/app.js")
+
+    @pytest.mark.owasp_a03
+    def test_pages_detection(self):
+        """app.js must detect state.pages for SPA mode."""
+        src = self._app_src()
+        assert "pages" in src, "app.js must detect state.pages"
+
+    @pytest.mark.owasp_a03
+    def test_nav_labels_escaped(self):
+        """Page navigation labels must be escaped via esc()."""
+        src = self._app_src()
+        # Navigation button labels should go through esc()
+        assert "esc(" in src, "Page navigation labels must use esc()"
+
+    @pytest.mark.owasp_a03
+    def test_page_switch_action(self):
+        """Page switching must emit _page_switch action."""
+        src = self._app_src()
+        assert "_page_switch" in src, "Page navigation must emit _page_switch action"
+
+    @pytest.mark.owasp_a03
+    def test_emit_action_exposed(self):
+        """OWG.emitAction must be exposed for cross-module action dispatch."""
+        src = self._app_src()
+        assert "emitAction" in src, "emitAction must be available for cross-module dispatch"
+
+    @pytest.mark.owasp_a03
+    def test_nav_css_classes(self):
+        """Navigation must use CSS classes, not inline styles from data."""
+        html = (_PROJECT_ROOT / "assets/apps/dynamic/index.html").read_text(encoding="utf-8")
+        assert "owg-nav" in html, "Navigation bar CSS class must be defined"
+        assert "owg-nav-btn" in html, "Navigation button CSS class must be defined"
+        assert "owg-nav-active" in html, "Active navigation CSS class must be defined"
+
+    @pytest.mark.owasp_a03
+    def test_charts_script_loaded(self):
+        """charts.js must be loaded via script tag in index.html."""
+        html = (_PROJECT_ROOT / "assets/apps/dynamic/index.html").read_text(encoding="utf-8")
+        assert "charts.js" in html, "charts.js must be loaded in index.html"
+
+
+# ---------------------------------------------------------------------------
+# CSS Safety for New Features
+# ---------------------------------------------------------------------------
+
+
+class TestNewFeatureCSSSafety:
+    """Verify CSS for metric cards, charts, and navigation is in index.html."""
+
+    @staticmethod
+    def _read_html() -> str:
+        return (_PROJECT_ROOT / "assets/apps/dynamic/index.html").read_text(encoding="utf-8")
+
+    @pytest.mark.owasp_a03
+    def test_metric_card_styles_exist(self):
+        """Metric card CSS classes must be defined."""
+        html = self._read_html()
+        assert ".metric-grid" in html or ".metric-card" in html, "Metric card styles must exist"
+        assert ".metric-value" in html, "Metric value style must exist"
+
+    @pytest.mark.owasp_a03
+    def test_metric_direction_styles_exist(self):
+        """Change direction CSS classes must be defined (up/down/neutral)."""
+        html = self._read_html()
+        assert ".metric-up" in html, "metric-up style must exist"
+        assert ".metric-down" in html, "metric-down style must exist"
+        assert ".metric-neutral" in html, "metric-neutral style must exist"
+
+    @pytest.mark.owasp_a03
+    def test_chart_container_styles_exist(self):
+        """Chart container CSS classes must be defined."""
+        html = self._read_html()
+        assert ".owg-chart" in html, "owg-chart style must exist"
+
+    @pytest.mark.owasp_a03
+    def test_clickable_table_styles_exist(self):
+        """Clickable table CSS class must be defined."""
+        html = self._read_html()
+        assert "owg-table-clickable" in html, "owg-table-clickable style must exist"
+
+    @pytest.mark.owasp_a03
+    def test_sparkline_styles_exist(self):
+        """Sparkline CSS class must be defined."""
+        html = self._read_html()
+        assert "owg-sparkline" in html or "sparkline" in html, "Sparkline styles must exist"
+
+
+# ---------------------------------------------------------------------------
+# Regression: CS-0 — sanitizeHTML must NOT strip button/input/select/textarea
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizerDoesNotStripFormElements:
+    """Regression test for CS-0: DANGEROUS_TAGS was stripping button, input,
+    select, and textarea elements, breaking all UI interactivity."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_tags_excludes_button(self):
+        """DANGEROUS_TAGS regex must NOT include 'button'."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        # Find the DANGEROUS_TAGS definition
+        start = src.find("DANGEROUS_TAGS")
+        assert start != -1
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1]
+        assert "button" not in tag_line.lower(), "DANGEROUS_TAGS must not include 'button' — it breaks action buttons"
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_tags_excludes_input(self):
+        """DANGEROUS_TAGS regex must NOT include 'input'."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("DANGEROUS_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1]
+        assert "input" not in tag_line.lower(), "DANGEROUS_TAGS must not include 'input' — it breaks form fields"
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_tags_excludes_select(self):
+        """DANGEROUS_TAGS regex must NOT include 'select'."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("DANGEROUS_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1]
+        assert "select" not in tag_line.lower(), "DANGEROUS_TAGS must not include 'select' — it breaks dropdowns"
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_tags_excludes_textarea(self):
+        """DANGEROUS_TAGS regex must NOT include 'textarea'."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("DANGEROUS_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1]
+        assert "textarea" not in tag_line.lower(), "DANGEROUS_TAGS must not include 'textarea' — it breaks text areas"
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_tags_still_blocks_script(self):
+        """DANGEROUS_TAGS must still block dangerous elements like script."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("DANGEROUS_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1]
+        assert "script" in tag_line.lower(), "DANGEROUS_TAGS must still block script"
+        assert "iframe" in tag_line.lower(), "DANGEROUS_TAGS must still block iframe"
+        assert "object" in tag_line.lower(), "DANGEROUS_TAGS must still block object"
+
+
+class TestSVGSanitizationStrategy:
+    """Regression tests for SVG sanitization: SVG elements are allowed through
+    the main DANGEROUS_TAGS filter (for charts.js rendering), but dangerous SVG
+    children are stripped by DANGEROUS_SVG_TAGS and only safe SVG elements pass
+    the SAFE_SVG_TAGS allowlist."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    @pytest.mark.owasp_a03
+    def test_svg_not_in_dangerous_tags(self):
+        """SVG must NOT be in DANGEROUS_TAGS — charts.js needs it to render."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("var DANGEROUS_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1]
+        # svg should NOT appear as a standalone tag in the regex
+        assert "|svg|" not in tag_line.lower(), "DANGEROUS_TAGS must not include 'svg' — it breaks chart rendering"
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_svg_tags_blocks_foreignobject(self):
+        """DANGEROUS_SVG_TAGS must strip foreignObject (XSS vector)."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        assert "var DANGEROUS_SVG_TAGS" in src, "utils.js must define DANGEROUS_SVG_TAGS"
+        start = src.find("var DANGEROUS_SVG_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1].lower()
+        assert "foreignobject" in tag_line, "DANGEROUS_SVG_TAGS must block foreignObject"
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_svg_tags_blocks_use(self):
+        """DANGEROUS_SVG_TAGS must strip <use> (external reference injection)."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("var DANGEROUS_SVG_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1].lower()
+        assert "|use|" in tag_line or "(script|" in tag_line, "DANGEROUS_SVG_TAGS must block <use>"
+
+    @pytest.mark.owasp_a03
+    def test_dangerous_svg_tags_blocks_script(self):
+        """DANGEROUS_SVG_TAGS must strip <script> inside SVG."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("var DANGEROUS_SVG_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1].lower()
+        assert "script" in tag_line, "DANGEROUS_SVG_TAGS must block script inside SVG"
+
+    @pytest.mark.owasp_a03
+    def test_safe_svg_tags_allowlist_exists(self):
+        """SAFE_SVG_TAGS allowlist must exist for SVG child elements."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        assert "var SAFE_SVG_TAGS" in src, "utils.js must define SAFE_SVG_TAGS"
+
+    @pytest.mark.owasp_a03
+    def test_safe_svg_tags_includes_chart_elements(self):
+        """SAFE_SVG_TAGS must include elements used by charts.js."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("var SAFE_SVG_TAGS")
+        line_end = src.find(";", start)
+        tag_line = src[start : line_end + 1].lower()
+        for el in ("svg", "g", "rect", "circle", "line", "polyline", "polygon", "path", "text"):
+            assert el in tag_line, f"SAFE_SVG_TAGS must include '{el}' for charts.js"
+
+    @pytest.mark.owasp_a03
+    def test_cleannode_tracks_svg_context(self):
+        """cleanNode must accept an inSVG parameter for context tracking."""
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        assert "cleanNode(doc.body, false)" in src, "sanitizeHTML must call cleanNode with inSVG=false at root"
+        assert "cleanNode(child, inSVG || " in src or "cleanNode(child, inSVG ||" in src, (
+            "cleanNode must propagate SVG context to children"
+        )

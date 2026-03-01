@@ -61,10 +61,20 @@ class TestValidPayloads:
             assert ok, f"Field type {ft!r} should be valid: {err}"
 
     def test_all_section_types(self, gate):
+        # Some section types require additional fields beyond just type/title
+        SECTION_EXTRAS = {
+            "metric": {"cards": [{"label": "Users", "value": 100}]},
+            "chart": {
+                "chartType": "bar",
+                "data": {"labels": ["A"], "datasets": [{"values": [1]}]},
+            },
+        }
         for st in gate.ALLOWED_SECTION_TYPES:
+            sec = {"type": st, "title": "x"}
+            sec.update(SECTION_EXTRAS.get(st, {}))
             state = {
                 "status": "ready",
-                "data": {"ui": {"sections": [{"type": st, "title": "x"}]}},
+                "data": {"ui": {"sections": [sec]}},
             }
             ok, err, _ = gate.validate_state(json.dumps(state))
             assert ok, f"Section type {st!r} should be valid: {err}"
@@ -4651,3 +4661,2089 @@ class TestSecurityGateEdgeCases:
         state = {"data": {"sections": [{"type": "text", "content": "x", "extra": inner}]}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, "Deeply nested structure should be rejected"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DASHBOARD FEATURES — clickable tables, metric, chart, pages
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _table_state(extra_props: dict | None = None) -> dict:
+    """Build a minimal valid table section state."""
+    sec = {
+        "type": "table",
+        "columns": [{"key": "name", "label": "Name"}],
+        "rows": [{"name": "Alice"}],
+    }
+    if extra_props:
+        sec.update(extra_props)
+    return {"data": {"sections": [sec]}}
+
+
+def _metric_state(cards: list | None = None, columns: int | None = None) -> dict:
+    """Build a minimal valid metric section state."""
+    sec: dict = {
+        "type": "metric",
+        "cards": cards if cards is not None else [{"label": "Users", "value": 100}],
+    }
+    if columns is not None:
+        sec["columns"] = columns
+    return {"data": {"sections": [sec]}}
+
+
+def _chart_state(
+    chart_type: str = "bar",
+    data: dict | None = None,
+    options: dict | None = None,
+    extra: dict | None = None,
+) -> dict:
+    """Build a minimal valid chart section state."""
+    sec: dict = {
+        "type": "chart",
+        "chartType": chart_type,
+        "data": data if data is not None else {"labels": ["A", "B"], "datasets": [{"values": [10, 20]}]},
+    }
+    if options is not None:
+        sec["options"] = options
+    if extra:
+        sec.update(extra)
+    return {"data": {"sections": [sec]}}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestTableClickable — clickable rows and clickActionId on table sections
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTableClickable:
+    """Tests for the clickable / clickActionId table section extension."""
+
+    # --- Valid combinations ---
+
+    @pytest.mark.owasp_a04
+    def test_clickable_true(self, gate):
+        """clickable=True should be accepted."""
+        state = _table_state({"clickable": True})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"clickable=True should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_false(self, gate):
+        """clickable=False (explicit) should be accepted."""
+        state = _table_state({"clickable": False})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"clickable=False should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_omitted(self, gate):
+        """Omitting clickable (defaults to False) should be accepted."""
+        state = _table_state()
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Omitting clickable should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_with_click_action_id(self, gate):
+        """clickable=True with a valid clickActionId should pass."""
+        state = _table_state({"clickable": True, "clickActionId": "row_click"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"clickable + clickActionId should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_with_dotted_action_id(self, gate):
+        """clickActionId with dots in the name should pass (KEY_PATTERN allows dots)."""
+        state = _table_state({"clickable": True, "clickActionId": "table.row.select"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"dotted clickActionId should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_with_hyphen_action_id(self, gate):
+        """clickActionId with hyphens should pass."""
+        state = _table_state({"clickable": True, "clickActionId": "row-click"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"hyphenated clickActionId should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_with_underscore_action_id(self, gate):
+        """clickActionId with underscores should pass."""
+        state = _table_state({"clickable": True, "clickActionId": "row_click_handler"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"underscore clickActionId should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_with_numeric_start_action_id_rejected(self, gate):
+        """clickActionId starting with digit rejected (KEY_PATTERN requires leading alpha)."""
+        state = _table_state({"clickable": True, "clickActionId": "1click"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "digit-start clickActionId should be rejected"
+
+    @pytest.mark.owasp_a04
+    def test_clickable_with_alpha_start_action_id(self, gate):
+        """clickActionId starting with alpha should pass."""
+        state = _table_state({"clickable": True, "clickActionId": "c1click"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"alpha-start clickActionId should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_selectable_and_clickable_coexist(self, gate):
+        """selectable + clickable together should pass — they are independent features."""
+        state = _table_state({"selectable": True, "clickable": True, "clickActionId": "drill"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"selectable+clickable should coexist: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_without_clickable(self, gate):
+        """clickActionId without clickable=True should still pass (just unused)."""
+        state = _table_state({"clickActionId": "row_click"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"clickActionId without clickable should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_max_length(self, gate):
+        """clickActionId at exactly 200 chars should pass."""
+        action_id = "a" * 200
+        state = _table_state({"clickable": True, "clickActionId": action_id})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"clickActionId at 200 chars should pass: {err}"
+
+    # --- Invalid clickable type ---
+
+    @pytest.mark.owasp_a04
+    def test_clickable_string_true_rejected(self, gate):
+        """clickable='true' (string) should be rejected — must be bool."""
+        state = _table_state({"clickable": "true"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_clickable_string_false_rejected(self, gate):
+        """clickable='false' (string) should be rejected."""
+        state = _table_state({"clickable": "false"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_clickable_int_one_rejected(self, gate):
+        """clickable=1 (int) should be rejected — must be bool."""
+        state = _table_state({"clickable": 1})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_clickable_int_zero_rejected(self, gate):
+        """clickable=0 (int) should be rejected — must be bool."""
+        state = _table_state({"clickable": 0})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_clickable_null_rejected(self, gate):
+        """clickable=null should be rejected — must be bool."""
+        state = _table_state({"clickable": None})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_clickable_list_rejected(self, gate):
+        """clickable=[] should be rejected — must be bool."""
+        state = _table_state({"clickable": []})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickable must be a boolean" in err
+
+    # --- Invalid clickActionId ---
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_too_long(self, gate):
+        """clickActionId >200 chars should be rejected."""
+        state = _table_state({"clickable": True, "clickActionId": "a" * 201})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickActionId too long" in err
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_with_spaces_rejected(self, gate):
+        """clickActionId with spaces should be rejected (KEY_PATTERN)."""
+        state = _table_state({"clickable": True, "clickActionId": "row click"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickActionId" in err
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_with_special_chars_rejected(self, gate):
+        """clickActionId with special chars should be rejected."""
+        state = _table_state({"clickable": True, "clickActionId": "row@click!"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickActionId" in err
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_starting_with_dot_rejected(self, gate):
+        """clickActionId starting with a dot should be rejected (KEY_PATTERN)."""
+        state = _table_state({"clickable": True, "clickActionId": ".hidden"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickActionId" in err
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_starting_with_hyphen_rejected(self, gate):
+        """clickActionId starting with a hyphen should be rejected."""
+        state = _table_state({"clickable": True, "clickActionId": "-flag"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickActionId" in err
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_with_slash_rejected(self, gate):
+        """clickActionId with path traversal chars should be rejected."""
+        state = _table_state({"clickable": True, "clickActionId": "../etc/passwd"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "clickActionId" in err
+
+    # --- XSS in clickActionId ---
+
+    @pytest.mark.owasp_a03
+    def test_click_action_id_script_xss(self, gate):
+        """XSS via <script> in clickActionId should be caught."""
+        state = _table_state({"clickable": True, "clickActionId": "<script>alert(1)</script>"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_click_action_id_javascript_protocol_xss(self, gate):
+        """XSS via javascript: in clickActionId should be caught."""
+        state = _table_state({"clickable": True, "clickActionId": "javascript:alert(1)"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_click_action_id_onerror_xss(self, gate):
+        """XSS via onerror= in clickActionId should be caught."""
+        state = _table_state({"clickable": True, "clickActionId": "onerror=alert(1)"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a04
+    def test_click_action_id_empty_string_passes(self, gate):
+        """Empty string clickActionId should pass (treated as falsy, skipped)."""
+        state = _table_state({"clickable": True, "clickActionId": ""})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty clickActionId should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize(
+        "action_id",
+        [
+            "viewRow",
+            "drillDown",
+            "open.details",
+            "select-row",
+            "action_123",
+            "A",
+            "z9",
+        ],
+    )
+    def test_click_action_id_valid_patterns(self, gate, action_id):
+        """Various valid KEY_PATTERN values should pass."""
+        state = _table_state({"clickable": True, "clickActionId": action_id})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"clickActionId {action_id!r} should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize(
+        "action_id",
+        [
+            " leading",
+            "trailing ",
+            "has space",
+            "has\ttab",
+            "has\nnewline",
+            "$dollar",
+            "=equals",
+        ],
+    )
+    def test_click_action_id_invalid_patterns(self, gate, action_id):
+        """Various invalid KEY_PATTERN values should be rejected."""
+        state = _table_state({"clickable": True, "clickActionId": action_id})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"clickActionId {action_id!r} should be rejected"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestMetricSection — metric section with cards, sparkline, columns
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestMetricSection:
+    """Tests for the 'metric' section type."""
+
+    # --- Valid payloads ---
+
+    @pytest.mark.owasp_a04
+    def test_minimal_metric(self, gate):
+        """Minimal metric with one card (label+value) should pass."""
+        state = _metric_state([{"label": "Users", "value": 100}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Minimal metric should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_with_all_fields(self, gate):
+        """Metric card with all optional fields should pass."""
+        card = {
+            "label": "Revenue",
+            "value": "$1.2M",
+            "unit": "USD",
+            "change": "+15%",
+            "changeDirection": "up",
+            "sparkline": [10, 20, 30, 25, 35],
+            "icon": "dollar",
+        }
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Full metric card should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_string_value(self, gate):
+        """Metric value as string should pass."""
+        state = _metric_state([{"label": "Status", "value": "Healthy"}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"String value should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_int_value(self, gate):
+        """Metric value as integer should pass."""
+        state = _metric_state([{"label": "Count", "value": 42}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Integer value should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_float_value(self, gate):
+        """Metric value as float should pass."""
+        state = _metric_state([{"label": "Rate", "value": 99.7}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Float value should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_zero_value(self, gate):
+        """Metric value of 0 should pass."""
+        state = _metric_state([{"label": "Errors", "value": 0}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Zero value should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_negative_value(self, gate):
+        """Metric value of negative number should pass."""
+        state = _metric_state([{"label": "Delta", "value": -5.3}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Negative value should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("direction", ["up", "down", "neutral"])
+    def test_metric_valid_change_directions(self, gate, direction):
+        """All allowed change directions should pass."""
+        card = {"label": "Metric", "value": 10, "changeDirection": direction}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"changeDirection={direction!r} should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_sparkline(self, gate):
+        """Sparkline with valid numbers should pass."""
+        card = {"label": "Trend", "value": 42, "sparkline": [1, 2.5, 3, 4.1, 5]}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Sparkline should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_sparkline_empty(self, gate):
+        """Empty sparkline array should pass."""
+        card = {"label": "Trend", "value": 0, "sparkline": []}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty sparkline should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("cols", [1, 2, 3, 4, 5, 6])
+    def test_metric_valid_columns(self, gate, cols):
+        """Columns 1-6 should pass."""
+        state = _metric_state([{"label": "M", "value": 1}], columns=cols)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"columns={cols} should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_default_columns(self, gate):
+        """Omitting columns (defaults to 4) should pass."""
+        state = _metric_state([{"label": "M", "value": 1}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Default columns should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_multiple_cards(self, gate):
+        """Multiple cards in a single metric section should pass."""
+        cards = [
+            {"label": "Users", "value": 1000},
+            {"label": "Revenue", "value": "$50K"},
+            {"label": "Uptime", "value": 99.9, "unit": "%"},
+        ]
+        state = _metric_state(cards)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Multiple cards should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_icon_with_dots(self, gate):
+        """Icon with dots (KEY_PATTERN) should pass."""
+        card = {"label": "Score", "value": 85, "icon": "chart.line"}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Dotted icon name should pass: {err}"
+
+    # --- Invalid payloads ---
+
+    @pytest.mark.owasp_a04
+    def test_metric_cards_not_array(self, gate):
+        """cards not being an array should be rejected."""
+        state = {"data": {"sections": [{"type": "metric", "cards": "not-array"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "cards must be an array" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_cards_is_dict(self, gate):
+        """cards being a dict should be rejected."""
+        state = {"data": {"sections": [{"type": "metric", "cards": {"label": "X", "value": 1}}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "cards must be an array" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_not_dict(self, gate):
+        """Non-dict card entry should be rejected."""
+        state = _metric_state(["not a dict"])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_missing_label(self, gate):
+        """Card without label should be rejected."""
+        state = _metric_state([{"value": 100}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "label" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_empty_label(self, gate):
+        """Card with empty label should be rejected."""
+        state = _metric_state([{"label": "", "value": 100}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "label" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_label_not_string(self, gate):
+        """Card with non-string label should be rejected."""
+        state = _metric_state([{"label": 123, "value": 100}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "label" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_missing_value(self, gate):
+        """Card without value should be rejected."""
+        state = _metric_state([{"label": "Test"}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "value" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_value_none(self, gate):
+        """Card with None value should be rejected."""
+        state = _metric_state([{"label": "Test", "value": None}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "value" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_value_list(self, gate):
+        """Card with list value should be rejected."""
+        state = _metric_state([{"label": "Test", "value": [1, 2, 3]}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "value" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_card_value_dict(self, gate):
+        """Card with dict value should be rejected."""
+        state = _metric_state([{"label": "Test", "value": {"nested": True}}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "value" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_unit_too_long(self, gate):
+        """Unit longer than 50 chars should be rejected."""
+        card = {"label": "M", "value": 1, "unit": "x" * 51}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "unit" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_unit_at_limit(self, gate):
+        """Unit at exactly 50 chars should pass."""
+        card = {"label": "M", "value": 1, "unit": "x" * 50}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Unit at limit should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_change_too_long(self, gate):
+        """Change longer than 100 chars should be rejected."""
+        card = {"label": "M", "value": 1, "change": "x" * 101}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "change" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_change_at_limit(self, gate):
+        """Change at exactly 100 chars should pass."""
+        card = {"label": "M", "value": 1, "change": "x" * 100}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Change at limit should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_invalid_change_direction(self, gate):
+        """Invalid changeDirection should be rejected."""
+        card = {"label": "M", "value": 1, "changeDirection": "rising"}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "changeDirection" in err
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("bad_dir", ["increasing", "UP", "Down", "NEUTRAL", "flat", "positive", "negative"])
+    def test_metric_change_direction_case_and_invalid(self, gate, bad_dir):
+        """changeDirection must be exact lowercase match."""
+        card = {"label": "M", "value": 1, "changeDirection": bad_dir}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"changeDirection={bad_dir!r} should be rejected"
+
+    @pytest.mark.owasp_a04
+    def test_metric_sparkline_not_array(self, gate):
+        """sparkline not being an array should be rejected."""
+        card = {"label": "M", "value": 1, "sparkline": "not-array"}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "sparkline must be an array" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_sparkline_non_number(self, gate):
+        """sparkline with non-number entry should be rejected."""
+        card = {"label": "M", "value": 1, "sparkline": [1, 2, "three"]}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "sparkline" in err
+        assert "must be number" in err
+
+    @pytest.mark.llm10
+    def test_metric_sparkline_too_many_points(self, gate):
+        """sparkline with >100 points should be rejected."""
+        card = {"label": "M", "value": 1, "sparkline": list(range(101))}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "sparkline" in err
+        assert "too many" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_sparkline_at_limit(self, gate):
+        """sparkline at exactly 100 points should pass."""
+        card = {"label": "M", "value": 1, "sparkline": list(range(100))}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"sparkline at 100 points should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_metric_columns_zero_rejected(self, gate):
+        """columns=0 should be rejected (min 1)."""
+        state = _metric_state([{"label": "M", "value": 1}], columns=0)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "columns" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_columns_seven_rejected(self, gate):
+        """columns=7 should be rejected (max 6)."""
+        state = _metric_state([{"label": "M", "value": 1}], columns=7)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "columns" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_columns_negative_rejected(self, gate):
+        """Negative columns should be rejected."""
+        state = _metric_state([{"label": "M", "value": 1}], columns=-1)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "columns" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_columns_not_int(self, gate):
+        """columns as float should be rejected."""
+        state = {"data": {"sections": [{"type": "metric", "cards": [{"label": "M", "value": 1}], "columns": 3.5}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "columns" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_columns_string_rejected(self, gate):
+        """columns as string should be rejected."""
+        state = {"data": {"sections": [{"type": "metric", "cards": [{"label": "M", "value": 1}], "columns": "4"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "columns" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_icon_invalid_format(self, gate):
+        """Icon with invalid characters should be rejected."""
+        card = {"label": "M", "value": 1, "icon": "bad icon!"}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "icon" in err
+
+    @pytest.mark.owasp_a04
+    def test_metric_icon_starting_with_dot(self, gate):
+        """Icon starting with dot should be rejected (KEY_PATTERN)."""
+        card = {"label": "M", "value": 1, "icon": ".hidden"}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "icon" in err
+
+    # --- XSS in metric fields ---
+
+    @pytest.mark.owasp_a03
+    def test_metric_xss_in_label(self, gate):
+        """XSS in metric card label should be caught."""
+        card = {"label": "<script>alert(1)</script>", "value": 1}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in metric label should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_metric_xss_in_string_value(self, gate):
+        """XSS in metric card string value should be caught."""
+        card = {"label": "M", "value": "<script>alert(1)</script>"}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in metric value should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_metric_xss_in_unit(self, gate):
+        """XSS in metric card unit should be caught."""
+        card = {"label": "M", "value": 1, "unit": '<img onerror="alert(1)">'}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in metric unit should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_metric_xss_in_change(self, gate):
+        """XSS in metric card change should be caught."""
+        card = {"label": "M", "value": 1, "change": "javascript:alert(1)"}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in metric change should be caught"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm05
+    def test_metric_xss_event_handler_in_label(self, gate):
+        """Event handler XSS in label should be caught."""
+        card = {"label": 'x" onerror="alert(1)', "value": 1}
+        state = _metric_state([card])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Event handler in metric label should be caught"
+
+    # --- Edge cases ---
+
+    @pytest.mark.owasp_a04
+    def test_metric_empty_cards_array(self, gate):
+        """Empty cards array should pass (no cards to render)."""
+        state = _metric_state([])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty cards array should pass: {err}"
+
+    @pytest.mark.llm10
+    def test_metric_max_cards_at_limit(self, gate):
+        """500 cards (at MAX_ITEMS_PER_SECTION) should pass."""
+        cards = [{"label": f"M{i}", "value": i} for i in range(500)]
+        state = _metric_state(cards)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"500 cards should pass: {err}"
+
+    @pytest.mark.llm10
+    def test_metric_too_many_cards(self, gate):
+        """501 cards should be rejected."""
+        cards = [{"label": f"M{i}", "value": i} for i in range(501)]
+        state = _metric_state(cards)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many cards" in err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestChartSection — chart section with chartType, data, options, colors
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestChartSection:
+    """Tests for the 'chart' section type."""
+
+    # --- Valid chart types ---
+
+    @pytest.mark.owasp_a04
+    def test_valid_bar_chart(self, gate):
+        """Bar chart with labels + datasets should pass."""
+        state = _chart_state("bar")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Bar chart should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_valid_line_chart(self, gate):
+        """Line chart should pass."""
+        state = _chart_state("line")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Line chart should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_valid_area_chart(self, gate):
+        """Area chart should pass."""
+        state = _chart_state("area")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Area chart should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_valid_pie_chart(self, gate):
+        """Pie chart should pass."""
+        state = _chart_state("pie")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Pie chart should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_valid_donut_chart(self, gate):
+        """Donut chart should pass."""
+        state = _chart_state("donut")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Donut chart should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_valid_sparkline_chart(self, gate):
+        """Sparkline chart should pass."""
+        state = _chart_state("sparkline")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Sparkline chart should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("ct", ["bar", "line", "area", "pie", "donut", "sparkline"])
+    def test_all_chart_types_valid(self, gate, ct):
+        """All allowed chart types should pass."""
+        state = _chart_state(ct)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"chartType={ct!r} should pass: {err}"
+
+    # --- Valid with options ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_with_all_options(self, gate):
+        """Chart with all options set should pass."""
+        state = _chart_state(
+            "bar",
+            options={
+                "width": 800,
+                "height": 400,
+                "showLegend": True,
+                "showGrid": True,
+                "showValues": False,
+                "stacked": True,
+            },
+        )
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Chart with all options should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_options_min_dimensions(self, gate):
+        """Chart with minimum dimensions (50x50) should pass."""
+        state = _chart_state("bar", options={"width": 50, "height": 50})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Min dimensions should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_options_max_dimensions(self, gate):
+        """Chart with maximum dimensions (2000x1500) should pass."""
+        state = _chart_state("bar", options={"width": 2000, "height": 1500})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Max dimensions should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_empty_options(self, gate):
+        """Chart with empty options dict should pass."""
+        state = _chart_state("bar", options={})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty options should pass: {err}"
+
+    # --- Valid colors ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_hex3(self, gate):
+        """3-digit hex color should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#abc"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"#abc should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_hex6(self, gate):
+        """6-digit hex color should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#aabbcc"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"#aabbcc should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_hex8(self, gate):
+        """8-digit hex color (with alpha) should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#aabbccdd"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"#aabbccdd should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("theme_color", ["blue", "green", "red", "yellow", "purple", "orange", "cyan", "pink"])
+    def test_chart_theme_colors(self, gate, theme_color):
+        """All 8 theme color aliases should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": theme_color}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Theme color {theme_color!r} should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_colors_array(self, gate):
+        """Per-segment colors array with valid colors should pass."""
+        data = {"labels": ["A", "B"], "datasets": [{"values": [1, 2], "colors": ["#f00", "blue"]}]}
+        state = _chart_state("pie", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Colors array should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_multiple_datasets(self, gate):
+        """Multiple datasets should pass."""
+        data = {
+            "labels": ["Q1", "Q2"],
+            "datasets": [
+                {"values": [100, 200], "label": "Revenue", "color": "blue"},
+                {"values": [80, 150], "label": "Costs", "color": "red"},
+            ],
+        }
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Multiple datasets should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_stacked_bar(self, gate):
+        """Stacked bar chart should pass."""
+        data = {
+            "labels": ["A"],
+            "datasets": [{"values": [10]}, {"values": [20]}],
+        }
+        state = _chart_state("bar", data=data, options={"stacked": True})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Stacked bar should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_dataset_label(self, gate):
+        """Dataset with label string should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "label": "Series 1"}]}
+        state = _chart_state("line", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Dataset label should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_empty_labels(self, gate):
+        """Empty labels array should pass."""
+        data = {"labels": [], "datasets": [{"values": [1]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty labels should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_empty_datasets(self, gate):
+        """Empty datasets array should pass."""
+        data = {"labels": ["A"], "datasets": []}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty datasets should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_uppercase_hex_color(self, gate):
+        """Uppercase hex color should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#AABBCC"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Uppercase hex should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_mixed_case_hex(self, gate):
+        """Mixed case hex color should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#AaBbCc"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Mixed case hex should pass: {err}"
+
+    # --- Invalid chart type ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_unknown_type(self, gate):
+        """Unknown chartType should be rejected."""
+        state = _chart_state("histogram")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "chartType" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_type_empty_string(self, gate):
+        """Empty string chartType should be rejected."""
+        state = {"data": {"sections": [{"type": "chart", "chartType": "", "data": {"labels": [], "datasets": []}}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "chartType" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_missing_chart_type(self, gate):
+        """Missing chartType should be rejected."""
+        state = {"data": {"sections": [{"type": "chart", "data": {"labels": [], "datasets": []}}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "chartType" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_type_case_sensitive(self, gate):
+        """chartType is case-sensitive — 'Bar' should be rejected."""
+        state = _chart_state("Bar")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "chartType" in err
+
+    # --- Invalid data ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_missing_data(self, gate):
+        """Missing data field should be rejected."""
+        state = {"data": {"sections": [{"type": "chart", "chartType": "bar"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "data must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_data_not_dict(self, gate):
+        """data as string should be rejected."""
+        state = {"data": {"sections": [{"type": "chart", "chartType": "bar", "data": "not-dict"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "data must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_data_as_array(self, gate):
+        """data as array should be rejected."""
+        state = {"data": {"sections": [{"type": "chart", "chartType": "bar", "data": [1, 2, 3]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "data must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_labels_not_array(self, gate):
+        """labels not being an array should be rejected."""
+        data = {"labels": "not-array", "datasets": []}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "labels must be an array" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_label_not_string(self, gate):
+        """Non-string label in labels array should be rejected."""
+        data = {"labels": ["valid", 123], "datasets": []}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be string" in err
+
+    @pytest.mark.llm10
+    def test_chart_too_many_labels(self, gate):
+        """labels exceeding MAX_CHART_LABELS (500) should be rejected."""
+        data = {"labels": [f"L{i}" for i in range(501)], "datasets": []}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many" in err
+
+    @pytest.mark.llm10
+    def test_chart_labels_at_limit(self, gate):
+        """Exactly 500 labels should pass."""
+        data = {"labels": [f"L{i}" for i in range(500)], "datasets": [{"values": [1] * 500}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"500 labels should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_datasets_not_array(self, gate):
+        """datasets not being an array should be rejected."""
+        data = {"labels": [], "datasets": "not-array"}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "datasets must be an array" in err
+
+    @pytest.mark.llm10
+    def test_chart_too_many_datasets(self, gate):
+        """datasets exceeding MAX_DATASETS (20) should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [i]} for i in range(21)]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many" in err
+
+    @pytest.mark.llm10
+    def test_chart_datasets_at_limit(self, gate):
+        """Exactly 20 datasets should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [i]} for i in range(20)]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"20 datasets should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_dataset_not_dict(self, gate):
+        """Non-dict dataset entry should be rejected."""
+        data = {"labels": ["A"], "datasets": ["not-a-dict"]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_values_not_array(self, gate):
+        """values not being an array should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": "not-array"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "values must be an array" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_value_not_number(self, gate):
+        """Non-number in values array should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1, "two", 3]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be number" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_value_none_rejected(self, gate):
+        """None in values array should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1, None]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be number" in err
+
+    @pytest.mark.llm10
+    def test_chart_too_many_values(self, gate):
+        """values exceeding MAX_DATA_POINTS (500) should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": list(range(501))}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "too many" in err
+
+    @pytest.mark.llm10
+    def test_chart_values_at_limit(self, gate):
+        """Exactly 500 values should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": list(range(500))}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"500 values should pass: {err}"
+
+    # --- Invalid colors ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_invalid_hex_short(self, gate):
+        """2-digit hex (#12) should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#12"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_invalid_hex_chars(self, gate):
+        """Hex with invalid chars (#xyz) should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#xyz"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_no_hash(self, gate):
+        """Hex color without # prefix should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "aabbcc"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_rgb_rejected(self, gate):
+        """rgb() format should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "rgb(0,0,0)"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_hsl_rejected(self, gate):
+        """hsl() format should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "hsl(0,0%,0%)"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a03
+    def test_chart_color_url_xss(self, gate):
+        """url() in color should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "url(evil.com)"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_chart_color_javascript_xss(self, gate):
+        """javascript: in color should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "javascript:alert(1)"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_not_in_theme(self, gate):
+        """Non-theme color name (e.g. 'magenta') should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "magenta"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_css_named_color_rejected(self, gate):
+        """CSS named colors not in theme list (e.g. 'white') should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "white"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_not_string(self, gate):
+        """Non-string color should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": 123}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_colors_not_array(self, gate):
+        """colors not being an array should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "colors": "red"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "colors must be an array" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_colors_entry_not_string(self, gate):
+        """Non-string entry in colors array should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "colors": [123]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be string" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_colors_entry_invalid(self, gate):
+        """Invalid color in colors array should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "colors": ["notacolor"]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "colors" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_hex5_accepted(self, gate):
+        """5-digit hex (#12345) is invalid CSS — rejected (only 3, 6, or 8 hex digits allowed)."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#12345"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "#12345 is not valid CSS and should be rejected"
+
+    @pytest.mark.owasp_a04
+    def test_chart_color_hex7_rejected(self, gate):
+        """7-digit hex color should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "#1234567"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "color" in err
+
+    # --- Invalid options ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_options_not_dict(self, gate):
+        """options not being a dict should be rejected."""
+        state = _chart_state("bar", options="not-dict")
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "options must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_width_below_min(self, gate):
+        """width < 50 should be rejected."""
+        state = _chart_state("bar", options={"width": 49})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "width" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_width_above_max(self, gate):
+        """width > 2000 should be rejected."""
+        state = _chart_state("bar", options={"width": 2001})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "width" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_height_below_min(self, gate):
+        """height < 50 should be rejected."""
+        state = _chart_state("bar", options={"height": 49})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "height" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_height_above_max(self, gate):
+        """height > 1500 should be rejected."""
+        state = _chart_state("bar", options={"height": 1501})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "height" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_width_not_int(self, gate):
+        """width as float should be rejected."""
+        state = _chart_state("bar", options={"width": 100.5})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "width" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_height_not_int(self, gate):
+        """height as string should be rejected."""
+        state = _chart_state("bar", options={"height": "400"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "height" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_width_zero_rejected(self, gate):
+        """width=0 should be rejected (below min 50)."""
+        state = _chart_state("bar", options={"width": 0})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "width" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_height_negative_rejected(self, gate):
+        """Negative height should be rejected."""
+        state = _chart_state("bar", options={"height": -100})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "height" in err
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("bool_opt", ["showLegend", "showGrid", "showValues", "stacked"])
+    def test_chart_bool_option_not_bool(self, gate, bool_opt):
+        """Boolean options must be actual booleans, not strings."""
+        state = _chart_state("bar", options={bool_opt: "true"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert bool_opt in err
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("bool_opt", ["showLegend", "showGrid", "showValues", "stacked"])
+    def test_chart_bool_option_int_rejected(self, gate, bool_opt):
+        """Boolean options as int should be rejected."""
+        state = _chart_state("bar", options={bool_opt: 1})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert bool_opt in err
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("bool_opt", ["showLegend", "showGrid", "showValues", "stacked"])
+    def test_chart_bool_option_true_passes(self, gate, bool_opt):
+        """Boolean options set to True should pass."""
+        state = _chart_state("bar", options={bool_opt: True})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"{bool_opt}=True should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize("bool_opt", ["showLegend", "showGrid", "showValues", "stacked"])
+    def test_chart_bool_option_false_passes(self, gate, bool_opt):
+        """Boolean options set to False should pass."""
+        state = _chart_state("bar", options={bool_opt: False})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"{bool_opt}=False should pass: {err}"
+
+    # --- Invalid dataset label ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_dataset_label_not_string(self, gate):
+        """Non-string dataset label should be rejected."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "label": 123}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "label" in err
+
+    # --- XSS in chart data ---
+
+    @pytest.mark.owasp_a03
+    def test_chart_xss_in_label(self, gate):
+        """XSS in chart label should be caught."""
+        data = {"labels": ["<script>alert(1)</script>"], "datasets": [{"values": [1]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in chart label should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_chart_xss_in_dataset_label(self, gate):
+        """XSS in dataset label should be caught."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "label": '<img onerror="alert(1)">'}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in dataset label should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_chart_xss_javascript_in_color(self, gate):
+        """javascript: protocol in color string should be caught by XSS scan."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "color": "javascript:alert(1)"}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "javascript: in color should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_chart_xss_in_colors_array(self, gate):
+        """XSS payload in colors array should be caught."""
+        data = {"labels": ["A"], "datasets": [{"values": [1], "colors": ["<script>alert(1)</script>"]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in colors array should be caught"
+
+    # --- Edge: float values, negative, zero ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_float_values(self, gate):
+        """Float values in dataset should pass."""
+        data = {"labels": ["A", "B"], "datasets": [{"values": [1.5, 2.7]}]}
+        state = _chart_state("line", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Float values should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_negative_values(self, gate):
+        """Negative values in dataset should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [-10, -20.5]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Negative values should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_chart_zero_values(self, gate):
+        """Zero values in dataset should pass."""
+        data = {"labels": ["A"], "datasets": [{"values": [0, 0.0]}]}
+        state = _chart_state("bar", data=data)
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Zero values should pass: {err}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestPagesValidation — pages SPA navigation and activePage
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPagesValidation:
+    """Tests for pages / SPA navigation top-level keys."""
+
+    # --- Valid pages ---
+
+    @pytest.mark.owasp_a04
+    def test_simple_pages(self, gate):
+        """Simple pages dict with valid keys should pass."""
+        state = {
+            "pages": {
+                "overview": {"label": "Overview"},
+                "details": {"label": "Details"},
+            },
+            "activePage": "overview",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Simple pages should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_with_sections(self, gate):
+        """Page with data sections should pass."""
+        state = {
+            "pages": {
+                "home": {
+                    "label": "Home",
+                    "data": {"sections": [{"type": "text", "content": "Welcome"}]},
+                }
+            },
+            "activePage": "home",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Pages with sections should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_with_actions(self, gate):
+        """Page with actions_requested should pass."""
+        state = {
+            "pages": {
+                "settings": {
+                    "label": "Settings",
+                    "actions_requested": [{"id": "save", "type": "submit", "label": "Save"}],
+                }
+            },
+            "activePage": "settings",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Pages with actions should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_without_active_page(self, gate):
+        """Pages without activePage should pass (activePage is optional)."""
+        state = {
+            "pages": {
+                "p1": {"label": "Page 1"},
+                "p2": {"label": "Page 2"},
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Pages without activePage should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_empty_pages_dict(self, gate):
+        """Empty pages dict should pass."""
+        state = {"pages": {}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty pages dict should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_page_with_empty_data(self, gate):
+        """Page with empty data dict should pass."""
+        state = {
+            "pages": {"p1": {"label": "P", "data": {}}},
+            "activePage": "p1",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Page with empty data should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_page_without_label(self, gate):
+        """Page without label (label is optional) should pass."""
+        state = {
+            "pages": {"p1": {}},
+            "activePage": "p1",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Page without label should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_active_page_without_pages_key(self, gate):
+        """activePage without pages key should pass (no pages to validate against)."""
+        state = {"activePage": "dashboard"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"activePage without pages should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_valid_key_patterns(self, gate):
+        """Various valid KEY_PATTERN page keys should pass."""
+        state = {
+            "pages": {
+                "dashboard": {},
+                "user.settings": {},
+                "page-2": {},
+                "tab_3": {},
+                "A": {},
+                "z9": {},
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Valid page keys should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_with_metric_section(self, gate):
+        """Page with metric section should pass (validates nested UI)."""
+        state = {
+            "pages": {
+                "metrics": {
+                    "label": "Metrics",
+                    "data": {
+                        "sections": [
+                            {"type": "metric", "cards": [{"label": "Users", "value": 100}]},
+                        ]
+                    },
+                }
+            },
+            "activePage": "metrics",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Page with metric section should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_with_chart_section(self, gate):
+        """Page with chart section should pass."""
+        state = {
+            "pages": {
+                "analytics": {
+                    "label": "Analytics",
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "chart",
+                                "chartType": "line",
+                                "data": {"labels": ["Jan", "Feb"], "datasets": [{"values": [10, 20]}]},
+                            }
+                        ]
+                    },
+                }
+            },
+            "activePage": "analytics",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Page with chart section should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_at_limit(self, gate):
+        """Exactly MAX_PAGES (20) pages should pass."""
+        pages = {f"page{i}": {"label": f"Page {i}"} for i in range(20)}
+        state = {"pages": pages}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"20 pages should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_with_form_section(self, gate):
+        """Page with form section should pass."""
+        state = {
+            "pages": {
+                "form": {
+                    "data": {
+                        "sections": [{"type": "form", "fields": [{"key": "name", "type": "text", "label": "Name"}]}]
+                    }
+                }
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Page with form section should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_multiple_pages_with_active(self, gate):
+        """Multiple pages with activePage set to valid key should pass."""
+        state = {
+            "pages": {
+                "home": {"label": "Home"},
+                "about": {"label": "About"},
+                "contact": {"label": "Contact"},
+            },
+            "activePage": "about",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Multiple pages with active should pass: {err}"
+
+    # --- Invalid pages ---
+
+    @pytest.mark.owasp_a04
+    def test_pages_not_dict(self, gate):
+        """pages as array should be rejected."""
+        state = {"pages": [{"label": "Page"}]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "pages must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_pages_as_string(self, gate):
+        """pages as string should be rejected."""
+        state = {"pages": "invalid"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "pages must be an object" in err
+
+    @pytest.mark.llm10
+    def test_pages_too_many(self, gate):
+        """More than MAX_PAGES (20) should be rejected."""
+        pages = {f"p{i}": {"label": f"P{i}"} for i in range(21)}
+        state = {"pages": pages}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "Too many pages" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_key_with_spaces(self, gate):
+        """Page key with spaces should be rejected (KEY_PATTERN)."""
+        state = {"pages": {"bad key": {"label": "Bad"}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid key" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_key_with_special_chars(self, gate):
+        """Page key with special characters should be rejected."""
+        state = {"pages": {"page@1": {"label": "Bad"}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid key" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_key_starting_with_dot(self, gate):
+        """Page key starting with dot should be rejected."""
+        state = {"pages": {".hidden": {"label": "Bad"}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid key" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_key_starting_with_hyphen(self, gate):
+        """Page key starting with hyphen should be rejected."""
+        state = {"pages": {"-flag": {"label": "Bad"}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid key" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_key_empty_string(self, gate):
+        """Empty string page key should be rejected."""
+        state = {"pages": {"": {"label": "Bad"}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "invalid key" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_not_dict(self, gate):
+        """Page value not being a dict should be rejected."""
+        state = {"pages": {"p1": "not-a-dict"}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_as_array(self, gate):
+        """Page value as array should be rejected."""
+        state = {"pages": {"p1": [1, 2, 3]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_label_not_string(self, gate):
+        """Non-string page label should be rejected."""
+        state = {"pages": {"p1": {"label": 123}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "label must be a string" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_label_as_list(self, gate):
+        """List page label should be rejected."""
+        state = {"pages": {"p1": {"label": ["Home"]}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "label must be a string" in err
+
+    @pytest.mark.owasp_a04
+    def test_page_invalid_section(self, gate):
+        """Page with invalid section type should be rejected."""
+        state = {
+            "pages": {
+                "p1": {
+                    "data": {"sections": [{"type": "invalid_section_type"}]},
+                }
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a04
+    def test_page_invalid_action(self, gate):
+        """Page with invalid action should be rejected."""
+        state = {
+            "pages": {
+                "p1": {
+                    "actions_requested": [{"id": "x", "type": "invalid_type", "label": "X"}],
+                }
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    # --- Invalid activePage ---
+
+    @pytest.mark.owasp_a04
+    def test_active_page_not_in_pages(self, gate):
+        """activePage pointing to nonexistent page should be rejected."""
+        state = {
+            "pages": {"p1": {"label": "P1"}},
+            "activePage": "nonexistent",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "activePage" in err
+        assert "not in pages" in err
+
+    @pytest.mark.owasp_a04
+    def test_active_page_not_string(self, gate):
+        """Non-string activePage should be rejected."""
+        state = {"activePage": 123}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "activePage must be a string" in err
+
+    @pytest.mark.owasp_a04
+    def test_active_page_as_list(self, gate):
+        """List activePage should be rejected."""
+        state = {"activePage": ["page1"]}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "activePage must be a string" in err
+
+    @pytest.mark.owasp_a04
+    def test_active_page_invalid_format(self, gate):
+        """activePage with invalid KEY_PATTERN should be rejected."""
+        state = {"activePage": "bad page!"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "activePage" in err
+
+    @pytest.mark.owasp_a04
+    def test_active_page_with_spaces(self, gate):
+        """activePage with spaces should be rejected."""
+        state = {"activePage": "my page"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "activePage" in err
+
+    @pytest.mark.owasp_a04
+    def test_active_page_starting_with_dot(self, gate):
+        """activePage starting with dot should be rejected."""
+        state = {"activePage": ".hidden"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "activePage" in err
+
+    # --- XSS in pages ---
+
+    @pytest.mark.owasp_a03
+    def test_xss_in_page_label(self, gate):
+        """XSS in page label should be caught."""
+        state = {"pages": {"p1": {"label": "<script>alert(1)</script>"}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in page label should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_xss_javascript_in_page_label(self, gate):
+        """javascript: protocol in page label should be caught."""
+        state = {"pages": {"p1": {"label": "javascript:alert(1)"}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "javascript: in page label should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_xss_event_handler_in_page_label(self, gate):
+        """Event handler in page label should be caught."""
+        state = {"pages": {"p1": {"label": '<div onmouseover="evil()">'}}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Event handler in page label should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_xss_in_page_section_content(self, gate):
+        """XSS in page section content should be caught."""
+        state = {
+            "pages": {
+                "p1": {
+                    "data": {"sections": [{"type": "text", "content": "<script>alert(1)</script>"}]},
+                }
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in page section should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_xss_in_page_action_label(self, gate):
+        """XSS in page action label should be caught."""
+        state = {
+            "pages": {
+                "p1": {
+                    "actions_requested": [{"id": "x", "type": "submit", "label": '<img onerror="alert(1)">'}],
+                }
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in page action label should be caught"
+
+    # --- Edge: activePage with empty pages ---
+
+    @pytest.mark.owasp_a04
+    def test_active_page_with_empty_pages_passes(self, gate):
+        """activePage with empty pages dict passes — empty dict is falsy in Python."""
+        state = {"pages": {}, "activePage": "nonexistent"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        # pages is {} (falsy), so `if pages and ...` short-circuits — no rejection
+        assert ok, f"activePage with empty pages should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pages_with_complex_nested_sections(self, gate):
+        """Page with nested form, table, and text sections should pass."""
+        state = {
+            "pages": {
+                "complex": {
+                    "label": "Complex",
+                    "data": {
+                        "sections": [
+                            {"type": "text", "content": "Intro"},
+                            {
+                                "type": "table",
+                                "columns": [{"key": "name", "label": "Name"}],
+                                "rows": [{"name": "Alice"}],
+                            },
+                            {"type": "form", "fields": [{"key": "q", "type": "text", "label": "Query"}]},
+                        ]
+                    },
+                    "actions_requested": [{"id": "go", "type": "submit", "label": "Go"}],
+                }
+            },
+            "activePage": "complex",
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Complex page should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "dashboard",
+            "user.profile",
+            "section-1",
+            "tab_overview",
+            "A1",
+            "z",
+        ],
+    )
+    def test_active_page_valid_patterns(self, gate, key):
+        """Various valid KEY_PATTERN values for activePage should pass."""
+        state = {
+            "pages": {key: {"label": "P"}},
+            "activePage": key,
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"activePage={key!r} should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.parametrize(
+        "key",
+        [
+            " leading",
+            "trailing ",
+            "has space",
+            "$dollar",
+            "=equals",
+            "#hash",
+            "?query",
+        ],
+    )
+    def test_active_page_invalid_patterns(self, gate, key):
+        """Various invalid KEY_PATTERN values for activePage should be rejected."""
+        state = {"activePage": key}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"activePage={key!r} should be rejected"
+
+
+# ===========================================================================
+# Regression tests for security audit fixes
+# ===========================================================================
+
+
+class TestAuditFixRegressions:
+    """Regression tests for findings from the holistic security audit."""
+
+    @pytest.fixture()
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    # ── SG-1: math.isfinite() on floats ──────────────────────────────────
+
+    def test_nan_percentage_rejected(self, gate):
+        """NaN in progress percentage should be rejected."""
+        state = {"data": {"sections": [{"type": "progress", "tasks": [], "percentage": float("nan")}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"NaN percentage should be rejected: {err}"
+
+    def test_inf_percentage_rejected(self, gate):
+        """Infinity in progress percentage should be rejected."""
+        state = {"data": {"sections": [{"type": "progress", "tasks": [], "percentage": float("inf")}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"Infinity percentage should be rejected: {err}"
+
+    def test_nan_sparkline_value_rejected(self, gate):
+        """NaN in metric sparkline should be rejected."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "metric", "cards": [{"label": "X", "value": 1, "sparkline": [1.0, float("nan")]}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"NaN in sparkline should be rejected: {err}"
+
+    def test_inf_chart_value_rejected(self, gate):
+        """Infinity in chart data values should be rejected."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "data": {"labels": ["A"], "datasets": [{"values": [float("inf")]}]},
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"Infinity in chart data should be rejected: {err}"
+
+    def test_nan_metric_value_rejected(self, gate):
+        """NaN as metric card value should be rejected."""
+        state = {"data": {"sections": [{"type": "metric", "cards": [{"label": "X", "value": float("nan")}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"NaN metric value should be rejected: {err}"
+
+    def test_nan_field_min_rejected(self, gate):
+        """NaN as field min should be rejected."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "form", "fields": [{"key": "x", "label": "x", "type": "number", "min": float("nan")}]}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"NaN field min should be rejected: {err}"
+
+    # ── SG-2: COLOR_PATTERN only 3/6/8 hex ───────────────────────────────
+
+    def test_hex3_color_accepted(self, gate):
+        """3-digit hex color should be accepted."""
+        state = _chart_state("bar", data={"labels": ["A"], "datasets": [{"values": [1], "color": "#f0f"}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"#f0f should be valid: {err}"
+
+    def test_hex6_color_accepted(self, gate):
+        """6-digit hex color should be accepted."""
+        state = _chart_state("bar", data={"labels": ["A"], "datasets": [{"values": [1], "color": "#ff00ff"}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"#ff00ff should be valid: {err}"
+
+    def test_hex8_color_accepted(self, gate):
+        """8-digit hex color (with alpha) should be accepted."""
+        state = _chart_state("bar", data={"labels": ["A"], "datasets": [{"values": [1], "color": "#ff00ff80"}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"#ff00ff80 should be valid: {err}"
+
+    def test_hex4_color_rejected(self, gate):
+        """4-digit hex color is NOT valid CSS and should be rejected."""
+        state = _chart_state("bar", data={"labels": ["A"], "datasets": [{"values": [1], "color": "#f0f0"}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "#f0f0 (4 digits) should be rejected"
+
+    def test_hex5_color_rejected(self, gate):
+        """5-digit hex color is NOT valid CSS and should be rejected."""
+        state = _chart_state("bar", data={"labels": ["A"], "datasets": [{"values": [1], "color": "#12345"}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "#12345 (5 digits) should be rejected"
+
+    def test_hex7_color_rejected(self, gate):
+        """7-digit hex color is NOT valid CSS and should be rejected."""
+        state = _chart_state("bar", data={"labels": ["A"], "datasets": [{"values": [1], "color": "#1234567"}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "#1234567 (7 digits) should be rejected"
+
+    # ── SG-3: String length limits ────────────────────────────────────────
+
+    def test_metric_card_label_too_long_rejected(self, gate):
+        """Metric card label over 500 chars should be rejected."""
+        state = _metric_state([{"label": "X" * 501, "value": 1}])
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "501-char card label should be rejected"
+
+    def test_chart_label_too_long_rejected(self, gate):
+        """Chart data label over 500 chars should be rejected."""
+        state = _chart_state("bar", data={"labels": ["X" * 501], "datasets": [{"values": [1]}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "501-char chart label should be rejected"
+
+    def test_dataset_label_too_long_rejected(self, gate):
+        """Dataset label over 500 chars should be rejected."""
+        state = _chart_state("bar", data={"labels": ["A"], "datasets": [{"values": [1], "label": "X" * 501}]})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "501-char dataset label should be rejected"
+
+    def test_page_label_too_long_rejected(self, gate):
+        """Page label over 500 chars should be rejected."""
+        state = {"pages": {"p": {"label": "X" * 501, "data": {"sections": []}}}, "activePage": "p"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "501-char page label should be rejected"
+
+    # ── SG-4: KEY_PATTERN requires leading alpha ──────────────────────────
+
+    def test_key_pattern_leading_alpha_ok(self, gate):
+        """Key starting with alpha should pass."""
+        state = {"data": {"sections": [{"type": "form", "fields": [{"key": "abc123", "label": "x", "type": "text"}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"alpha-start key should pass: {err}"
+
+    def test_key_pattern_leading_digit_rejected(self, gate):
+        """Key starting with digit should be rejected (SG-4 fix)."""
+        state = {"data": {"sections": [{"type": "form", "fields": [{"key": "1abc", "label": "x", "type": "text"}]}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "digit-start key should be rejected"

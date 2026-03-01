@@ -747,6 +747,621 @@ class TestExpandPreset:
 
 
 # ---------------------------------------------------------------------------
+# End-to-end integration: metric / chart / clickable table / pages
+# through webview() and webview_update() (SecurityGate + session)
+# ---------------------------------------------------------------------------
+
+
+class TestWebviewMetricIntegration:
+    """End-to-end: metric card states through webview() + SecurityGate."""
+
+    async def test_metric_cards_basic(self):
+        """Full metric card state passes SecurityGate and reaches session."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": [{"id": "ok"}]}
+
+        state = {
+            "title": "Dashboard",
+            "data": {
+                "sections": [
+                    {
+                        "type": "metric",
+                        "title": "KPIs",
+                        "columns": 3,
+                        "cards": [
+                            {"label": "Users", "value": 1205},
+                            {"label": "Revenue", "value": "$12.3k", "change": "+8%", "changeDirection": "up"},
+                            {"label": "Errors", "value": "0.3%", "changeDirection": "down"},
+                        ],
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+        # State should have been written to the session
+        mock_session.write_state.assert_called_once()
+        written = mock_session.write_state.call_args[0][0]
+        assert written["data"]["sections"][0]["type"] == "metric"
+
+    async def test_metric_with_sparkline(self):
+        """Metric cards with sparkline arrays pass end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Metrics",
+            "data": {
+                "sections": [
+                    {
+                        "type": "metric",
+                        "cards": [
+                            {
+                                "label": "Latency",
+                                "value": "142ms",
+                                "sparkline": [180, 165, 155, 148, 145, 143, 142, 142],
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_metric_xss_in_label_rejected(self):
+        """XSS in metric card label is caught by SecurityGate."""
+        state = {
+            "title": "Dashboard",
+            "data": {
+                "sections": [
+                    {
+                        "type": "metric",
+                        "cards": [{"label": '<img src=x onerror="alert(1)">', "value": 100}],
+                    }
+                ]
+            },
+        }
+        mock_session = _make_mock_session()
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" in result
+        assert "validation failed" in result["error"]
+
+
+class TestWebviewChartIntegration:
+    """End-to-end: chart states through webview() + SecurityGate."""
+
+    async def test_bar_chart(self):
+        """Bar chart state passes SecurityGate end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": [{"id": "ok"}]}
+
+        state = {
+            "title": "Sales",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "title": "Monthly Revenue",
+                        "data": {
+                            "labels": ["Jan", "Feb", "Mar", "Apr"],
+                            "datasets": [{"label": "Revenue", "values": [1200, 1900, 3000, 5000], "color": "blue"}],
+                        },
+                        "options": {"width": 600, "height": 300, "showLegend": True, "showGrid": True},
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_line_chart_with_multiple_datasets(self):
+        """Line chart with multiple datasets passes end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Trends",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "line",
+                        "data": {
+                            "labels": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+                            "datasets": [
+                                {"label": "Requests", "values": [800, 1200, 2800, 3200, 2100], "color": "#58a6ff"},
+                                {"label": "Errors", "values": [2, 5, 12, 8, 4], "color": "red"},
+                            ],
+                        },
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_pie_chart(self):
+        """Pie chart with theme-aliased colors passes end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Distribution",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "pie",
+                        "data": {
+                            "labels": ["Healthy", "Warning", "Critical"],
+                            "datasets": [{"values": [5, 1, 0], "colors": ["green", "yellow", "red"]}],
+                        },
+                        "options": {"width": 300, "height": 300},
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_area_chart(self):
+        """Area chart type passes end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Area",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "area",
+                        "data": {
+                            "labels": ["A", "B", "C"],
+                            "datasets": [{"values": [10, 20, 15], "color": "cyan"}],
+                        },
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_donut_chart(self):
+        """Donut chart type passes end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Donut",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "donut",
+                        "data": {
+                            "labels": ["A", "B"],
+                            "datasets": [{"values": [60, 40], "colors": ["purple", "orange"]}],
+                        },
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_sparkline_chart(self):
+        """Sparkline chart type passes end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Spark",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "sparkline",
+                        "data": {"datasets": [{"values": [1, 3, 2, 5, 4, 6]}]},
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_chart_xss_in_color_rejected(self):
+        """XSS in chart color is caught by SecurityGate."""
+        state = {
+            "title": "XSS",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "data": {
+                            "labels": ["A"],
+                            "datasets": [{"values": [1], "color": "javascript:alert(1)"}],
+                        },
+                    }
+                ]
+            },
+        }
+        mock_session = _make_mock_session()
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" in result
+
+    async def test_chart_invalid_type_rejected(self):
+        """Invalid chart type is caught by SecurityGate."""
+        state = {
+            "title": "Bad",
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "histogram",
+                        "data": {"labels": ["A"], "datasets": [{"values": [1]}]},
+                    }
+                ]
+            },
+        }
+        mock_session = _make_mock_session()
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" in result
+
+
+class TestWebviewClickableTableIntegration:
+    """End-to-end: clickable table states through webview() + SecurityGate."""
+
+    async def test_clickable_table_passes(self):
+        """Clickable table with actionId passes SecurityGate end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Servers",
+            "data": {
+                "sections": [
+                    {
+                        "type": "table",
+                        "columns": [{"key": "name", "label": "Server"}, {"key": "status", "label": "Status"}],
+                        "rows": [
+                            {"name": "web-01", "status": "healthy"},
+                            {"name": "api-01", "status": "warning"},
+                        ],
+                        "clickable": True,
+                        "clickActionId": "server_detail",
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_clickable_plus_selectable(self):
+        """Clickable + selectable table coexist end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Fleet",
+            "data": {
+                "sections": [
+                    {
+                        "type": "table",
+                        "columns": [{"key": "name", "label": "Name"}],
+                        "rows": [{"name": "srv-1"}],
+                        "clickable": True,
+                        "clickActionId": "detail",
+                        "selectable": True,
+                    }
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+
+class TestWebviewPagesIntegration:
+    """End-to-end: multi-page SPA states through webview() + SecurityGate."""
+
+    async def test_basic_pages(self):
+        """Multi-page dashboard state passes SecurityGate end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Dashboard",
+            "pages": {
+                "overview": {
+                    "label": "Overview",
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "metric",
+                                "cards": [{"label": "Users", "value": 1205}],
+                            }
+                        ]
+                    },
+                },
+                "charts": {
+                    "label": "Charts",
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "chart",
+                                "chartType": "bar",
+                                "data": {"labels": ["A", "B"], "datasets": [{"values": [10, 20]}]},
+                            }
+                        ]
+                    },
+                },
+            },
+            "activePage": "overview",
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_pages_with_clickable_table(self):
+        """Pages containing clickable table + chart sections pass end-to-end."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Server Dashboard",
+            "pages": {
+                "servers": {
+                    "label": "Servers",
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "table",
+                                "columns": [{"key": "name", "label": "Server"}],
+                                "rows": [{"name": "web-01"}],
+                                "clickable": True,
+                                "clickActionId": "srv_detail",
+                            }
+                        ]
+                    },
+                },
+                "health": {
+                    "label": "Health",
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "chart",
+                                "chartType": "pie",
+                                "data": {
+                                    "labels": ["OK", "Warn"],
+                                    "datasets": [{"values": [5, 1], "colors": ["green", "yellow"]}],
+                                },
+                            }
+                        ]
+                    },
+                },
+            },
+            "activePage": "servers",
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_pages_with_actions_and_log(self):
+        """Pages can include page-level actions_requested and log sections."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        state = {
+            "title": "Dash",
+            "pages": {
+                "logs": {
+                    "label": "Logs",
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "log",
+                                "lines": ["[INFO] server started", "[WARN] high CPU"],
+                            }
+                        ]
+                    },
+                    "actions_requested": [{"id": "refresh", "label": "Refresh", "type": "primary"}],
+                }
+            },
+            "activePage": "logs",
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+
+    async def test_pages_invalid_active_page_rejected(self):
+        """activePage not in pages dict is caught by SecurityGate."""
+        state = {
+            "title": "Bad",
+            "pages": {
+                "overview": {
+                    "label": "Overview",
+                    "data": {"sections": [{"type": "text", "content": "hi"}]},
+                }
+            },
+            "activePage": "nonexistent",
+        }
+        mock_session = _make_mock_session()
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" in result
+
+    async def test_full_dashboard_example(self):
+        """The examples/dashboard/state.json passes SecurityGate end-to-end."""
+        import json
+        from pathlib import Path
+
+        example = Path(__file__).resolve().parent.parent.parent / "examples" / "dashboard" / "state.json"
+        if not example.exists():
+            pytest.skip("Dashboard example not found")
+
+        state = json.loads(example.read_text())
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
+
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state=state, timeout=1, ctx=None)
+
+        assert "error" not in result
+        mock_session.write_state.assert_called_once()
+
+
+class TestWebviewUpdatePagesIntegration:
+    """End-to-end: webview_update with merge=True on pages states."""
+
+    async def test_merge_add_new_page(self):
+        """webview_update(merge=True) can add a new page to existing pages."""
+        mock_session = _make_mock_session()
+        # merge_state should be called for merge updates
+        mock_session.merge_state.return_value = {"version": 2}
+
+        state = {
+            "pages": {
+                "new_page": {
+                    "label": "New",
+                    "data": {"sections": [{"type": "text", "content": "hello"}]},
+                }
+            }
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview_update(state=state, merge=True)
+
+        assert result["updated"] is True
+        mock_session.merge_state.assert_called_once()
+
+    async def test_merge_update_page_data(self):
+        """webview_update(merge=True) can update sections in an existing page."""
+        mock_session = _make_mock_session()
+        mock_session.merge_state.return_value = {"version": 3}
+
+        state = {
+            "pages": {
+                "overview": {
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "metric",
+                                "cards": [{"label": "Users", "value": 1500}],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview_update(state=state, merge=True)
+
+        assert result["updated"] is True
+
+    async def test_merge_change_active_page(self):
+        """webview_update(merge=True) can change activePage."""
+        mock_session = _make_mock_session()
+        mock_session.merge_state.return_value = {"version": 4}
+
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview_update(state={"activePage": "servers"}, merge=True)
+
+        assert result["updated"] is True
+
+    async def test_non_merge_full_pages_state(self):
+        """webview_update without merge replaces entire state including pages."""
+        mock_session = _make_mock_session()
+
+        state = {
+            "title": "New Dashboard",
+            "pages": {
+                "main": {
+                    "label": "Main",
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "chart",
+                                "chartType": "line",
+                                "data": {"labels": ["A"], "datasets": [{"values": [1]}]},
+                            }
+                        ]
+                    },
+                }
+            },
+            "activePage": "main",
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview_update(state=state)
+
+        assert result["updated"] is True
+        mock_session.write_state.assert_called_once()
+
+    async def test_mixed_metric_chart_update(self):
+        """Non-merge update with mixed metric + chart sections passes."""
+        mock_session = _make_mock_session()
+
+        state = {
+            "title": "Real-time",
+            "data": {
+                "sections": [
+                    {
+                        "type": "metric",
+                        "cards": [
+                            {"label": "RPS", "value": "2,847", "change": "+12%", "changeDirection": "up"},
+                            {"label": "P95", "value": "142", "unit": "ms"},
+                        ],
+                    },
+                    {
+                        "type": "chart",
+                        "chartType": "line",
+                        "data": {
+                            "labels": ["00:00", "04:00", "08:00", "12:00"],
+                            "datasets": [{"label": "Requests", "values": [800, 420, 1200, 2800], "color": "blue"}],
+                        },
+                        "options": {"showGrid": True, "showLegend": True},
+                    },
+                ]
+            },
+        }
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview_update(state=state)
+
+        assert result["updated"] is True
+
+
+# ---------------------------------------------------------------------------
 # main() entry point -- MCP server mode
 # ---------------------------------------------------------------------------
 
@@ -770,3 +1385,54 @@ class TestMainMCPMode:
                 with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
                     mcp_server.main()
         assert (tmp_path / ".mcp.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Regression: TR-2 — _deep_merge must reject __proto__/constructor/prototype
+# ---------------------------------------------------------------------------
+
+
+class TestDeepMergePrototypePollution:
+    """Regression tests for blocking prototype pollution keys in _deep_merge."""
+
+    def test_proto_key_rejected(self):
+        """__proto__ key in merge should raise ValueError."""
+        from mcp_server import _deep_merge
+
+        base = {"title": "test"}
+        with pytest.raises(ValueError, match="dangerous key"):
+            _deep_merge(base, {"__proto__": {"polluted": True}})
+
+    def test_constructor_key_rejected(self):
+        """constructor key in merge should raise ValueError."""
+        from mcp_server import _deep_merge
+
+        base = {"title": "test"}
+        with pytest.raises(ValueError, match="dangerous key"):
+            _deep_merge(base, {"constructor": {"polluted": True}})
+
+    def test_prototype_key_rejected(self):
+        """prototype key in merge should raise ValueError."""
+        from mcp_server import _deep_merge
+
+        base = {"title": "test"}
+        with pytest.raises(ValueError, match="dangerous key"):
+            _deep_merge(base, {"prototype": {"polluted": True}})
+
+    def test_normal_keys_still_merge(self):
+        """Normal keys should still merge fine."""
+        from mcp_server import _deep_merge
+
+        base = {"title": "old", "data": {"x": 1}}
+        _deep_merge(base, {"title": "new", "data": {"y": 2}})
+        assert base["title"] == "new"
+        assert base["data"]["x"] == 1
+        assert base["data"]["y"] == 2
+
+    def test_nested_proto_key_rejected(self):
+        """Nested __proto__ key should also be rejected."""
+        from mcp_server import _deep_merge
+
+        base = {"data": {"inner": {}}}
+        with pytest.raises(ValueError, match="dangerous key"):
+            _deep_merge(base, {"data": {"inner": {"__proto__": {"bad": True}}}})
