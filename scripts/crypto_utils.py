@@ -157,30 +157,32 @@ class NonceTracker:
     def __init__(self, window_seconds: int = 300):
         self._seen: dict[str, float] = {}
         self._window = window_seconds
+        self._lock = threading.Lock()
         self._logger = logging.getLogger("openwebgoggles.nonce")
 
     def check_and_record(self, nonce: str) -> bool:
         """Returns True if the nonce is fresh (not seen before).
-        Returns False if it's a replay."""
-        now = time.time()
-        self._prune(now)
+        Returns False if it's a replay.  Thread-safe."""
+        with self._lock:
+            now = time.time()
+            self._prune(now)
 
-        if nonce in self._seen:
-            return False
-
-        if len(self._seen) >= self.MAX_NONCE_COUNT:
-            # Aggressive prune: halve the window and retry once
-            self._logger.warning(
-                "Nonce tracker at capacity (%d nonces). Aggressive pruning with halved window.",
-                len(self._seen),
-            )
-            self._prune(now, window_override=self._window / 2)
-            if len(self._seen) >= self.MAX_NONCE_COUNT:
-                self._logger.error("Nonce tracker still at capacity after aggressive prune. Rejecting nonce.")
+            if nonce in self._seen:
                 return False
 
-        self._seen[nonce] = now
-        return True
+            if len(self._seen) >= self.MAX_NONCE_COUNT:
+                # Aggressive prune: halve the window and retry once
+                self._logger.warning(
+                    "Nonce tracker at capacity (%d nonces). Aggressive pruning with halved window.",
+                    len(self._seen),
+                )
+                self._prune(now, window_override=self._window / 2)
+                if len(self._seen) >= self.MAX_NONCE_COUNT:
+                    self._logger.error("Nonce tracker still at capacity after aggressive prune. Rejecting nonce.")
+                    return False
+
+            self._seen[nonce] = now
+            return True
 
     def _prune(self, now: float, window_override: float | None = None) -> None:
         """Remove expired nonces."""

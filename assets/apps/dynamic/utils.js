@@ -125,7 +125,17 @@
   };
 
   // ─── Defense-in-depth HTML sanitizer ────────────────────────────────────────
-  var DANGEROUS_TAGS = /^(script|style|iframe|object|embed|form|meta|link|base|svg|math|template|noscript|xmp|input|button|select|textarea)$/i;
+  // NOTE: Do NOT include input/button/select/textarea here — those are generated
+  // by our own renderers (forms, actions) with esc()/escAttr() applied.  Stripping
+  // them breaks the entire UI.  Markdown content goes through DOMPurify separately.
+  //
+  // SVG is allowed because charts.js generates safe data-driven SVG from validated
+  // numeric data (all text via esc(), all attrs via escAttr()).  Dangerous SVG
+  // children (script, foreignObject, use, etc.) are stripped by DANGEROUS_SVG_TAGS
+  // while safe structural elements are allowlisted by SAFE_SVG_TAGS.
+  var DANGEROUS_TAGS = /^(script|style|iframe|object|embed|form|meta|link|base|math|template|noscript|xmp)$/i;
+  var DANGEROUS_SVG_TAGS = /^(script|foreignobject|use|set|handler|listener|animate|animatetransform|animatemotion)$/i;
+  var SAFE_SVG_TAGS = /^(svg|g|rect|circle|ellipse|line|polyline|polygon|path|text|tspan|defs|clippath|lineargradient|radialgradient|stop)$/i;
   var EVENT_ATTR_RE = /^on/i;
   var DANGEROUS_URL_RE = /^\s*(javascript|data\s*:|vbscript)\s*:/i;
   var SAFE_URL_PROTOCOL_RE = /^(https?:|mailto:|#|\/[^\/])/i;
@@ -133,28 +143,41 @@
   function sanitizeHTML(html) {
     try {
       var doc = new DOMParser().parseFromString(html, "text/html");
-      cleanNode(doc.body);
+      cleanNode(doc.body, false);
       return doc.body.innerHTML;
     } catch (e) {
       return OWG.esc(html);
     }
   }
 
-  function cleanNode(node) {
+  function cleanNode(node, inSVG) {
     var children = Array.prototype.slice.call(node.childNodes);
     for (var i = 0; i < children.length; i++) {
       var child = children[i];
       if (child.nodeType === 1) {
-        if (DANGEROUS_TAGS.test(child.tagName)) {
+        var tag = (child.tagName || "").toLowerCase();
+        if (inSVG) {
+          // Inside SVG: strip known-dangerous SVG elements
+          if (DANGEROUS_SVG_TAGS.test(tag)) {
+            child.remove();
+            continue;
+          }
+          // Only allow known-safe SVG elements
+          if (!SAFE_SVG_TAGS.test(tag)) {
+            child.remove();
+            continue;
+          }
+        } else if (DANGEROUS_TAGS.test(tag)) {
           child.remove();
           continue;
         }
+        // Strip event handler attributes and dangerous URLs
         var attrs = Array.prototype.slice.call(child.attributes);
         for (var j = 0; j < attrs.length; j++) {
           var name = attrs[j].name.toLowerCase();
           if (EVENT_ATTR_RE.test(name)) {
             child.removeAttribute(attrs[j].name);
-          } else if (name === "id" || name === "name") {
+          } else if (!inSVG && (name === "id" || name === "name")) {
             child.removeAttribute(attrs[j].name);
           } else if (name === "href" || name === "src" || name === "action" || name === "formaction" || name === "xlink:href") {
             var val = attrs[j].value;
@@ -163,7 +186,8 @@
             }
           }
         }
-        cleanNode(child);
+        // Track SVG context: once inside <svg>, all descendants use SVG rules
+        cleanNode(child, inSVG || tag === "svg");
       }
     }
   }

@@ -180,6 +180,7 @@ class WebviewHTTPHandler:
         self.ws_clients: set = set()
         self._public_key_hex: str = ""
         self._rate_limiter = RateLimiter(max_actions=30, window_seconds=60.0)
+        self._manifest_rate_limiter = RateLimiter(max_actions=60, window_seconds=60.0)
         # Injected by WebviewServer to send signed broadcasts; falls back to
         # unsigned plain-JSON if not set (e.g. in tests or standalone usage).
         self._broadcast_fn: Any | None = None
@@ -310,6 +311,9 @@ class WebviewHTTPHandler:
 
         # Manifest — no auth required (SDK needs it to bootstrap, but token is STRIPPED)
         if path == "/_api/manifest":
+            if not self._manifest_rate_limiter.check():
+                await self._send_response(writer, 429, {"error": "Rate limit exceeded"})
+                return
             data = self.contract.get_manifest()
             if data:
                 safe_data = json.loads(json.dumps(data))  # deep copy
@@ -712,6 +716,9 @@ class WebviewServer:
             first_msg_raw = await asyncio.wait_for(websocket.recv(), timeout=5)
             first_msg = json.loads(first_msg_raw)
             msg_token = first_msg.get("token", "")
+            # Reject oversized tokens to prevent DoS via memory allocation
+            if not isinstance(msg_token, str) or len(msg_token) > 1024:
+                msg_token = ""
             if first_msg.get("type") == "auth" and msg_token and hmac.compare_digest(msg_token, self.session_token):
                 authenticated = True
         except (TimeoutError, json.JSONDecodeError, websockets.exceptions.ConnectionClosed):
