@@ -94,7 +94,6 @@ class TestStripJsoncComments:
     def test_line_comment(self):
         text = '{"key": "value"} // this is a comment\n{"key2": "value2"}'
         result = _strip_jsonc_comments(text)
-        parsed = None
         # Should remove the comment
         assert "// this is a comment" not in result
 
@@ -437,9 +436,7 @@ class TestCmdDoctor:
         # Create a valid .mcp.json so the config check passes
         binary = "/usr/bin/openwebgoggles"
         mcp_json = tmp_path / ".mcp.json"
-        mcp_json.write_text(json.dumps({
-            "mcpServers": {"openwebgoggles": {"command": binary}}
-        }))
+        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": binary}}}))
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
             with mock.patch("shutil.which", return_value=binary):
@@ -516,9 +513,7 @@ class TestCmdDoctor:
 
     def test_binary_path_mismatch(self, tmp_path, capsys):
         mcp_json = tmp_path / ".mcp.json"
-        mcp_json.write_text(json.dumps({
-            "mcpServers": {"openwebgoggles": {"command": "/old/path/openwebgoggles"}}
-        }))
+        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/old/path/openwebgoggles"}}}))
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
             with mock.patch("shutil.which", return_value="/new/path/openwebgoggles"):
@@ -744,14 +739,12 @@ class TestCmdDoctorEdgeCases:
 
         # We verify the code path exists by reading the source
         import inspect
+
         source = inspect.getsource(mcp_server._cmd_doctor)
         assert "3.11" in source  # Verify the check exists
 
     def test_all_deps_found(self, tmp_path, capsys):
         """When all deps are found, prints ok for each (line 2012)."""
-        import importlib.metadata as im
-
-        original_dist = im.distribution
 
         def mock_dist(name):
             d = mock.MagicMock()
@@ -770,7 +763,6 @@ class TestCmdDoctorEdgeCases:
 
     def test_all_checks_pass_summary(self, tmp_path, capsys):
         """When all checks pass, prints all checks passed (line 2113)."""
-        import importlib.metadata as im
 
         def mock_dist(name):
             d = mock.MagicMock()
@@ -778,9 +770,7 @@ class TestCmdDoctorEdgeCases:
             return d
 
         mcp_json = tmp_path / ".mcp.json"
-        mcp_json.write_text(json.dumps({
-            "mcpServers": {"openwebgoggles": {"command": "/usr/bin/openwebgoggles"}}
-        }))
+        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/openwebgoggles"}}}))
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
             with mock.patch("importlib.metadata.distribution", side_effect=mock_dist):
@@ -811,7 +801,6 @@ class TestCmdDoctorEdgeCases:
 
     def test_lock_held_by_running_server(self, tmp_path, capsys):
         """Lock held by another process shows ok (line 2102-2103)."""
-        import fcntl
 
         data_dir = tmp_path / ".opencode" / "webview"
         data_dir.mkdir(parents=True)
@@ -831,7 +820,6 @@ class TestCmdDoctorEdgeCases:
 
     def test_lock_present_with_server_pid(self, tmp_path, capsys):
         """Lock file OK when server pid exists (line 2101)."""
-        import fcntl
 
         data_dir = tmp_path / ".opencode" / "webview"
         data_dir.mkdir(parents=True)

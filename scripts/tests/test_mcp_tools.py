@@ -9,11 +9,8 @@ Targets the uncovered MCP tool paths and auto-reload inner loops.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
-import time
-from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -93,7 +90,7 @@ class TestWebviewTool:
         mock_session.wait_for_action.return_value = {"actions": [{"id": "confirm"}]}
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(
+            await webview(
                 state={"title": "Confirm?", "message": "Are you sure?"},
                 preset="confirm",
                 timeout=1,
@@ -106,7 +103,7 @@ class TestWebviewTool:
 
     async def test_preset_error(self):
         """webview returns error when preset expansion fails."""
-        with mock.patch("mcp_server._get_session") as mock_get:
+        with mock.patch("mcp_server._get_session"):
             result = await webview(
                 state={"title": "Test"},
                 preset="nonexistent_preset",
@@ -182,7 +179,7 @@ class TestWebviewReadTool:
         }
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_read(clear=True)
+            await webview_read(clear=True)
 
         mock_session.clear_actions.assert_called_once()
 
@@ -191,7 +188,7 @@ class TestWebviewReadTool:
         mock_session = _make_mock_session()
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_read(clear=True)
+            await webview_read(clear=True)
 
         mock_session.clear_actions.assert_not_called()
 
@@ -448,10 +445,13 @@ class TestVersionMonitorLoop:
         new_dist_path.stat.return_value = mock.MagicMock(st_mtime=200.0)
 
         with mock.patch("mcp_server._RELOAD_CHECK_INTERVAL", 0.2):
-            with mock.patch("mcp_server._get_installed_version_info", side_effect=[
-                ("1.0.0", mock_dist_path),
-                ("1.0.0", new_dist_path),
-            ]):
+            with mock.patch(
+                "mcp_server._get_installed_version_info",
+                side_effect=[
+                    ("1.0.0", mock_dist_path),
+                    ("1.0.0", new_dist_path),
+                ],
+            ):
                 with mock.patch("mcp_server._read_version_fresh", return_value="1.0.0"):
                     with mock.patch("mcp_server._exec_reload") as mock_reload:
                         task = asyncio.create_task(mcp_server._version_monitor())
