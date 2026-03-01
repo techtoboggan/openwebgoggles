@@ -3307,3 +3307,391 @@ class TestMergedStateRevalidation:
         raw = json.dumps(merged)
         ok, err, _ = gate.validate_state(raw)
         assert not ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADDITIONAL COVERAGE: Validation edge cases for uncovered branches
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestActionValidationEdgeCases:
+    """Cover uncovered action validation branches (lines 356-369, 575-588)."""
+
+    def test_non_serializable_action_value(self, gate):
+        """Action value that isn't JSON-serializable should fail (line 356-357)."""
+        action = {"action_id": "a1", "type": "submit", "value": object()}
+        ok, err = gate.validate_action(action)
+        assert not ok
+        assert "not JSON-serializable" in err
+
+    def test_non_serializable_context(self, gate):
+        """Action context that isn't JSON-serializable should fail (line 368-369)."""
+        action = {"action_id": "a1", "type": "submit", "context": {"bad": object()}}
+        ok, err = gate.validate_action(action)
+        assert not ok
+        assert "not JSON-serializable" in err
+
+    def test_actions_array_must_be_list(self, gate):
+        """_validate_actions rejects non-list input (line 575)."""
+        ok, err = gate._validate_actions("not a list", prefix="test")
+        assert not ok
+        assert "must be an array" in err
+
+    def test_actions_non_dict_element(self, gate):
+        """_validate_actions rejects non-dict in array (line 580)."""
+        ok, err = gate._validate_actions(["not a dict"], prefix="test")
+        assert not ok
+        assert "must be an object" in err
+
+    def test_action_id_must_be_string(self, gate):
+        """Action with non-string id should fail (line 583)."""
+        ok, err = gate._validate_actions([{"id": 123}], prefix="test")
+        assert not ok
+        assert "id must be a string" in err
+
+    def test_action_id_too_long(self, gate):
+        """Action with id > 200 chars should fail (line 585)."""
+        ok, err = gate._validate_actions([{"id": "x" * 201}], prefix="test")
+        assert not ok
+        assert "id too long" in err
+
+    def test_action_invalid_type(self, gate):
+        """Action with invalid type should fail (line 588)."""
+        ok, err = gate._validate_actions([{"id": "a1", "type": "invalid_type"}], prefix="test")
+        assert not ok
+        assert "invalid" in err
+
+
+class TestClassNameValidation:
+    """Cover _validate_class_name non-string check (line 401)."""
+
+    def test_class_name_not_string(self, gate):
+        """className must be a string."""
+        ok, err = gate._validate_class_name(123, "test.field")
+        assert not ok
+        assert "must be a string" in err
+
+
+class TestXssScanDictKeys:
+    """Cover _scan_xss dict key scanning (line 448)."""
+
+    def test_xss_in_dict_key(self, gate):
+        """XSS pattern in a dictionary key should be detected."""
+        obj = {"<script>alert(1)</script>": "value"}
+        warnings = gate._scan_xss(obj, "root")
+        assert len(warnings) > 0
+
+
+class TestUINestingAndValidation:
+    """Cover _validate_ui nesting depth check (line 464) and related branches."""
+
+    def test_section_nesting_too_deep(self, gate):
+        """Exceeding MAX_SECTION_DEPTH should fail (line 464)."""
+        # Call _validate_ui directly with a high depth to trigger the guard
+        ok, err = gate._validate_ui({"sections": [{"type": "text", "content": "x"}]}, _depth=4)
+        assert not ok
+        assert "nesting too deep" in err
+
+    def test_section_invalid_classname(self, gate):
+        """Section with invalid className fails (line 488)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "text", "content": "hi", "className": "invalid chars!@#$%"}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "className" in err
+
+    def test_non_dict_field_in_section_skipped(self, gate):
+        """Non-dict items in fields array are skipped (line 503)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": ["not-a-dict", {"key": "f1", "type": "text", "label": "OK"}]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_field_invalid_classname(self, gate):
+        """Field with invalid className fails (line 528)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "className": "invalid!@chars"}]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "className" in err
+
+    def test_item_invalid_classname(self, gate):
+        """Item with invalid className fails (line 552)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{
+                "type": "items",
+                "items": [{"id": "i1", "label": "x", "className": "invalid!@chars"}],
+            }]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "className" in err
+
+    def test_section_actions_error(self, gate):
+        """Section-level actions validation failure (line 568)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{
+                "type": "text",
+                "content": "hi",
+                "actions": [{"id": 999}],  # id must be string
+            }]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "id must be a string" in err
+
+
+class TestFieldValidationEdgeCases:
+    """Cover _validate_field_validation uncovered branches (lines 605-637)."""
+
+    def test_pattern_not_string(self, gate):
+        """pattern must be a string (line 605)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": [
+                {"key": "f1", "type": "text", "label": "x", "pattern": 123}
+            ]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "pattern must be a string" in err
+
+    def test_pattern_with_xss(self, gate):
+        """pattern with XSS should fail (line 612)."""
+        # Use javascript: protocol which is caught by XSS scanner
+        ok, err = gate._validate_field_validation(
+            {"pattern": "javascript:alert(1)"}, "test"
+        )
+        assert not ok
+
+    def test_max_length_not_integer(self, gate):
+        """maxLength must be a non-negative integer (line 622)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": [
+                {"key": "f1", "type": "text", "label": "x", "maxLength": -1}
+            ]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "maxLength must be a non-negative integer" in err
+
+    def test_error_message_not_string(self, gate):
+        """errorMessage must be a string (line 632)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "form", "fields": [
+                {"key": "f1", "type": "text", "label": "x", "errorMessage": 123}
+            ]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "errorMessage must be a string" in err
+
+    def test_error_message_with_xss(self, gate):
+        """errorMessage with XSS should fail (line 637)."""
+        # Call _validate_field_validation directly to avoid the general XSS scanner
+        ok, err = gate._validate_field_validation(
+            {"errorMessage": "javascript:alert(1)"}, "test"
+        )
+        assert not ok
+
+
+class TestSectionSpecificValidation:
+    """Cover _validate_section_specific uncovered branches (lines 664-730)."""
+
+    def test_progress_tasks_not_list(self, gate):
+        """progress.tasks must be an array (line 664)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "progress", "tasks": "not-a-list"}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "tasks must be an array" in err
+
+    def test_progress_task_not_dict(self, gate):
+        """progress.tasks[i] must be an object (line 669)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "progress", "tasks": ["not-a-dict"]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+    def test_progress_percentage_not_number(self, gate):
+        """progress.percentage must be a number (line 676)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "progress", "tasks": [], "percentage": "fifty"}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "percentage must be a number" in err
+
+    def test_log_lines_not_list(self, gate):
+        """log.lines must be an array (line 683)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "log", "lines": "not-a-list"}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "lines must be an array" in err
+
+    def test_diff_content_not_string(self, gate):
+        """diff.content must be a string (line 696)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "diff", "content": 123}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "content must be a string" in err
+
+    def test_table_columns_not_list(self, gate):
+        """table.columns must be an array (line 704)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "table", "columns": "not-a-list"}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "columns must be an array" in err
+
+    def test_table_column_not_dict(self, gate):
+        """table.columns[i] must be an object (line 709)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "table", "columns": ["not-a-dict"]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+    def test_table_rows_not_list(self, gate):
+        """table.rows must be an array (line 715)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "table", "columns": [{"key": "k"}], "rows": "not-a-list"}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "rows must be an array" in err
+
+    def test_tabs_not_list(self, gate):
+        """tabs.tabs must be an array (line 725)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "tabs", "tabs": "not-a-list"}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "tabs must be an array" in err
+
+    def test_tab_not_dict(self, gate):
+        """tabs.tabs[i] must be an object (line 730)."""
+        state = {
+            "status": "ready",
+            "data": {"ui": {"sections": [{"type": "tabs", "tabs": ["not-a-dict"]}]}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+
+class TestBehaviorsValidation:
+    """Cover _validate_behaviors uncovered branches (lines 751-782)."""
+
+    def test_behavior_not_dict(self, gate):
+        """behaviors[i] must be an object (line 751)."""
+        state = {
+            "status": "ready",
+            "behaviors": ["not-a-dict"],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err
+
+    def test_behavior_when_not_dict(self, gate):
+        """behaviors[i].when must be an object (line 754)."""
+        state = {
+            "status": "ready",
+            "behaviors": [{"when": "not-a-dict", "show": ["field1"]}],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "when must be an object" in err
+
+    def test_behavior_no_condition(self, gate):
+        """behaviors[i].when needs a condition (line 761)."""
+        state = {
+            "status": "ready",
+            "behaviors": [{"when": {"field": "f1"}, "show": ["f2"]}],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "needs a condition" in err
+
+    def test_behavior_matches_xss(self, gate):
+        """behaviors[i].when.matches with XSS should fail (line 774)."""
+        # Call _validate_behaviors directly to avoid the general XSS scanner
+        ok, err = gate._validate_behaviors([
+            {"when": {"field": "f1", "matches": "javascript:alert(1)"}, "show": ["f2"]}
+        ])
+        assert not ok
+
+    def test_behavior_effect_not_array(self, gate):
+        """behaviors[i].show must be an array (line 782)."""
+        state = {
+            "status": "ready",
+            "behaviors": [{"when": {"field": "f1", "equals": "x"}, "show": "not-an-array"}],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an array" in err
+
+
+class TestLayoutValidation:
+    """Cover _validate_layout uncovered branches (lines 801-813)."""
+
+    def test_sidebar_width_not_string(self, gate):
+        """layout.sidebarWidth must be a string (line 801)."""
+        state = {
+            "status": "ready",
+            "layout": {"type": "sidebar", "sidebarWidth": 300},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "sidebarWidth must be a string" in err
+
+    def test_panels_not_dict(self, gate):
+        """panels must be an object (line 807)."""
+        state = {
+            "status": "ready",
+            "layout": {"type": "sidebar"},
+            "panels": ["not-a-dict"],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "panels must be an object" in err
+
+    def test_panel_value_not_dict(self, gate):
+        """panels.main must be an object (line 813)."""
+        state = {
+            "status": "ready",
+            "layout": {"type": "sidebar"},
+            "panels": {"main": "not-a-dict"},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "must be an object" in err

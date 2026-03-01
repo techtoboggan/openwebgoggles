@@ -631,3 +631,169 @@ class TestNonceTrackerCapacity:
         tracker._prune(now, window_override=10)
         assert "old" not in tracker._seen
         assert "recent" in tracker._seen
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. PyNaCl success paths — OWASP A02
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNaClSuccessPaths:
+    """Cover the Ed25519 code paths (lines 24-26, 55-58, 109-111) when PyNaCl is available."""
+
+    @pytest.mark.owasp_a02
+    def test_lazy_nacl_returns_module(self):
+        """_lazy_nacl() should return the nacl module when installed."""
+        nacl = _lazy_nacl()
+        if nacl is None:
+            pytest.skip("PyNaCl not installed")
+        assert hasattr(nacl, "signing")
+        assert hasattr(nacl, "encoding")
+
+    @pytest.mark.owasp_a02
+    def test_ed25519_keygen_with_nacl(self):
+        """When PyNaCl is available, keys should be Ed25519."""
+        nacl = _lazy_nacl()
+        if nacl is None:
+            pytest.skip("PyNaCl not installed")
+        priv, pub, verify = generate_session_keys()
+        assert len(pub) == 64  # Ed25519 public key is 32 bytes = 64 hex
+        assert pub == verify
+
+    @pytest.mark.owasp_a02
+    def test_ed25519_signing_with_nacl(self):
+        """When PyNaCl is available, sign_message uses Ed25519."""
+        nacl = _lazy_nacl()
+        if nacl is None:
+            pytest.skip("PyNaCl not installed")
+        priv, pub, _ = generate_session_keys()
+        nonce = generate_nonce()
+        sig = sign_message(priv, "test-payload", nonce)
+        assert len(sig) == 128  # Ed25519 signature is 64 bytes = 128 hex
+
+    @pytest.mark.owasp_a02
+    def test_nacl_sign_and_verify_roundtrip(self):
+        """Ed25519 sign + verify roundtrip."""
+        nacl = _lazy_nacl()
+        if nacl is None:
+            pytest.skip("PyNaCl not installed")
+        priv, pub, _ = generate_session_keys()
+        nonce = generate_nonce()
+        payload = '{"action": "test"}'
+        sig = sign_message(priv, payload, nonce)
+        verify_key = nacl.signing.VerifyKey(bytes.fromhex(pub))
+        message = (nonce + payload).encode("utf-8")
+        verify_key.verify(message, bytes.fromhex(sig))  # Should not raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. zero_key edge cases — OWASP A02
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestZeroKeyEdgeCases:
+    """Cover zero_key bytearray path (lines 205-207), non-cpython (213), ctypes error (218-219)."""
+
+    @pytest.mark.owasp_a02
+    def test_zero_key_bytearray(self):
+        """Zeroing a bytearray should zero all bytes."""
+        key = bytearray(b"secret-key-data!")
+        zero_key(key)
+        assert all(b == 0 for b in key)
+
+    @pytest.mark.owasp_a02
+    def test_zero_key_empty_bytearray(self):
+        """Zeroing empty bytearray should not crash."""
+        key = bytearray(b"")
+        zero_key(key)
+        assert len(key) == 0
+
+    @pytest.mark.owasp_a02
+    def test_zero_key_non_cpython(self):
+        """On non-CPython, zero_key should return early without error."""
+        import unittest.mock
+
+        key = b"some-key-material"
+        with unittest.mock.patch("sys.implementation") as mock_impl:
+            mock_impl.name = "pypy"
+            zero_key(key)  # Should not raise
+
+    @pytest.mark.owasp_a02
+    def test_zero_key_ctypes_failure(self):
+        """When ctypes operations fail, zero_key should not crash."""
+        import ctypes
+        import unittest.mock
+
+        key = b"some-key-material"
+        with unittest.mock.patch.object(
+            ctypes.pythonapi, "PyBytes_AsString",
+            side_effect=Exception("ctypes failure"),
+        ):
+            zero_key(key)  # Should not raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. PyNaCl mocked paths — cover lines 24-26, 55-58, 109-111
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNaClMockedPaths:
+    """Cover Ed25519 code paths by mocking the nacl module."""
+
+    @pytest.mark.owasp_a02
+    def test_lazy_nacl_import_success(self):
+        """Cover the import success path of _lazy_nacl (lines 24-26)."""
+        import unittest.mock
+
+        # Create a mock nacl module
+        mock_nacl = unittest.mock.MagicMock()
+        mock_nacl.signing = unittest.mock.MagicMock()
+        mock_nacl.encoding = unittest.mock.MagicMock()
+
+        with unittest.mock.patch.dict("sys.modules", {
+            "nacl": mock_nacl,
+            "nacl.signing": mock_nacl.signing,
+            "nacl.encoding": mock_nacl.encoding,
+        }):
+            result = _lazy_nacl()
+            assert result is not None
+
+    @pytest.mark.owasp_a02
+    def test_ed25519_keygen_mocked(self):
+        """Cover Ed25519 key generation path (lines 55-58) with mocked nacl."""
+        import unittest.mock
+
+        mock_nacl = unittest.mock.MagicMock()
+
+        class FakeSigningKey:
+            def __init__(self):
+                self.verify_key = unittest.mock.MagicMock()
+                self.verify_key.encode.return_value.decode.return_value = "ab" * 32
+                self._seed = b"x" * 32
+
+            def __bytes__(self):
+                return self._seed
+
+        mock_nacl.signing.SigningKey.generate.return_value = FakeSigningKey()
+        mock_nacl.encoding.HexEncoder = unittest.mock.MagicMock()
+
+        with unittest.mock.patch("crypto_utils._lazy_nacl", return_value=mock_nacl):
+            priv, pub, verify = generate_session_keys()
+            assert len(priv) == 32
+            assert pub == "ab" * 32
+            assert verify == pub
+
+    @pytest.mark.owasp_a02
+    def test_ed25519_sign_mocked(self):
+        """Cover Ed25519 signing path (lines 109-111) with mocked nacl."""
+        import unittest.mock
+
+        mock_nacl = unittest.mock.MagicMock()
+        mock_signed = unittest.mock.MagicMock()
+        mock_signed.signature = b"\x00" * 64
+        mock_nacl.signing.SigningKey.return_value.sign.return_value = mock_signed
+
+        with unittest.mock.patch("crypto_utils._lazy_nacl", return_value=mock_nacl):
+            sig = sign_message(b"k" * 32, "payload", "nonce")
+            assert isinstance(sig, str)
+            assert len(sig) == 128  # 64 bytes = 128 hex
