@@ -1651,6 +1651,30 @@ _EDITOR_DEFAULT_DIRS: dict[str, Path | None] = {
     "opencode": Path.home() / ".config" / "opencode",
 }
 
+# Accepted aliases for the MCP server config key.  Editors and registries may
+# use different names (e.g. "webview", "open-webview") — we treat all of these
+# as equivalent so `doctor` and `init` work regardless of the key chosen.
+_SERVER_NAME_ALIASES: frozenset[str] = frozenset(
+    {
+        "openwebgoggles",
+        "open-webgoggles",
+        "open-web-goggles",
+        "openwebview",
+        "open-webview",
+        "open-web-view",
+        "webview",
+        "owg",
+    }
+)
+
+
+def _find_server_key(servers: dict[str, Any]) -> str | None:
+    """Return the first config key that matches a known server alias, or None."""
+    for key in servers:
+        if key.lower().replace("_", "-") in _SERVER_NAME_ALIASES:
+            return key
+    return None
+
 
 def _resolve_binary() -> str:
     """Find the absolute path to the openwebgoggles binary.
@@ -1695,8 +1719,9 @@ def _init_claude(root: Path) -> None:
     if mcp_path.exists():
         existing = json.loads(mcp_path.read_text())
         servers = existing.setdefault("mcpServers", {})
-        if "openwebgoggles" in servers:
-            print(f"  {mcp_path}: openwebgoggles already configured, skipping.")
+        existing_key = _find_server_key(servers)
+        if existing_key:
+            print(f"  {mcp_path}: {existing_key} already configured, skipping.")
         else:
             servers["openwebgoggles"] = mcp_config["mcpServers"]["openwebgoggles"]
             mcp_path.write_text(json.dumps(existing, indent=2) + "\n")
@@ -1800,8 +1825,9 @@ def _init_opencode(root: Path) -> None:
             raw = _strip_jsonc_comments(raw)
         existing = json.loads(raw)
         mcp_servers = existing.setdefault("mcp", {})
-        if "openwebgoggles" in mcp_servers:
-            print(f"  {config_path}: openwebgoggles already configured, skipping.")
+        existing_key = _find_server_key(mcp_servers)
+        if existing_key:
+            print(f"  {config_path}: {existing_key} already configured, skipping.")
         else:
             mcp_servers["openwebgoggles"] = server_entry
             # Write back as plain JSON (comments are lost, but the config is valid)
@@ -2051,10 +2077,11 @@ def _cmd_doctor() -> None:
         try:
             cfg = json.loads(mcp_json.read_text())
             servers = cfg.get("mcpServers", {})
-            if "openwebgoggles" in servers:
-                ok(".mcp.json: openwebgoggles configured")
+            server_key = _find_server_key(servers)
+            if server_key:
+                ok(f".mcp.json: {server_key} configured")
                 # Verify binary path matches
-                cmd = servers["openwebgoggles"].get("command", "")
+                cmd = servers[server_key].get("command", "")
                 if binary and cmd and Path(cmd).resolve() == Path(binary).resolve():
                     ok("Config binary path matches installed binary")
                 elif binary and cmd:
@@ -2072,8 +2099,9 @@ def _cmd_doctor() -> None:
             if cfg_path.exists():
                 try:
                     cfg = json.loads(cfg_path.read_text())
-                    if "openwebgoggles" in cfg.get("mcp", {}):
-                        ok(f"{cfg_path.name}: openwebgoggles configured")
+                    server_key = _find_server_key(cfg.get("mcp", {}))
+                    if server_key:
+                        ok(f"{cfg_path.name}: {server_key} configured")
                         found_config = True
                         break
                 except (json.JSONDecodeError, OSError):

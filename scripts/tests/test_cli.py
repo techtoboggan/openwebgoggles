@@ -20,10 +20,12 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mcp_server import (
+    _SERVER_NAME_ALIASES,
     _cmd_doctor,
     _cmd_restart,
     _cmd_status,
     _find_data_dir,
+    _find_server_key,
     _init_claude,
     _init_opencode,
     _init_usage,
@@ -554,6 +556,111 @@ class TestCmdDoctor:
 
         output = capsys.readouterr().out
         assert "opencode.json" in output
+        assert "configured" in output
+
+
+# ---------------------------------------------------------------------------
+# _find_server_key and alias support
+# ---------------------------------------------------------------------------
+
+
+class TestFindServerKey:
+    def test_exact_match(self):
+        assert _find_server_key({"openwebgoggles": {}}) == "openwebgoggles"
+
+    def test_alias_webview(self):
+        assert _find_server_key({"webview": {}}) == "webview"
+
+    def test_alias_open_webview(self):
+        assert _find_server_key({"open-webview": {}}) == "open-webview"
+
+    def test_alias_owg(self):
+        assert _find_server_key({"owg": {}}) == "owg"
+
+    def test_case_insensitive(self):
+        assert _find_server_key({"OpenWebGoggles": {}}) == "OpenWebGoggles"
+
+    def test_underscore_normalized(self):
+        assert _find_server_key({"open_webview": {}}) == "open_webview"
+
+    def test_no_match(self):
+        assert _find_server_key({"other_server": {}}) is None
+
+    def test_empty_dict(self):
+        assert _find_server_key({}) is None
+
+    def test_aliases_frozen(self):
+        """Alias set is immutable."""
+        assert isinstance(_SERVER_NAME_ALIASES, frozenset)
+        assert "openwebgoggles" in _SERVER_NAME_ALIASES
+        assert "webview" in _SERVER_NAME_ALIASES
+
+
+class TestInitClaudeAliases:
+    def test_skips_when_alias_configured(self, tmp_path, capsys):
+        """init claude should skip if a known alias is already in .mcp.json."""
+        mcp_json = tmp_path / ".mcp.json"
+        mcp_json.write_text(json.dumps({"mcpServers": {"webview": {"command": "owg"}}}) + "\n")
+
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_claude(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "webview" in output
+        assert "skipping" in output.lower()
+
+        # Should NOT have added a duplicate "openwebgoggles" key
+        cfg = json.loads(mcp_json.read_text())
+        assert "webview" in cfg["mcpServers"]
+        assert "openwebgoggles" not in cfg["mcpServers"]
+
+
+class TestInitOpencodeAliases:
+    def test_skips_when_alias_configured(self, tmp_path, capsys):
+        """init opencode should skip if a known alias is already in opencode.json."""
+        cfg_path = tmp_path / "opencode.json"
+        cfg_path.write_text(json.dumps({"mcp": {"open-webview": {"command": ["owg"]}}}) + "\n")
+
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_opencode(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "open-webview" in output
+        assert "skipping" in output.lower()
+
+        # Should NOT have added a duplicate "openwebgoggles" key
+        cfg = json.loads(cfg_path.read_text())
+        assert "open-webview" in cfg["mcp"]
+        assert "openwebgoggles" not in cfg["mcp"]
+
+
+class TestDoctorAliases:
+    def test_recognizes_webview_alias_in_mcp_json(self, tmp_path, capsys):
+        """Doctor should recognize 'webview' as valid config key."""
+        mcp_json = tmp_path / ".mcp.json"
+        binary = "/usr/bin/openwebgoggles"
+        mcp_json.write_text(json.dumps({"mcpServers": {"webview": {"command": binary}}}))
+
+        with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
+            with mock.patch("shutil.which", return_value=binary):
+                _cmd_doctor()
+
+        output = capsys.readouterr().out
+        assert "webview" in output
+        assert "configured" in output
+        assert "[ok]" in output
+
+    def test_recognizes_owg_alias_in_opencode(self, tmp_path, capsys):
+        """Doctor should recognize 'owg' as valid key in opencode.json."""
+        oc_json = tmp_path / "opencode.json"
+        oc_json.write_text(json.dumps({"mcp": {"owg": {"command": ["owg"]}}}))
+
+        with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
+            with mock.patch("shutil.which", return_value=None):
+                _cmd_doctor()
+
+        output = capsys.readouterr().out
+        assert "owg" in output
         assert "configured" in output
 
 
