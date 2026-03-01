@@ -1,7 +1,7 @@
 """
 Tests for auto-reload, signal handling, version monitoring, and MCP PID management.
 
-Covers _get_installed_version_info, _read_version_fresh, _exec_reload,
+Covers _get_installed_version_info, _read_version_fresh, _mark_stale,
 _sigusr1_handler, _write_mcp_pid, _cleanup_mcp_pid, _signal_reload_monitor,
 _version_monitor, _track_tool_call, and lifespan.
 """
@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import mcp_server
 from mcp_server import (
     _cleanup_mcp_pid,
-    _exec_reload,
     _get_installed_version_info,
+    _mark_stale,
     _read_version_fresh,
     _sigusr1_handler,
     _track_tool_call,
@@ -89,21 +89,20 @@ class TestReadVersionFresh:
 
 
 # ---------------------------------------------------------------------------
-# _exec_reload
+# _mark_stale
 # ---------------------------------------------------------------------------
 
 
-class TestExecReload:
-    def test_calls_execv(self):
-        with mock.patch("os.execv") as mock_execv:
-            with mock.patch("sys.stdout") as mock_stdout:
-                with mock.patch("sys.stderr") as mock_stderr:
-                    mock_stdout.flush = mock.MagicMock()
-                    mock_stderr.flush = mock.MagicMock()
-                    _exec_reload()
-                    mock_execv.assert_called_once()
-                    args = mock_execv.call_args
-                    assert args[0][0] == sys.executable
+class TestMarkStale:
+    def test_sets_stale_message(self):
+        old_msg = mcp_server._stale_version_msg
+        try:
+            _mark_stale("1.0.0", "2.0.0")
+            assert mcp_server._stale_version_msg is not None
+            assert "1.0.0" in mcp_server._stale_version_msg
+            assert "2.0.0" in mcp_server._stale_version_msg
+        finally:
+            mcp_server._stale_version_msg = old_msg
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +202,7 @@ class TestTrackToolCall:
 
         result = await dummy()
         assert "error" in result
-        assert "reloading" in result["error"]
+        assert "restart" in result["error"]
 
         mcp_server._reload_pending = False
 
@@ -215,13 +214,13 @@ class TestTrackToolCall:
 
 class TestSignalReloadMonitor:
     async def test_detects_signal_flag(self):
-        """Monitor should detect the flag and call _exec_reload."""
+        """Monitor should detect the flag and call _mark_stale."""
         mcp_server._signal_reload_requested = True
         mcp_server._reload_pending = False
         mcp_server._active_tool_calls = 0
         mcp_server._session = None
 
-        with mock.patch("mcp_server._exec_reload") as mock_reload:
+        with mock.patch("mcp_server._mark_stale") as mock_stale:
             task = asyncio.create_task(mcp_server._signal_reload_monitor())
             await asyncio.sleep(1.5)  # Let the monitor run a cycle
             task.cancel()
@@ -230,8 +229,7 @@ class TestSignalReloadMonitor:
             except asyncio.CancelledError:
                 pass
 
-            # It may have been called 1+ times depending on timing
-            assert mock_reload.called
+            assert mock_stale.called
 
         mcp_server._signal_reload_requested = False
         mcp_server._reload_pending = False

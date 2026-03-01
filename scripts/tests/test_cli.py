@@ -484,7 +484,8 @@ class TestCmdDoctor:
     def test_no_config_warns(self, tmp_path, capsys):
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
             with mock.patch("shutil.which", return_value=None):
-                _cmd_doctor()
+                with mock.patch("pathlib.Path.home", return_value=tmp_path):
+                    _cmd_doctor()
 
         output = capsys.readouterr().out
         assert "No editor config found" in output

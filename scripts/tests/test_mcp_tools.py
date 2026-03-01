@@ -355,7 +355,7 @@ class TestWebviewCloseTool:
         try:
             result = await webview_close()
             assert "error" in result
-            assert "close failed" in result["error"]
+            assert "Failed to close session" in result["error"]
         finally:
             mcp_server._session = old
 
@@ -390,7 +390,7 @@ class TestVersionMonitorLoop:
         with mock.patch("mcp_server._RELOAD_CHECK_INTERVAL", 0.2):
             with mock.patch("mcp_server._get_installed_version_info", return_value=("1.0.0", mock_dist_path)):
                 with mock.patch("mcp_server._read_version_fresh", return_value="2.0.0"):
-                    with mock.patch("mcp_server._exec_reload") as mock_reload:
+                    with mock.patch("mcp_server._mark_stale") as mock_stale:
                         old_pending = mcp_server._reload_pending
                         old_active = mcp_server._active_tool_calls
                         old_session = mcp_server._session
@@ -406,7 +406,7 @@ class TestVersionMonitorLoop:
                             except asyncio.CancelledError:
                                 pass
 
-                            assert mock_reload.called
+                            assert mock_stale.called
                         finally:
                             mcp_server._reload_pending = old_pending
                             mcp_server._active_tool_calls = old_active
@@ -453,7 +453,7 @@ class TestVersionMonitorLoop:
                 ],
             ):
                 with mock.patch("mcp_server._read_version_fresh", return_value="1.0.0"):
-                    with mock.patch("mcp_server._exec_reload") as mock_reload:
+                    with mock.patch("mcp_server._mark_stale") as mock_stale:
                         task = asyncio.create_task(mcp_server._version_monitor())
                         await asyncio.sleep(1.0)
                         task.cancel()
@@ -462,7 +462,7 @@ class TestVersionMonitorLoop:
                         except asyncio.CancelledError:
                             pass
 
-                        mock_reload.assert_not_called()
+                        mock_stale.assert_not_called()
 
     async def test_unknown_version_during_upgrade(self):
         """When version becomes 'unknown' during upgrade, should retry."""
@@ -473,7 +473,7 @@ class TestVersionMonitorLoop:
         with mock.patch("mcp_server._RELOAD_CHECK_INTERVAL", 0.2):
             with mock.patch("mcp_server._get_installed_version_info", return_value=("1.0.0", mock_dist_path)):
                 with mock.patch("mcp_server._read_version_fresh", return_value="unknown"):
-                    with mock.patch("mcp_server._exec_reload") as mock_reload:
+                    with mock.patch("mcp_server._mark_stale") as mock_stale:
                         task = asyncio.create_task(mcp_server._version_monitor())
                         await asyncio.sleep(1.0)
                         task.cancel()
@@ -482,10 +482,10 @@ class TestVersionMonitorLoop:
                         except asyncio.CancelledError:
                             pass
 
-                        mock_reload.assert_not_called()
+                        mock_stale.assert_not_called()
 
-    async def test_drains_active_tool_calls(self):
-        """Version monitor waits for active tool calls to drain."""
+    async def test_marks_stale_even_with_active_tool_calls(self):
+        """Version monitor marks stale immediately regardless of active tool calls."""
         mock_dist_path = mock.MagicMock()
         mock_dist_path.is_dir.return_value = True
         mock_dist_path.stat.side_effect = [
@@ -504,11 +504,8 @@ class TestVersionMonitorLoop:
             with mock.patch("mcp_server._RELOAD_CHECK_INTERVAL", 0.2):
                 with mock.patch("mcp_server._get_installed_version_info", return_value=("1.0.0", mock_dist_path)):
                     with mock.patch("mcp_server._read_version_fresh", return_value="2.0.0"):
-                        with mock.patch("mcp_server._exec_reload") as mock_reload:
+                        with mock.patch("mcp_server._mark_stale") as mock_stale:
                             task = asyncio.create_task(mcp_server._version_monitor())
-                            await asyncio.sleep(1.0)
-                            # Set active to 0 so it can proceed
-                            mcp_server._active_tool_calls = 0
                             await asyncio.sleep(1.5)
                             task.cancel()
                             try:
@@ -516,7 +513,9 @@ class TestVersionMonitorLoop:
                             except asyncio.CancelledError:
                                 pass
 
-                            assert mock_reload.called
+                            # _mark_stale is called immediately without draining
+                            assert mock_stale.called
+                            assert mcp_server._reload_pending
         finally:
             mcp_server._active_tool_calls = old_active
             mcp_server._reload_pending = old_pending
@@ -543,7 +542,7 @@ class TestVersionMonitorLoop:
             with mock.patch("mcp_server._RELOAD_CHECK_INTERVAL", 0.2):
                 with mock.patch("mcp_server._get_installed_version_info", return_value=("1.0.0", mock_dist_path)):
                     with mock.patch("mcp_server._read_version_fresh", return_value="2.0.0"):
-                        with mock.patch("mcp_server._exec_reload"):
+                        with mock.patch("mcp_server._mark_stale"):
                             task = asyncio.create_task(mcp_server._version_monitor())
                             await asyncio.sleep(1.0)
                             task.cancel()
@@ -603,7 +602,7 @@ class TestSignalReloadMonitorDrain:
         mcp_server._session = None
 
         try:
-            with mock.patch("mcp_server._exec_reload") as mock_reload:
+            with mock.patch("mcp_server._mark_stale") as mock_stale:
                 task = asyncio.create_task(mcp_server._signal_reload_monitor())
                 await asyncio.sleep(1.5)
                 task.cancel()
@@ -612,15 +611,15 @@ class TestSignalReloadMonitorDrain:
                 except asyncio.CancelledError:
                     pass
 
-                assert mock_reload.called
+                assert mock_stale.called
         finally:
             mcp_server._signal_reload_requested = old_flag
             mcp_server._reload_pending = old_pending
             mcp_server._active_tool_calls = old_active
             mcp_server._session = old_session
 
-    async def test_closes_session_before_exec(self):
-        """Signal monitor closes session before exec_reload."""
+    async def test_closes_session_before_mark_stale(self):
+        """Signal monitor closes session before marking stale."""
         mock_session = _make_mock_session()
         old_flag = mcp_server._signal_reload_requested
         old_pending = mcp_server._reload_pending
@@ -633,7 +632,7 @@ class TestSignalReloadMonitorDrain:
         mcp_server._session = mock_session
 
         try:
-            with mock.patch("mcp_server._exec_reload"):
+            with mock.patch("mcp_server._mark_stale"):
                 task = asyncio.create_task(mcp_server._signal_reload_monitor())
                 await asyncio.sleep(1.5)
                 task.cancel()
