@@ -88,7 +88,7 @@ assets/
   sdk/            Client-side JavaScript SDK
   apps/dynamic/   Built-in dynamic UI renderer
   template/       App scaffold template
-examples/         Demo apps (approval-review, security-qa)
+examples/         Demo apps (approval-review, item-triage)
 references/       Data contract, SDK API, integration guide docs
 ```
 

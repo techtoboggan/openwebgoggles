@@ -504,7 +504,7 @@
         this._emit("close", msg.data || {});
         // Auto-close the window after a short delay so the app can show a farewell state
         var delay = (msg.data && msg.data.delay_ms) ? msg.data.delay_ms : 1500;
-        delay = Math.max(0, Math.min(delay, 10000));
+        delay = Math.max(500, Math.min(delay, 10000));
         setTimeout(function () { window.close(); }, delay);
         break;
       case "heartbeat_ack":

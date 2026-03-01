@@ -6,7 +6,7 @@
   // ─── HTML escaping ──────────────────────────────────────────────────────────
   OWG.esc = function (s) {
     return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   };
 
   OWG.escAttr = function (s) {
@@ -125,10 +125,10 @@
   };
 
   // ─── Defense-in-depth HTML sanitizer ────────────────────────────────────────
-  var DANGEROUS_TAGS = /^(script|style|iframe|object|embed|form|meta|link|base|svg|math|template|noscript|xmp)$/i;
+  var DANGEROUS_TAGS = /^(script|style|iframe|object|embed|form|meta|link|base|svg|math|template|noscript|xmp|input|button|select|textarea)$/i;
   var EVENT_ATTR_RE = /^on/i;
   var DANGEROUS_URL_RE = /^\s*(javascript|data\s*:|vbscript)\s*:/i;
-  var SAFE_URL_PROTOCOL_RE = /^(https?:|mailto:|#|\/)/i;
+  var SAFE_URL_PROTOCOL_RE = /^(https?:|mailto:|#|\/[^\/])/i;
 
   function sanitizeHTML(html) {
     try {
@@ -153,6 +153,8 @@
         for (var j = 0; j < attrs.length; j++) {
           var name = attrs[j].name.toLowerCase();
           if (EVENT_ATTR_RE.test(name)) {
+            child.removeAttribute(attrs[j].name);
+          } else if (name === "id" || name === "name") {
             child.removeAttribute(attrs[j].name);
           } else if (name === "href" || name === "src" || name === "action" || name === "formaction" || name === "xlink:href") {
             var val = attrs[j].value;
@@ -202,5 +204,9 @@
     while (openCount-- > 0) result += "</span>";
     return result;
   };
+
+  // Install DOMPurify hook eagerly at module load time (not lazily on first render)
+  // to ensure all markdown renders get target="_blank" and rel="noopener noreferrer"
+  _ensurePurifyHook();
 
 })(window.OWG = window.OWG || {});

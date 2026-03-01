@@ -156,12 +156,14 @@
       if (item.actions && item.actions.length) {
         html += '<div class="item-actions">';
         item.actions.forEach(function (a) {
-          var actionWithContext = Object.assign({}, a, {
-            _item_id: item.id || String(ii),
-            _item_index: ii,
-            _section_index: si,
-            _section_id: sec.id || ""
-          });
+          var actionWithContext = Object.create(null);
+          for (var _k in a) {
+            if (!/^(__proto__|constructor|prototype)$/.test(_k)) actionWithContext[_k] = a[_k];
+          }
+          actionWithContext._item_id = item.id || String(ii);
+          actionWithContext._item_index = ii;
+          actionWithContext._section_index = si;
+          actionWithContext._section_id = sec.id || "";
           html += OWG.renderActionButton(actionWithContext, "item-" + si + "-" + ii);
         });
         html += "</div>";
@@ -207,9 +209,9 @@
     // Item context for per-item actions
     if (a._item_id !== undefined) {
       dataAttrs += ' data-item="' + escAttr(a._item_id) + '"';
-      dataAttrs += ' data-item-index="' + a._item_index + '"';
+      dataAttrs += ' data-item-index="' + escAttr(String(a._item_index)) + '"';
       if (a._section_id) dataAttrs += ' data-section-id="' + escAttr(a._section_id) + '"';
-      dataAttrs += ' data-section-index="' + a._section_index + '"';
+      dataAttrs += ' data-section-index="' + escAttr(String(a._section_index)) + '"';
     }
 
     return '<button class="' + btnClass + '"' + dataAttrs +
@@ -383,22 +385,31 @@
     }
   };
 
+  // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
+  function _esc(value) {
+    return (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
+  }
+
   // ─── Tab/table event binding (called from app.js bindEvents) ────────────────
   OWG.bindSectionEvents = function (root) {
-    // Tab switching
+    // Tab switching — use dataset comparison to avoid selector injection
     root.querySelectorAll("[data-tab-target]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var target = btn.getAttribute("data-tab-target");
         var parent = btn.getAttribute("data-tabs-parent");
         activeTabs["tabs-" + parent] = target;
 
-        // Update active button
-        root.querySelectorAll('[data-tabs-parent="' + parent + '"].tabs-btn').forEach(function (b) {
-          b.classList.toggle("tabs-active", b.getAttribute("data-tab-target") === target);
+        // Update active button (iterate + compare, not string-concat selector)
+        root.querySelectorAll("[data-tabs-parent].tabs-btn").forEach(function (b) {
+          if (b.getAttribute("data-tabs-parent") === parent) {
+            b.classList.toggle("tabs-active", b.getAttribute("data-tab-target") === target);
+          }
         });
         // Show/hide panels
-        root.querySelectorAll('.tabs-panel[data-tabs-parent="' + parent + '"]').forEach(function (p) {
-          p.style.display = p.getAttribute("data-tab-id") === target ? "" : "none";
+        root.querySelectorAll(".tabs-panel[data-tabs-parent]").forEach(function (p) {
+          if (p.getAttribute("data-tabs-parent") === parent) {
+            p.style.display = p.getAttribute("data-tab-id") === target ? "" : "none";
+          }
         });
       });
     });
@@ -407,9 +418,10 @@
     root.querySelectorAll("[data-table-select-all]").forEach(function (chk) {
       chk.addEventListener("change", function () {
         var ti = chk.getAttribute("data-table-select-all");
-        var rows = root.querySelectorAll('[data-table-row="' + ti + '"]');
+        var rows = root.querySelectorAll("[data-table-row]");
         var selected = [];
         rows.forEach(function (r, i) {
+          if (r.getAttribute("data-table-row") !== ti) return;
           r.checked = chk.checked;
           if (chk.checked) selected.push(i);
         });
@@ -422,7 +434,8 @@
       chk.addEventListener("change", function () {
         var ti = chk.getAttribute("data-table-row");
         var selected = [];
-        root.querySelectorAll('[data-table-row="' + ti + '"]').forEach(function (r, i) {
+        root.querySelectorAll("[data-table-row]").forEach(function (r, i) {
+          if (r.getAttribute("data-table-row") !== ti) return;
           if (r.checked) selected.push(i);
         });
         OWG.formValues["_table_" + ti + "_selected"] = selected;
@@ -434,7 +447,7 @@
       th.addEventListener("click", function () {
         var key = th.getAttribute("data-sort-key");
         var ti = th.getAttribute("data-table-index");
-        var table = root.querySelector('.owg-table[data-table-index="' + ti + '"]');
+        var table = root.querySelector('.owg-table[data-table-index="' + _esc(ti) + '"]');
         if (!table) return;
 
         var tbody = table.querySelector("tbody");

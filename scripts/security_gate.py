@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any
 
 
@@ -370,6 +371,11 @@ class SecurityGate:
             if len(context_json) > 10_000:
                 return False, f"Action context too large: {len(context_json)} bytes (max 10000)"
 
+        # XSS scan action values (defense-in-depth: actions are broadcast to other WS clients)
+        xss = self._scan_xss(action, "action")
+        if xss:
+            return False, f"XSS detected in action: {xss[0]}"
+
         return True, ""
 
     # --- CSS validation ---
@@ -433,8 +439,11 @@ class SecurityGate:
                 snippet = repr(obj[:80]) + ("..." if len(obj) > 80 else "")
                 warnings.append(f"{path}: contains zero-width characters (potential filter bypass) in {snippet}")
                 return warnings
-            # Strip zero-width chars before pattern matching (defense-in-depth)
-            clean = self.ZERO_WIDTH_CHARS.sub("", obj)
+            # Normalize unicode (NFC) and strip zero-width chars before pattern matching.
+            # NFC normalization prevents bypass via decomposed characters (e.g. combining
+            # accents that visually look like ASCII but bypass regex matching).
+            clean = unicodedata.normalize("NFC", obj)
+            clean = self.ZERO_WIDTH_CHARS.sub("", clean)
             for pattern in self.XSS_PATTERNS:
                 if pattern.search(clean):
                     # Truncate the match for the warning message

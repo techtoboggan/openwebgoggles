@@ -49,44 +49,160 @@ This pattern works as a pre-commit checkpoint, a PR summary review, or any time 
 
 ## More Examples
 
-Here's another example — a security audit where the agent has 12 findings to triage. Without OpenWebGoggles, it dumps them into the terminal and asks you to type `approve` or `reject` twelve times. With OpenWebGoggles, it opens a tabbed wizard in your browser — one finding per screen, editable severity dropdowns, analyst notes, a progress bar — and reads back your structured decisions when you're done.
+### Dependency Update Review
 
-The agent doesn't need to know HTML. It writes a JSON object describing what it wants to show, and the built-in dynamic renderer handles the rest:
+Your agent ran `npm outdated` and found 8 packages to update. Instead of listing them in the terminal, it opens a table with selection checkboxes and a form for configuration:
 
 ```json
 {
-  "title": "Security Finding 1 of 12",
-  "status": "waiting_input",
+  "title": "Dependency Updates",
+  "status": "pending_review",
   "data": {
     "sections": [
-      { "type": "text", "content": "**SQL Injection** in `/api/users` endpoint" },
+      { "type": "table", "title": "Available Updates",
+        "columns": [
+          { "key": "name", "label": "Package" },
+          { "key": "current", "label": "Current" },
+          { "key": "latest", "label": "Latest" },
+          { "key": "type", "label": "Type" }
+        ],
+        "rows": [
+          { "name": "react", "current": "18.2.0", "latest": "19.1.0", "type": "major" },
+          { "name": "typescript", "current": "5.3.2", "latest": "5.7.3", "type": "minor" },
+          { "name": "eslint", "current": "8.55.0", "latest": "9.18.0", "type": "major" }
+        ]
+      },
       { "type": "form", "fields": [
-        { "key": "severity", "label": "Severity", "type": "select",
-          "options": ["critical", "high", "medium", "low"], "value": "high" },
-        { "key": "notes", "label": "Analyst Notes", "type": "textarea" }
+        { "key": "strategy", "label": "Update Strategy", "type": "select",
+          "options": ["All updates", "Minor + patch only", "Patch only", "Let me choose"] },
+        { "key": "run_tests", "label": "Run tests after update", "type": "checkbox", "value": true }
       ]}
     ]
   },
   "actions_requested": [
-    { "id": "confirm", "type": "approve", "label": "Confirmed" },
-    { "id": "fp", "type": "reject", "label": "False Positive" }
+    { "id": "proceed", "type": "approve", "label": "Update Selected" },
+    { "id": "skip", "type": "reject", "label": "Skip All" }
   ]
 }
 ```
 
-The agent gets back:
+The agent gets back structured data — which strategy, whether to run tests, which button was clicked — and acts on it:
 
 ```json
 {
   "actions": [{
-    "action_id": "confirm",
+    "action_id": "proceed",
     "type": "approve",
-    "value": { "severity": "critical", "notes": "Escalated — no parameterized queries anywhere in this module." }
+    "value": { "strategy": "Minor + patch only", "run_tests": true }
   }]
 }
 ```
 
-Structured data in, structured data out. The browser is just the rendering layer in between.
+### Live Build Dashboard
+
+While your agent runs a multi-step build, it streams progress to the browser in real time using `webview_update(merge=True)`:
+
+```json
+{
+  "title": "Build Pipeline",
+  "status": "processing",
+  "data": {
+    "sections": [
+      { "type": "progress", "title": "Pipeline Status", "percentage": 60,
+        "tasks": [
+          { "label": "Install dependencies", "status": "completed" },
+          { "label": "Run linter", "status": "completed" },
+          { "label": "Run tests", "status": "in_progress" },
+          { "label": "Build artifacts", "status": "pending" },
+          { "label": "Deploy to staging", "status": "pending" }
+        ]},
+      { "type": "log", "title": "Test Output",
+        "lines": [
+          "\u001b[32m✓\u001b[0m auth.test.js (12 tests, 0.8s)",
+          "\u001b[32m✓\u001b[0m api.test.js (24 tests, 1.2s)",
+          "\u001b[33m⚠\u001b[0m db.test.js — running..."
+        ]}
+    ]
+  }
+}
+```
+
+No action buttons needed yet — the agent keeps pushing updates until the build finishes, then swaps in an approval step.
+
+### Configuration Wizard
+
+The agent needs you to configure a deployment. It uses tabs, conditional fields, and validation:
+
+```json
+{
+  "title": "Deploy Configuration",
+  "status": "waiting_input",
+  "data": {
+    "sections": [
+      { "type": "tabs", "tabs": [
+        { "id": "general", "label": "General", "sections": [
+          { "type": "form", "fields": [
+            { "key": "env", "label": "Environment", "type": "select",
+              "options": ["staging", "production"], "value": "staging" },
+            { "key": "branch", "label": "Branch", "type": "text", "value": "main",
+              "required": true, "pattern": "^[a-zA-Z0-9/_-]+$",
+              "errorMessage": "Invalid branch name" }
+          ]}
+        ]},
+        { "id": "advanced", "label": "Advanced", "sections": [
+          { "type": "form", "fields": [
+            { "key": "replicas", "label": "Replicas", "type": "number", "value": 2 },
+            { "key": "notify", "label": "Send notifications", "type": "checkbox", "value": true },
+            { "key": "channel", "label": "Notify Channel", "type": "text",
+              "placeholder": "#deployments" }
+          ]}
+        ]}
+      ]}
+    ]
+  },
+  "behaviors": [
+    { "when": { "field": "notify", "checked": true }, "show": ["channel"] },
+    { "when": { "field": "env", "equals": "production" }, "enable": ["replicas"] }
+  ],
+  "actions_requested": [
+    { "id": "deploy", "type": "approve", "label": "Deploy" },
+    { "id": "cancel", "type": "reject", "label": "Cancel" }
+  ]
+}
+```
+
+### Sidebar Layout
+
+For navigation-heavy interfaces, use a multi-panel layout with a sidebar:
+
+```json
+{
+  "title": "Migration Plan",
+  "layout": { "type": "sidebar", "sidebarWidth": "260px" },
+  "panels": {
+    "sidebar": { "sections": [
+      { "type": "items", "title": "Steps", "items": [
+        { "title": "1. Backup database", "subtitle": "~5 min" },
+        { "title": "2. Run migrations", "subtitle": "~2 min" },
+        { "title": "3. Verify data", "subtitle": "~1 min" },
+        { "title": "4. Switch traffic", "subtitle": "~30 sec" }
+      ]}
+    ]},
+    "main": { "sections": [
+      { "type": "diff", "title": "Migration: add_users_table",
+        "content": "--- a/db/schema.sql\n+++ b/db/schema.sql\n@@ -12,0 +13,6 @@\n+CREATE TABLE users (\n+  id SERIAL PRIMARY KEY,\n+  email TEXT NOT NULL UNIQUE,\n+  created_at TIMESTAMPTZ DEFAULT NOW()\n+);" },
+      { "type": "form", "fields": [
+        { "key": "confirm", "label": "I've reviewed the migration", "type": "checkbox" }
+      ]}
+    ]}
+  },
+  "actions_requested": [
+    { "id": "run", "type": "approve", "label": "Run Migration" }
+  ]
+}
+```
+
+The agent doesn't need to know HTML. It writes a JSON object describing what it wants to show, and the built-in dynamic renderer handles the rest. Structured data in, structured data out — the browser is just the rendering layer in between.
 
 ## Quick Start
 
@@ -145,9 +261,9 @@ Tell your agent:
 
 > *"Show me a review UI for these changes and wait for my approval."*
 
-> *"Create a dashboard showing the build progress."*
+> *"Create a dashboard showing the build progress with live updates."*
 
-> *"Walk me through these security findings one at a time with severity dropdowns."*
+> *"Walk me through these dependency updates one at a time so I can decide which to apply."*
 
 The agent figures out the JSON schema, calls `webview`, and a panel opens in your browser. You make your decisions, click approve, and the agent continues with your structured response.
 
@@ -354,7 +470,7 @@ await wv.sendAction("custom-id", "custom", { any: "data" });
 Two working examples are included in `examples/`:
 
 - **approval-review** — Code review UI with unified diffs, per-file toggles, approve/reject with comments
-- **security-qa** — Step-by-step security findings triage with editable fields, severity dropdowns, and a progress bar
+- **item-triage** — Step-by-step item review with editable fields, priority dropdowns, and a progress bar. Works for dependency updates, config reviews, PR triage — any list of items needing individual decisions
 
 These aren't toy demos. They're functional interfaces that handle real workflows. Start by reading their source if you're building something custom.
 
@@ -386,7 +502,7 @@ Nine defense layers enforce this, all enabled by default:
 - **SecurityGate** — 22 XSS patterns, zero-width character detection, schema validation
 - **Rate limiting** — 30 actions per minute per session
 
-All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 988 tests (96% code coverage).
+All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 1025+ tests.
 
 The tradeoff is real, though. This level of defense adds complexity to the codebase. If you're running in a fully trusted local environment and want to understand what each layer does, the [security tests](scripts/tests/) are the best documentation.
 

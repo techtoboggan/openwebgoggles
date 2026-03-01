@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Benchmark 04: Security Findings QA (security-qa custom app)
+# Benchmark 04: Item Triage (item-triage custom app)
 #
-# USE CASE: A security scanning agent runs SAST/DAST tools and produces a set
-#           of findings. A security engineer reviews each finding in the custom
-#           tabbed UI, annotates severity, adds notes, and marks reviewed or
-#           false-positive. The agent receives the full annotated report.
+# USE CASE: An agent produces a list of items that need individual review —
+#           dependency updates, config changes, migration steps, etc. A human
+#           reviews each item in a tabbed UI, adjusts priority, adds notes,
+#           and marks reviewed or skipped. The agent receives the full report.
 #
 # TESTS:
-#   - custom app (security-qa), complex nested data shape
-#   - multi-finding tabbed UI with per-finding edit state
+#   - custom app (item-triage), complex nested data shape
+#   - multi-item tabbed UI with per-item edit state
 #   - bulk submit action carrying annotated array value
-#   - submit_report action type
-#   - all severity levels represented (Critical, High, Medium, Low, Info)
+#   - submit_decisions action type
+#   - all priority levels represented (High, Medium, Low, None)
 #   - --simulate mode
 #
 # RUN:
@@ -91,11 +91,11 @@ wait_for_response() {
 # Main
 # ---------------------------------------------------------------------------
 
-step "Starting security-qa webview"
-bash "$SCRIPTS/start_webview.sh" --app security-qa ${SIMULATE:+--no-browser}
+step "Starting item-triage webview"
+bash "$SCRIPTS/start_webview.sh" --app item-triage ${SIMULATE:+--no-browser}
 log "Server started."
 
-step "Writing findings state (5 findings across severity levels)"
+step "Writing items state (5 items across priority levels)"
 
 python3 - <<'PYEOF' | bash "$SCRIPTS/write_state.sh"
 import json, datetime
@@ -104,68 +104,63 @@ state = {
     'version': 1,
     'status': 'pending_review',
     'updated_at': now,
-    'title': 'Security Assessment \u2014 acme/api-service',
-    'message': 'SAST and DAST scan complete. 5 findings require analyst review. Mark each as reviewed or false positive, add notes, then submit the final report.',
+    'title': 'Dependency Update Review \u2014 acme/api-service',
+    'message': '5 dependency updates available. Review each item, adjust priority, add notes, then submit your decisions.',
     'data': {
-        'findings': [
+        'items': [
             {
-                'id': 'FIND-001',
-                'title': 'SQL Injection in login endpoint',
-                'severity': 'Critical',
-                'cvss_score': 9.8,
-                'cwe_id': 'CWE-89',
-                'affected_host': 'api.acme.com',
-                'description': 'The login endpoint at POST /api/auth/login accepts a raw username parameter that is concatenated directly into a SQL query without parameterisation. An attacker can bypass authentication or extract arbitrary data.',
-                'evidence': 'POST /api/auth/login\n{"username":"admin\'--","password":"x"}\nResponse: HTTP/1.1 200 OK {"token": "eyJ..."}',
-                'recommendation': 'Use parameterised queries or an ORM. Never interpolate user input into SQL strings.',
+                'id': 'DEP-001',
+                'title': 'Upgrade React from 18.2.0 to 19.1.0',
+                'category': 'Frontend',
+                'priority': 'High',
+                'description': 'Major version upgrade with breaking changes. New concurrent features, updated hooks API, and removal of legacy context. Requires updating component lifecycle patterns across the app.',
+                'details': 'Breaking changes:\n- React.createClass removed\n- String refs removed\n- Legacy context API removed\n- ReactDOM.render deprecated\n\nnpm audit: 0 vulnerabilities',
+                'impact': 'High — breaks existing component patterns, needs migration guide',
+                'recommendation': 'Schedule for next sprint. Create migration branch, update incrementally.',
                 'notes': ''
             },
             {
-                'id': 'FIND-002',
-                'title': 'Missing HTTP Strict Transport Security (HSTS) header',
-                'severity': 'Medium',
-                'cvss_score': 5.3,
-                'cwe_id': 'CWE-319',
-                'affected_host': 'api.acme.com',
-                'description': 'The API does not include the Strict-Transport-Security response header. Without HSTS, browsers may accept HTTP responses and are susceptible to SSL stripping attacks on the first connection.',
-                'evidence': 'HTTP/1.1 200 OK\nContent-Type: application/json\n[HSTS header absent]',
-                'recommendation': 'Add Strict-Transport-Security: max-age=31536000; includeSubDomains; preload to all HTTPS responses.',
+                'id': 'DEP-002',
+                'title': 'Update TypeScript from 5.3.2 to 5.7.3',
+                'category': 'Tooling',
+                'priority': 'Medium',
+                'description': 'Minor version update with new type-checking features and performance improvements. No breaking changes expected.',
+                'details': 'Changelog highlights:\n- Improved type narrowing\n- New satisfies operator enhancements\n- 15% faster incremental builds\n- New --noCheck flag for emit-only mode',
+                'impact': 'Low — backward compatible, may catch new type errors',
+                'recommendation': 'Safe to update immediately. Run type-check after upgrade.',
                 'notes': ''
             },
             {
-                'id': 'FIND-003',
-                'title': 'Exposed debug endpoint /admin/debug',
-                'severity': 'High',
-                'cvss_score': 7.5,
-                'cwe_id': 'CWE-200',
-                'affected_host': 'api.acme.com',
-                'description': 'A debug endpoint at GET /admin/debug is accessible without authentication and returns internal system information including environment variables, database connection strings, and active request context.',
-                'evidence': 'GET /admin/debug HTTP/1.1\nResponse: {"env": {"DATABASE_URL": "postgres://admin:s3cr3t@db:5432/prod", ...}}',
-                'recommendation': 'Remove or disable the debug endpoint entirely in all non-development environments.',
+                'id': 'DEP-003',
+                'title': 'Upgrade ESLint from 8.55.0 to 9.18.0',
+                'category': 'Tooling',
+                'priority': 'Medium',
+                'description': 'Major version upgrade. ESLint 9 uses flat config by default and deprecates .eslintrc format. Requires config migration.',
+                'details': 'Migration needed:\n- Convert .eslintrc.json to eslint.config.js\n- Update plugin imports to flat config format\n- Remove deprecated rules\n- Update CI scripts',
+                'impact': 'Medium — config migration needed, but no code changes',
+                'recommendation': 'Use eslint-config-migrate tool. Test in CI before merging.',
                 'notes': ''
             },
             {
-                'id': 'FIND-004',
-                'title': 'Outdated jQuery 2.x (CVE-2020-11023)',
-                'severity': 'Low',
-                'cvss_score': 3.7,
-                'cwe_id': 'CWE-79',
-                'affected_host': 'app.acme.com',
-                'description': 'The web application loads jQuery 2.2.4 which is affected by CVE-2020-11023 — an XSS vulnerability in jQuery.htmlPrefilter() that can be triggered when passing HTML from untrusted sources.',
-                'evidence': '<script src="/static/js/jquery-2.2.4.min.js"></script>\nNVD: CVE-2020-11023',
-                'recommendation': 'Upgrade to jQuery 3.7.1 or later.',
+                'id': 'DEP-004',
+                'title': 'Patch axios from 1.6.2 to 1.6.8',
+                'category': 'Runtime',
+                'priority': 'Low',
+                'description': 'Patch release fixing minor bugs in request interceptors and improving timeout handling.',
+                'details': 'Fixes:\n- Fixed race condition in request interceptors\n- Improved AbortController cleanup\n- Better error messages for timeout\n\nnpm audit: 0 vulnerabilities',
+                'impact': 'None — bug fixes only, fully backward compatible',
+                'recommendation': 'Safe to update immediately.',
                 'notes': ''
             },
             {
-                'id': 'FIND-005',
-                'title': 'Missing rate limiting on authentication endpoint',
-                'severity': 'Info',
-                'cvss_score': 2.1,
-                'cwe_id': 'CWE-307',
-                'affected_host': 'api.acme.com',
-                'description': 'The POST /api/auth/login endpoint does not implement rate limiting or account lockout. An attacker can make unlimited login attempts, facilitating brute-force or credential stuffing attacks.',
-                'evidence': '1000 sequential login attempts completed without any 429 response or lockout.',
-                'recommendation': 'Implement per-IP and per-username rate limiting (e.g. 10 attempts per minute). Add account lockout after N failures.',
+                'id': 'DEP-005',
+                'title': 'Update prettier from 3.1.0 to 3.4.2',
+                'category': 'Tooling',
+                'priority': 'None',
+                'description': 'Minor formatter update with improved handling of JSX, CSS, and markdown formatting. May produce minor whitespace diffs across the codebase.',
+                'details': 'Changes:\n- Improved JSX expression formatting\n- Better CSS grid alignment\n- Markdown table auto-formatting\n\nNote: will reformat ~40 files with whitespace changes',
+                'impact': 'None functionally — cosmetic reformatting only',
+                'recommendation': 'Update and run format in a dedicated commit to keep diffs clean.',
                 'notes': ''
             }
         ]
@@ -175,17 +170,17 @@ state = {
 print(json.dumps(state))
 PYEOF
 
-log "State written. Waiting for analyst to review all 5 findings and submit report..."
+log "State written. Waiting for reviewer to triage all 5 items and submit decisions..."
 
-SIM_VALUE='[{"id":"FIND-001","title":"SQL Injection in login endpoint","severity":"Critical","cvss_score":9.8,"status":"reviewed","notes":"Confirmed. Login form param is unsanitized."},{"id":"FIND-002","title":"Missing HSTS header","severity":"Medium","cvss_score":5.3,"status":"false_positive","notes":"Infra handles HSTS at load balancer level."},{"id":"FIND-003","title":"Exposed debug endpoint /admin/debug","severity":"High","cvss_score":7.5,"status":"reviewed","notes":"Confirmed. Must be removed before prod release."},{"id":"FIND-004","title":"Outdated jQuery 2.x (CVE-2020-11023)","severity":"Low","cvss_score":3.7,"status":"reviewed","notes":"Upgrade to jQuery 3.7.1."},{"id":"FIND-005","title":"Missing rate limiting on /api/auth/login","severity":"Info","cvss_score":2.1,"status":"reviewed","notes":"Low priority but should be addressed."}]'
+SIM_VALUE='[{"id":"DEP-001","title":"Upgrade React from 18.2.0 to 19.1.0","category":"Frontend","priority":"High","status":"reviewed","notes":"Schedule for Q2. Needs migration branch."},{"id":"DEP-002","title":"Update TypeScript from 5.3.2 to 5.7.3","category":"Tooling","priority":"Medium","status":"reviewed","notes":"Safe to merge now."},{"id":"DEP-003","title":"Upgrade ESLint from 8.55.0 to 9.18.0","category":"Tooling","priority":"Medium","status":"skipped","notes":"Defer to next quarter — config migration too large right now."},{"id":"DEP-004","title":"Patch axios from 1.6.2 to 1.6.8","category":"Runtime","priority":"Low","status":"reviewed","notes":"Merge immediately."},{"id":"DEP-005","title":"Update prettier from 3.1.0 to 3.4.2","category":"Tooling","priority":"None","status":"reviewed","notes":"Format commit needed."}]'
 
-RESULT=$(wait_for_response "submit_report" "submit" "$SIM_VALUE")
+RESULT=$(wait_for_response "submit_decisions" "submit" "$SIM_VALUE")
 
 ACTION_ID=$(parse_action_id "$RESULT")
 log "Action received: $ACTION_ID"
 
-# ── Parse the submitted report ────────────────────────────────────────────────
-step "Processing submitted report"
+# ── Parse the submitted decisions ────────────────────────────────────────────
+step "Processing submitted decisions"
 
 python3 - <<'PYEOF' | bash "$SCRIPTS/write_state.sh"
 import json, datetime
@@ -194,8 +189,8 @@ print(json.dumps({
     'version': 2,
     'status': 'processing',
     'updated_at': now,
-    'title': 'Processing Report...',
-    'message': 'Agent is generating the final security report.',
+    'title': 'Processing Decisions...',
+    'message': 'Agent is applying your update decisions.',
     'data': {},
     'actions_requested': []
 }))
@@ -206,44 +201,44 @@ import json, sys
 data = json.loads(sys.argv[1])
 report = data['actions'][0].get('value', [])
 by_status = {}
-for f in report:
-    s = f.get('status', 'pending')
+for item in report:
+    s = item.get('status', 'pending')
     by_status[s] = by_status.get(s, 0) + 1
 total = len(report)
 reviewed = by_status.get('reviewed', 0)
-fp = by_status.get('false_positive', 0) + by_status.get('false-positive', 0)
-print(f'{total}|{reviewed}|{fp}')
+skipped = by_status.get('skipped', 0)
+print(f'{total}|{reviewed}|{skipped}')
 PYEOF
 )
 
 TOTAL=$(echo "$REPORT_STATS" | cut -d'|' -f1)
 REVIEWED=$(echo "$REPORT_STATS" | cut -d'|' -f2)
-FP=$(echo "$REPORT_STATS" | cut -d'|' -f3)
+SKIPPED=$(echo "$REPORT_STATS" | cut -d'|' -f3)
 
 if [[ "$SIMULATE" == "true" ]]; then sleep 0.5; else sleep 1; fi
 
-python3 - "$TOTAL" "$REVIEWED" "$FP" <<'PYEOF' | bash "$SCRIPTS/write_state.sh"
+python3 - "$TOTAL" "$REVIEWED" "$SKIPPED" <<'PYEOF' | bash "$SCRIPTS/write_state.sh"
 import json, datetime, sys
-total, reviewed, fp = sys.argv[1], sys.argv[2], sys.argv[3]
+total, reviewed, skipped = sys.argv[1], sys.argv[2], sys.argv[3]
 now = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 content = (
-    f'Total findings:     {total}\n'
-    f'Confirmed:          {reviewed}\n'
-    f'False positives:    {fp}\n\n'
-    'Report saved to: security-report.pdf'
+    f'Total items:        {total}\n'
+    f'Approved:           {reviewed}\n'
+    f'Skipped:            {skipped}\n\n'
+    'Changes will be applied in the next CI run.'
 )
 print(json.dumps({
     'version': 3,
     'status': 'completed',
     'updated_at': now,
-    'title': 'Security Assessment Complete',
-    'message': f'Report generated. {reviewed}/{total} findings confirmed, {fp} marked false positive.',
+    'title': 'Dependency Review Complete',
+    'message': f'Decisions recorded. {reviewed}/{total} approved, {skipped} deferred.',
     'data': {
         'ui': {
             'sections': [
                 {
                     'type': 'text',
-                    'title': 'Assessment Summary',
+                    'title': 'Review Summary',
                     'content': content
                 }
             ]
@@ -253,12 +248,12 @@ print(json.dumps({
 }))
 PYEOF
 
-ok "Report processed: $TOTAL findings, $REVIEWED confirmed, $FP false positives."
+ok "Decisions processed: $TOTAL items, $REVIEWED approved, $SKIPPED skipped."
 
 if [[ "$SIMULATE" == "true" ]]; then sleep 0.5; else sleep 2; fi
 
-bash "$SCRIPTS/close_webview.sh" --message "Security assessment complete."
+bash "$SCRIPTS/close_webview.sh" --message "Dependency review complete."
 bash "$SCRIPTS/stop_webview.sh"
 
 echo ""
-ok "Benchmark 04 complete: security findings QA with 5-finding tabbed review exercised successfully."
+ok "Benchmark 04 complete: item triage with 5-item tabbed review exercised successfully."

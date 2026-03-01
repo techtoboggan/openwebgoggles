@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-03-01
+
+### Security
+
+- **PY-F1: Undefined `_exec_reload()` in signal handler** — SIGUSR1 handler called `_exec_reload()` which no longer existed after refactor, causing a NameError on restart signal. Replaced with `_mark_stale("current", "reload-requested")`.
+- **PY-F4: XSS scanning missing from `validate_action()`** — Actions received from WebSocket clients were validated for schema compliance but not scanned for XSS payloads. Added `_scan_xss()` call to `validate_action()` for defense-in-depth.
+- **PY-F3: PID reuse attack on stale server kill** — Stale PID file cleanup would `os.kill(pid, 0)` without verifying the process identity, risking killing an unrelated process after PID wraparound. Added `ps` command identity check before termination.
+- **PY-F5: Internal error leakage in MCP tool responses** — Three MCP tool error handlers included exception details (`{e}`) in user-facing error messages, potentially leaking internal paths and stack info. Replaced with generic messages; details logged server-side only.
+- **PY-F8: Bootstrap state bypassed SecurityGate** — Initial state loaded from `state.json` during `_initial_bootstrap()` was served to the browser without SecurityGate validation. Added validation gate with fallback to empty state on failure.
+- **PY-F2: `delay_ms` crash on non-numeric input** — `int(opts.get("delay_ms", ...))` would raise `ValueError` on non-numeric strings. Wrapped in try/except with safe default.
+- **JS-F1: CSS selector injection in `validation.js`** — Four `querySelector()` calls concatenated unescaped field keys directly into CSS selector strings. Added `CSS.escape()` via `_safeQuery()` helper.
+- **JS-F2: Unescaped data attributes in `sections.js`** — `_item_index` and `_section_index` were inserted into `data-*` attributes without escaping. Applied `escAttr()`.
+- **JS-F10: Prototype pollution via `Object.assign`** — Item action context objects used `Object.assign({}, a, ...)` which copies `__proto__` keys. Replaced with `Object.create(null)` and filtered property copy.
+- **JS-F17: Protocol-relative URL bypass** — `SAFE_URL_PROTOCOL_RE` matched `//evil.com` as a valid URL starting with `/`. Fixed regex from `/^(https?:|mailto:|#|\/)/i` to `/^(https?:|mailto:|#|\/[^\/])/i`.
+- **JS-F4+F5: Form elements and DOM clobbering in sanitizer** — `DANGEROUS_TAGS` did not include `input`, `button`, `select`, `textarea` (form injection). `cleanNode()` did not strip `id` or `name` attributes (DOM clobbering). Both fixed.
+- **JS-F13: Single quote unescaped in `esc()`** — `esc()` encoded `& < > "` but not `'`, allowing attribute injection in single-quoted HTML contexts. Added `&#39;` encoding.
+
+### Changed
+
+- **Renamed `security-qa` example to `item-triage`** — The custom app example is now a generic item triage interface (dependency updates, config reviews, PR triage) instead of a security-specific findings reviewer.
+- **Expanded README examples** — Added four new JSON examples covering dependency update review (table + form), live build dashboard (progress + log), configuration wizard (tabs + behaviors + validation), and sidebar layout (items + diff + multi-panel).
+- Test count: 988 → 1025 (0 failures, 16 skipped)
+
 ## [0.10.0] - 2026-03-01
 
 ### Security
@@ -136,7 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **H1**: Removed all inline event handlers from example apps (CSP compliance) — full DOM API rewrite of approval-review and security-qa apps
+- **H1**: Removed all inline event handlers from example apps (CSP compliance) — full DOM API rewrite of approval-review and item-triage apps
 - **H2**: SDK fail-closed — unsigned WS messages are dropped instead of sent in plaintext
 - **H3**: Server rejects unsigned WS envelopes when crypto is enabled
 - **H4**: HMAC fallback returns empty verify key instead of leaking the symmetric secret as a "public key"
@@ -262,7 +285,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - SecurityGate content validation (22 XSS patterns, zero-width character detection)
   - Rate limiting (30 actions per minute per session)
 - 471 tests with OWASP Top 10, MITRE ATT&CK, and OWASP LLM Top 10 traceability markers
-- Example apps: approval-review, security-qa
+- Example apps: approval-review, item-triage
 - App scaffold template via init_webview_app.sh
 - Benchmark demos exercising full framework capability range
 - PyPI package: `pip install openwebgoggles`

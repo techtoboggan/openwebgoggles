@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Security Assessment QA — OpenWebGoggles</title>
+  <title>Item Triage — OpenWebGoggles</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app">
     <header id="header">
       <div class="header-left">
-        <span class="header-title">Security Assessment QA</span>
+        <span class="header-title">Item Triage</span>
         <span id="progress-badge" class="badge badge-neutral">Loading...</span>
       </div>
       <div class="header-right">
@@ -29,15 +29,15 @@
         <div id="progress-bar" class="progress-bar"></div>
       </div>
 
-      <!-- Finding nav tabs -->
+      <!-- Item nav tabs -->
       <div class="tabs-row">
         <button class="tabs-arrow" id="tabs-left" aria-label="Scroll left">&#8592;</button>
-        <div id="finding-tabs" class="finding-tabs"></div>
+        <div id="item-tabs" class="item-tabs"></div>
         <button class="tabs-arrow" id="tabs-right" aria-label="Scroll right">&#8594;</button>
       </div>
 
-      <!-- Finding card -->
-      <div id="finding-card" class="finding-card">
+      <!-- Item card -->
+      <div id="item-card" class="item-card">
         <!-- filled by JS -->
       </div>
 
@@ -45,7 +45,7 @@
       <div class="footer-nav">
         <button id="btn-prev" class="btn btn-secondary">&#8592; Prev</button>
         <div class="footer-center">
-          <button id="btn-fp" class="btn btn-warning">False Positive</button>
+          <button id="btn-skip" class="btn btn-warning">Skip</button>
           <button id="btn-reviewed" class="btn btn-success">Mark Reviewed</button>
         </div>
         <button id="btn-next" class="btn btn-primary">Next &#8594;</button>
@@ -53,8 +53,8 @@
 
       <!-- Submit bar (shown when all reviewed) -->
       <div id="submit-bar" class="submit-bar hidden">
-        <span class="submit-msg">All findings reviewed &#10003;</span>
-        <button class="btn btn-approve" id="btn-submit">Submit Report</button>
+        <span class="submit-msg">All items reviewed &#10003;</span>
+        <button class="btn btn-approve" id="btn-submit">Submit Decisions</button>
       </div>
     </div>
   </div>

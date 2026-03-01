@@ -25,6 +25,7 @@ import time
 import uuid
 from http import HTTPStatus
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 try:
@@ -374,7 +375,8 @@ class WebviewHTTPHandler:
                 if self._security_gate:
                     valid, err = self._security_gate.validate_action(action)
                     if not valid:
-                        await self._send_response(writer, 400, {"error": f"Action rejected: {err}"})
+                        logger.warning("Action rejected by SecurityGate: %s", err)
+                        await self._send_response(writer, 400, {"error": "Invalid action"})
                         return
                 actions = self.contract.append_action(action)
                 await self._send_response(writer, 200, actions)
@@ -392,7 +394,10 @@ class WebviewHTTPHandler:
                 opts = json.loads(body) if body else {}
             except json.JSONDecodeError:
                 opts = {}
-            delay_ms = max(0, min(int(opts.get("delay_ms", 1500)), 10000))
+            try:
+                delay_ms = max(0, min(int(opts.get("delay_ms", 1500)), 10000))
+            except (ValueError, TypeError):
+                delay_ms = 1500
             message = str(opts.get("message", "Session complete."))[:500]  # Limit close message length
             # XSS-scan close message before broadcasting to browser
             if self._security_gate:
@@ -457,6 +462,13 @@ class WebviewHTTPHandler:
         """Serve index.html with manifest + initial state injected as window.__OCV__ bootstrap."""
         html = index.read_text(encoding="utf-8")
         state = self.contract.get_state() or {}
+
+        # Validate bootstrap state through SecurityGate (defense-in-depth against disk tampering)
+        if self._security_gate and state:
+            ok, _err, _parsed = self._security_gate.validate_state(json.dumps(state))
+            if not ok:
+                logger.warning("Bootstrap state failed SecurityGate validation: %s", _err)
+                state = {}  # Fall back to empty state
 
         # Inject real token into bootstrap manifest (sole delivery path — never in API response or on disk)
         safe_manifest = json.loads(json.dumps(manifest))
@@ -559,7 +571,12 @@ class WebviewServer:
         self._ws_server = None
 
         # Read session token — prefer environment variable (secure), fall back to manifest (legacy)
-        env_token = os.environ.get("OCV_SESSION_TOKEN", "")
+        env_token = os.environ.get("OCV_SESSION_TOKEN", "").strip()
+        if env_token:
+            # Validate token format: reject control characters, null bytes, and excessive length
+            if len(env_token) > 1024 or any(c < " " and c not in "\t" for c in env_token):
+                logger.error("OCV_SESSION_TOKEN contains invalid characters or exceeds 1024 bytes — rejected")
+                env_token = ""
         if env_token:
             self.session_token = env_token
         else:
@@ -679,7 +696,15 @@ class WebviewServer:
             envelope = payload_str
         await websocket.send(envelope)
 
+    MAX_WEBSOCKET_CLIENTS = 50  # Prevent connection exhaustion DoS
+
     async def _handle_ws(self, websocket):  # pragma: no cover
+        # Reject if at capacity (defense against connection exhaustion)
+        if len(self._ws_clients) >= self.MAX_WEBSOCKET_CLIENTS:
+            await websocket.close(1008, "Server at capacity")
+            logger.warning("WS: Rejected connection — at capacity (%d clients)", len(self._ws_clients))
+            return
+
         # First-message authentication: client must send {type: "auth", token: "..."}
         authenticated = False
 
@@ -750,8 +775,9 @@ class WebviewServer:
                     if self._security_gate:
                         valid, err = self._security_gate.validate_action(action_data)
                         if not valid:
+                            logger.warning("WS action rejected by SecurityGate: %s", err)
                             await self._send_ws_signed(
-                                websocket, {"type": "error", "data": {"message": f"Action rejected: {err}"}}
+                                websocket, {"type": "error", "data": {"message": "Invalid action"}}
                             )
                             continue
                     self.contract.append_action(action_data)
@@ -817,7 +843,9 @@ class WebviewServer:
                             valid, err, _ = self._security_gate.validate_state(json.dumps(data))
                             if not valid:
                                 logger.error("SECURITY GATE BLOCKED state update: %s", err)
-                                await self._broadcast({"type": "error", "data": {"message": f"State rejected: {err}"}})
+                                await self._broadcast(
+                                    {"type": "error", "data": {"message": "State update rejected by security gate"}}
+                                )
                                 continue
                         await self._broadcast({"type": "state_updated", "data": data})
                         last_broadcast["state"] = time.time()

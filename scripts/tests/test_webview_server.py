@@ -27,6 +27,9 @@ Coverage mapping:
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac as hmac_mod
 import json
 import os
 import sys
@@ -34,11 +37,13 @@ import time
 from unittest.mock import patch
 
 import pytest
+import websockets.exceptions
 
 # Ensure scripts dir on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from webview_server import DataContract, RateLimiter, WebviewHTTPHandler, WebviewServer
+from crypto_utils import generate_nonce  # noqa: E402
+from webview_server import DataContract, RateLimiter, WebviewHTTPHandler, WebviewServer  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures
@@ -784,7 +789,7 @@ class TestSecurityGateIntegration:
             body=json.dumps(action).encode(),
         )
         assert w.status_code == 400
-        assert "rejected" in w.json_body.get("error", "").lower()
+        assert "invalid" in w.json_body.get("error", "").lower()
 
     @pytest.mark.llm05
     @pytest.mark.asyncio
@@ -1012,7 +1017,7 @@ class TestActionSecurityGateHTTP:
 
         w = await send_request(handler, "POST", "/_api/actions", headers=auth, body=bad_action)
         assert w.status_code == 400
-        assert "rejected" in w.json_body.get("error", "").lower()
+        assert "invalid" in w.json_body.get("error", "").lower()
 
     @pytest.mark.owasp_a03
     @pytest.mark.llm01
@@ -1455,3 +1460,1078 @@ class TestWaitForActionProgress:
         result = await session.wait_for_action(timeout=1.0)
         assert result is not None
         assert result["actions"][0]["action_id"] == "immediate"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 18. FILE WATCHER — OWASP A08; LLM05
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFileWatcherBehavior:
+    """Tests for the file watcher's change detection and debouncing logic."""
+
+    @pytest.mark.owasp_a08
+    def test_change_detection_tracks_all_files(self, contract, tmp_data_dir):
+        """check_changes should detect modifications to state, actions, and manifest."""
+        contract.check_changes()  # initialize mtimes
+        time.sleep(0.02)
+
+        # Modify all three files
+        contract.write_json(contract.state_path, {"version": 2, "status": "updated"})
+        contract.write_json(contract.actions_path, {"version": 1, "actions": [{"action_id": "x"}]})
+        contract.write_json(contract.manifest_path, {"session": {"id": "new"}})
+
+        changed = contract.check_changes()
+        assert "state" in changed
+        assert "actions" in changed
+        assert "manifest" in changed
+
+    @pytest.mark.owasp_a08
+    def test_no_change_returns_empty(self, contract, tmp_data_dir):
+        """check_changes returns empty list when nothing changed."""
+        contract.check_changes()  # initialize
+        changed = contract.check_changes()  # immediate re-check
+        assert changed == []
+
+    @pytest.mark.owasp_a08
+    def test_missing_file_not_in_changes(self, contract, tmp_data_dir):
+        """Missing files should not appear in changed list."""
+        contract.check_changes()  # initialize
+        (tmp_data_dir / "state.json").unlink()
+        changed = contract.check_changes()
+        # state was deleted, so stat() fails — it shouldn't crash or appear
+        assert "state" not in changed
+
+    @pytest.mark.owasp_a08
+    def test_corrupted_json_still_readable_after_fix(self, contract, tmp_data_dir):
+        """DataContract handles corrupted → fixed JSON gracefully."""
+        contract.write_json(contract.state_path, {"version": 1})
+        # Corrupt the file
+        (tmp_data_dir / "state.json").write_text("{broken json")
+        assert contract.get_state() is None
+        # Fix it
+        contract.write_json(contract.state_path, {"version": 2, "status": "fixed"})
+        result = contract.get_state()
+        assert result is not None
+        assert result["version"] == 2
+
+    @pytest.mark.owasp_a08
+    def test_concurrent_append_actions(self, contract, tmp_data_dir):
+        """Multiple rapid append_action calls should not lose data."""
+        for i in range(10):
+            contract.append_action({"action_id": f"action_{i}", "type": "confirm", "value": True})
+        result = contract.get_actions()
+        assert len(result["actions"]) == 10
+        assert result["version"] == 10
+
+    @pytest.mark.owasp_a08
+    def test_clear_then_append_works(self, contract, tmp_data_dir):
+        """Clearing actions then appending should start fresh."""
+        contract.append_action({"action_id": "old", "type": "approve"})
+        contract.clear_actions()
+        contract.append_action({"action_id": "new", "type": "approve"})
+        result = contract.get_actions()
+        assert len(result["actions"]) == 1
+        assert result["actions"][0]["action_id"] == "new"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 19. ENV TOKEN VALIDATION — OWASP A07
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestEnvTokenValidation:
+    """Tests for OCV_SESSION_TOKEN environment variable validation (M6 fix)."""
+
+    @pytest.mark.owasp_a07
+    def test_valid_hex_token_accepted(self, tmp_data_dir):
+        """Normal hex token from env should be accepted."""
+        token = "a" * 64
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": token}):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=19990,
+                ws_port=19991,
+                sdk_path=str(tmp_data_dir / "sdk.js"),
+            )
+            assert server.session_token == token
+
+    @pytest.mark.owasp_a07
+    def test_token_with_null_byte_rejected(self, tmp_data_dir):
+        """Token containing null bytes should be rejected."""
+        # os.environ cannot hold null bytes, so mock os.environ.get directly
+        original_get = os.environ.get
+
+        def fake_get(key, default=""):
+            if key == "OCV_SESSION_TOKEN":
+                return "abc\x00def"
+            return original_get(key, default)
+
+        with patch.object(os.environ, "get", side_effect=fake_get):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=19990,
+                ws_port=19991,
+                sdk_path=str(tmp_data_dir / "sdk.js"),
+            )
+            # Should fall back to manifest token since env token was rejected
+            assert "\x00" not in server.session_token
+
+    @pytest.mark.owasp_a07
+    def test_token_with_newline_rejected(self, tmp_data_dir):
+        """Token containing newlines should be rejected."""
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": "abc\ndef"}):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=19990,
+                ws_port=19991,
+                sdk_path=str(tmp_data_dir / "sdk.js"),
+            )
+            assert "\n" not in server.session_token
+
+    @pytest.mark.owasp_a07
+    def test_oversized_token_rejected(self, tmp_data_dir):
+        """Token exceeding 1024 bytes should be rejected."""
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": "x" * 2000}):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=19990,
+                ws_port=19991,
+                sdk_path=str(tmp_data_dir / "sdk.js"),
+            )
+            # Should fall back to manifest token
+            assert len(server.session_token) <= 1024
+
+    @pytest.mark.owasp_a07
+    def test_whitespace_trimmed(self, tmp_data_dir):
+        """Leading/trailing whitespace on token should be trimmed."""
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": "  mytoken  "}):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=19990,
+                ws_port=19991,
+                sdk_path=str(tmp_data_dir / "sdk.js"),
+            )
+            assert server.session_token == "mytoken"
+
+    @pytest.mark.owasp_a07
+    def test_empty_env_token_falls_back(self, tmp_data_dir):
+        """Empty OCV_SESSION_TOKEN falls back to manifest."""
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": ""}):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=19990,
+                ws_port=19991,
+                sdk_path=str(tmp_data_dir / "sdk.js"),
+            )
+            manifest = server.contract.get_manifest()
+            expected = manifest.get("session", {}).get("token", "") if manifest else ""
+            assert server.session_token == expected
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 20. WEBSOCKET CONNECTION LIMIT — H1 FIX
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWebSocketConnectionLimit:
+    """Tests for MAX_WEBSOCKET_CLIENTS (H1 security fix)."""
+
+    def test_max_websocket_clients_is_50(self):
+        """WebviewServer must enforce a max of 50 concurrent WS clients."""
+        assert WebviewServer.MAX_WEBSOCKET_CLIENTS == 50
+
+    def test_connection_limit_exists_in_handler_source(self):
+        """_handle_ws source must check len(self._ws_clients) before accepting."""
+        import inspect
+
+        src = inspect.getsource(WebviewServer._handle_ws)
+        assert "MAX_WEBSOCKET_CLIENTS" in src, "Handler must reference MAX_WEBSOCKET_CLIENTS"
+        assert "at capacity" in src.lower() or "1008" in src, "Must close with 1008 when at capacity"
+
+    def test_connection_limit_checked_before_auth(self):
+        """Connection limit must be checked BEFORE auth (prevent DoS via auth timeout)."""
+        import inspect
+
+        src = inspect.getsource(WebviewServer._handle_ws)
+        limit_pos = src.find("MAX_WEBSOCKET_CLIENTS")
+        auth_pos = src.find("authenticated")
+        assert limit_pos != -1, "Must check MAX_WEBSOCKET_CLIENTS"
+        assert auth_pos != -1, "Must have auth check"
+        assert limit_pos < auth_pos, "Limit check must come before auth"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 21. GENERIC ERROR MESSAGES — M5 FIX
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGenericErrorMessages:
+    """Verify that SecurityGate details are NOT leaked to the client (M5 fix)."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_http_action_rejection_is_generic(self, handler):
+        """HTTP action rejection message must NOT contain SecurityGate details."""
+        auth = {"authorization": "Bearer secret_token_abc"}
+        bad_action = json.dumps({"action_id": "x", "type": "evil_type", "value": True}).encode()
+        w = await send_request(handler, "POST", "/_api/actions", headers=auth, body=bad_action)
+        assert w.status_code == 400
+        error_msg = w.json_body.get("error", "")
+        assert error_msg == "Invalid action"
+        # Must NOT contain details about why it was rejected
+        assert "evil_type" not in error_msg
+        assert "action type" not in error_msg.lower()
+
+    @pytest.mark.owasp_a03
+    def test_file_watcher_error_message_is_generic(self):
+        """State rejection broadcast must NOT contain SecurityGate details."""
+        import inspect
+
+        src = inspect.getsource(WebviewServer._file_watcher)
+        # The broadcast message must be a generic string, not f-string with err
+        assert 'f"State rejected: {err}"' not in src, "Must NOT include SecurityGate error details in broadcast"
+
+    @pytest.mark.owasp_a03
+    def test_ws_action_error_is_generic(self):
+        """WS action rejection must NOT contain SecurityGate details."""
+        import inspect
+
+        src = inspect.getsource(WebviewServer._handle_ws)
+        # Check that WS error messages don't leak validation details
+        assert 'f"Action rejected: {err}"' not in src, "WS handler must NOT include detailed rejection"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 22. HEADER COUNT LIMIT — LLM10
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestHeaderCountLimit:
+    """Verify the 100-header cap is enforced."""
+
+    def test_header_limit_constant_in_source(self):
+        """handle_request must cap headers at 100."""
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        assert "100" in src, "Header loop must be limited to 100"
+        assert "431" in src, "Must return 431 for too many headers"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 23. UNICODE NORMALIZATION IN SECURITY GATE — M10 FIX
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestUnicodeNormalizationIntegration:
+    """Integration test: SecurityGate normalizes unicode before XSS scanning."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_decomposed_unicode_in_state_is_normalized(self, handler):
+        """State with decomposed unicode should be normalized and accepted (if safe)."""
+        auth = {"authorization": "Bearer secret_token_abc"}
+
+        # Write state with decomposed unicode (combining accent on 'e')
+        state = {"version": 2, "title": "caf\u0065\u0301", "status": "ok"}
+        handler.contract.write_json(handler.contract.state_path, state)
+
+        w = await send_request(handler, "GET", "/_api/state", headers=auth)
+        assert w.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 24. WEBSOCKET HANDLER — _handle_ws behavioral tests
+#     OWASP A07 (Auth), A03 (Injection), LLM10 (DoS); MITRE T1499, T1078
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class MockWebSocket:
+    """Mock websockets.WebSocketServerProtocol for testing _handle_ws."""
+
+    def __init__(self, messages=None):
+        self.messages = list(messages or [])
+        self._sent = []
+        self._closed = False
+        self._close_code = None
+        self._close_reason = None
+        self._msg_iter = iter(self.messages)
+
+    async def recv(self):
+        try:
+            return next(self._msg_iter)
+        except StopIteration:
+            raise websockets.exceptions.ConnectionClosed(None, None) from None
+
+    async def send(self, data):
+        self._sent.append(data)
+
+    async def close(self, code=1000, reason=""):
+        self._closed = True
+        self._close_code = code
+        self._close_reason = reason
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._msg_iter)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+    @property
+    def sent_json(self):
+        """Parse all sent messages as JSON for easy assertion."""
+        result = []
+        for raw in self._sent:
+            try:
+                parsed = json.loads(raw)
+                # If it's a signed envelope, extract the inner payload
+                if "p" in parsed and "nonce" in parsed and "sig" in parsed:
+                    result.append(parsed["p"])
+                else:
+                    result.append(parsed)
+            except (json.JSONDecodeError, TypeError):
+                result.append(raw)
+        return result
+
+
+def _make_hmac_sig(token: str, payload_dict: dict, nonce: str) -> str:
+    """Create a valid HMAC-SHA256 signature matching what the browser SDK sends."""
+    payload_str = json.dumps(payload_dict, separators=(",", ":"))
+    message = (nonce + payload_str).encode("utf-8")
+    return hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).digest().hex()
+
+
+def _wrap_signed(token: str, payload_dict: dict) -> str:
+    """Wrap a message dict in a signed envelope (as the browser SDK would)."""
+    nonce = generate_nonce()
+    payload_str = json.dumps(payload_dict, separators=(",", ":"))
+    sig = _make_hmac_sig(token, payload_dict, nonce)
+    return json.dumps({"p": payload_dict, "nonce": nonce, "sig": sig, "ps": payload_str})
+
+
+@pytest.fixture
+def ws_server(tmp_data_dir):
+    """Create a WebviewServer with mocked internals for WS handler testing.
+
+    No actual network is started — we invoke _handle_ws directly with mock websockets.
+    """
+    sdk_path = tmp_data_dir / "sdk.js"
+    sdk_path.write_text("// SDK placeholder")
+
+    with patch.dict(os.environ, {"OCV_SESSION_TOKEN": "test_ws_token_xyz"}):
+        server = WebviewServer(
+            data_dir=str(tmp_data_dir),
+            http_port=18420,
+            ws_port=18421,
+            sdk_path=str(sdk_path),
+        )
+
+    # Ensure crypto components are available for signing tests
+    assert server._nonce_tracker is not None, "NonceTracker must be available for WS tests"
+    assert server._private_key is not None, "Private key must be available for WS tests"
+
+    return server
+
+
+def _auth_msg(token: str = "test_ws_token_xyz") -> str:  # noqa: S107
+    """Return a valid auth message JSON string."""
+    return json.dumps({"type": "auth", "token": token})
+
+
+# ---------------------------------------------------------------------------
+# 24a. Connection limit (H1 hardening: MAX_WEBSOCKET_CLIENTS=50)
+# ---------------------------------------------------------------------------
+
+
+class TestWSConnectionLimit:
+    """WebSocket connection exhaustion defense — MAX_WEBSOCKET_CLIENTS=50."""
+
+    @pytest.mark.mitre_t1499
+    @pytest.mark.llm10
+    @pytest.mark.asyncio
+    async def test_connection_rejected_at_capacity(self, ws_server):
+        """When _ws_clients has 50 entries, new connections must be rejected with code 1008."""
+        # Fill the client set to capacity
+        for i in range(ws_server.MAX_WEBSOCKET_CLIENTS):
+            ws_server._ws_clients.add(f"fake_client_{i}")
+
+        ws = MockWebSocket(messages=[_auth_msg()])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 1008
+        assert "capacity" in ws._close_reason.lower()
+        # Client should NOT have been added
+        assert ws not in ws_server._ws_clients
+
+    @pytest.mark.mitre_t1499
+    @pytest.mark.asyncio
+    async def test_connection_accepted_below_capacity(self, ws_server):
+        """When below capacity, connections should be accepted (given valid auth)."""
+        # Fill to one below capacity
+        for i in range(ws_server.MAX_WEBSOCKET_CLIENTS - 1):
+            ws_server._ws_clients.add(f"fake_client_{i}")
+
+        ws = MockWebSocket(messages=[_auth_msg()])
+        await ws_server._handle_ws(ws)
+
+        # Client should have been added then removed (connection closed naturally)
+        assert ws._closed is not True or ws._close_code != 1008
+
+    @pytest.mark.mitre_t1499
+    @pytest.mark.asyncio
+    async def test_connection_accepted_when_empty(self, ws_server):
+        """With no existing clients, a new connection should be accepted."""
+        ws = MockWebSocket(messages=[_auth_msg()])
+        await ws_server._handle_ws(ws)
+
+        # After handler completes (connection closed), client is removed
+        assert ws not in ws_server._ws_clients
+        # Should not have been rejected
+        assert ws._close_code != 1008
+
+    @pytest.mark.mitre_t1499
+    def test_max_websocket_clients_constant_is_50(self, ws_server):
+        """The MAX_WEBSOCKET_CLIENTS constant must be 50."""
+        assert ws_server.MAX_WEBSOCKET_CLIENTS == 50
+
+
+# ---------------------------------------------------------------------------
+# 24b. WebSocket auth protocol
+# ---------------------------------------------------------------------------
+
+
+class TestWSAuthProtocol:
+    """First message must be {type: 'auth', token: '...'} within 5 seconds."""
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.mitre_t1078
+    @pytest.mark.asyncio
+    async def test_valid_auth_adds_client(self, ws_server):
+        """A valid auth message should result in the client being added to _ws_clients."""
+
+        class TrackingSet(set):
+            """Set subclass that records add() calls."""
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.added_items = []
+
+            def add(self, item):
+                self.added_items.append(item)
+                super().add(item)
+
+        tracking = TrackingSet(ws_server._ws_clients)
+        ws_server._ws_clients = tracking
+        ws_server.http_handler.ws_clients = tracking
+
+        ws = MockWebSocket(messages=[_auth_msg()])
+        await ws_server._handle_ws(ws)
+
+        assert ws in tracking.added_items
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.mitre_t1078
+    @pytest.mark.asyncio
+    async def test_auth_sends_connected_state(self, ws_server):
+        """After successful auth, server should send connected message with state."""
+        ws = MockWebSocket(messages=[_auth_msg()])
+        await ws_server._handle_ws(ws)
+
+        sent = ws.sent_json
+        assert len(sent) >= 1
+        connected_msg = sent[0]
+        assert connected_msg["type"] == "connected"
+        assert "state" in connected_msg
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.mitre_t1078
+    @pytest.mark.asyncio
+    async def test_client_removed_on_disconnect(self, ws_server):
+        """After handler finishes, client must be removed from _ws_clients."""
+        ws = MockWebSocket(messages=[_auth_msg()])
+        await ws_server._handle_ws(ws)
+
+        assert ws not in ws_server._ws_clients
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_auth_timeout_closes_connection(self, ws_server):
+        """If auth message is not received within 5s, connection should be closed."""
+
+        class SlowWebSocket(MockWebSocket):
+            async def recv(self):
+                await asyncio.sleep(10)  # Simulate client not sending auth
+                return _auth_msg()
+
+        ws = SlowWebSocket(messages=[])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+        assert "unauthorized" in ws._close_reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# 24c. WebSocket auth rejection
+# ---------------------------------------------------------------------------
+
+
+class TestWSAuthRejection:
+    """Invalid auth messages must result in connection close with code 4001."""
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.mitre_t1078
+    @pytest.mark.asyncio
+    async def test_wrong_token_rejected(self, ws_server):
+        """Auth message with wrong token must close the connection."""
+        ws = MockWebSocket(messages=[json.dumps({"type": "auth", "token": "wrong_token"})])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_missing_type_field_rejected(self, ws_server):
+        """Auth message without 'type' field must be rejected."""
+        ws = MockWebSocket(messages=[json.dumps({"token": "test_ws_token_xyz"})])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_wrong_type_field_rejected(self, ws_server):
+        """Auth message with wrong type (not 'auth') must be rejected."""
+        ws = MockWebSocket(messages=[json.dumps({"type": "connect", "token": "test_ws_token_xyz"})])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_missing_token_rejected(self, ws_server):
+        """Auth message without 'token' field must be rejected."""
+        ws = MockWebSocket(messages=[json.dumps({"type": "auth"})])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_empty_token_rejected(self, ws_server):
+        """Auth message with empty string token must be rejected."""
+        ws = MockWebSocket(messages=[json.dumps({"type": "auth", "token": ""})])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_malformed_json_rejected(self, ws_server):
+        """Non-JSON first message must close the connection."""
+        ws = MockWebSocket(messages=["this is not json"])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_binary_message_rejected(self, ws_server):
+        """Binary-like first message that fails JSON parse must be rejected."""
+        ws = MockWebSocket(messages=["\x00\x01\x02\x03"])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_no_messages_closes_connection(self, ws_server):
+        """If client sends no messages at all (immediate disconnect), handle gracefully."""
+        ws = MockWebSocket(messages=[])  # recv() raises ConnectionClosed immediately
+        await ws_server._handle_ws(ws)
+
+        # Should close gracefully without crashing
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+
+# ---------------------------------------------------------------------------
+# 24d. WebSocket message handling (post-auth)
+# ---------------------------------------------------------------------------
+
+
+class TestWSMessageHandling:
+    """Post-authentication message routing: action, heartbeat, request_state."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_returns_ack(self, ws_server):
+        """Heartbeat message should receive a heartbeat_ack response."""
+        heartbeat = _wrap_signed("test_ws_token_xyz", {"type": "heartbeat"})
+        ws = MockWebSocket(messages=[_auth_msg(), heartbeat])
+        await ws_server._handle_ws(ws)
+
+        sent = ws.sent_json
+        ack_msgs = [m for m in sent if m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 1
+        assert "timestamp" in ack_msgs[0]
+
+    @pytest.mark.asyncio
+    async def test_request_state_returns_state(self, ws_server):
+        """request_state message should return current state."""
+        req = _wrap_signed("test_ws_token_xyz", {"type": "request_state"})
+        ws = MockWebSocket(messages=[_auth_msg(), req])
+        await ws_server._handle_ws(ws)
+
+        sent = ws.sent_json
+        state_msgs = [m for m in sent if m.get("type") == "state_updated"]
+        assert len(state_msgs) == 1
+        assert "data" in state_msgs[0]
+
+    @pytest.mark.asyncio
+    async def test_action_message_appended_to_contract(self, ws_server):
+        """Action messages should be appended to the data contract."""
+        action_data = {"action_id": "approve", "type": "approve", "value": True}
+        action_msg = _wrap_signed("test_ws_token_xyz", {"type": "action", "data": action_data})
+        ws = MockWebSocket(messages=[_auth_msg(), action_msg])
+        await ws_server._handle_ws(ws)
+
+        actions = ws_server.contract.get_actions()
+        assert actions is not None
+        assert len(actions["actions"]) >= 1
+        stored = actions["actions"][-1]
+        assert stored["action_id"] == "approve"
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_message_ignored(self, ws_server):
+        """Malformed JSON messages after auth should be silently ignored."""
+        auth = _auth_msg()
+        heartbeat = _wrap_signed("test_ws_token_xyz", {"type": "heartbeat"})
+
+        class CustomWS(MockWebSocket):
+            def __init__(self):
+                self.messages = [auth]
+                self._post_auth_msgs = ["not valid json {{{", heartbeat]
+                self._post_auth_iter = iter(self._post_auth_msgs)
+                self._sent = []
+                self._closed = False
+                self._close_code = None
+                self._close_reason = None
+                self._msg_iter = iter(self.messages)
+
+            async def recv(self):
+                return next(self._msg_iter)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._post_auth_iter)
+                except StopIteration:
+                    raise StopAsyncIteration from None
+
+            async def send(self, data):
+                self._sent.append(data)
+
+            async def close(self, code=1000, reason=""):
+                self._closed = True
+                self._close_code = code
+                self._close_reason = reason
+
+            @property
+            def sent_json(self):
+                result = []
+                for raw in self._sent:
+                    try:
+                        parsed = json.loads(raw)
+                        if "p" in parsed and "nonce" in parsed:
+                            result.append(parsed["p"])
+                        else:
+                            result.append(parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        result.append(raw)
+                return result
+
+        ws = CustomWS()
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_subsequent_auth_messages_ignored(self, ws_server):
+        """Auth messages sent after initial auth should be silently ignored."""
+        second_auth = _wrap_signed(
+            "test_ws_token_xyz",
+            {"type": "auth", "token": "test_ws_token_xyz"},
+        )
+        heartbeat = _wrap_signed("test_ws_token_xyz", {"type": "heartbeat"})
+        ws = MockWebSocket(messages=[_auth_msg(), second_auth, heartbeat])
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_message_type_does_not_crash(self, ws_server):
+        """Unknown message types should be silently ignored."""
+        unknown = _wrap_signed("test_ws_token_xyz", {"type": "unknown_fancy_type", "data": {}})
+        heartbeat = _wrap_signed("test_ws_token_xyz", {"type": "heartbeat"})
+        ws = MockWebSocket(messages=[_auth_msg(), unknown, heartbeat])
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 1
+
+
+# ---------------------------------------------------------------------------
+# 24e. Rate limiting on WS actions (shared limiter with HTTP)
+# ---------------------------------------------------------------------------
+
+
+class TestWSRateLimiting:
+    """WS action submissions share the same rate limiter as HTTP."""
+
+    @pytest.mark.mitre_t1499
+    @pytest.mark.llm10
+    @pytest.mark.asyncio
+    async def test_ws_action_rate_limited(self, ws_server):
+        """Exceeding rate limit on WS actions should return an error message."""
+        ws_server.http_handler._rate_limiter = RateLimiter(max_actions=2, window_seconds=60.0)
+
+        token = "test_ws_token_xyz"
+        action_data = {"action_id": "ok", "type": "approve", "value": True}
+
+        action1 = _wrap_signed(token, {"type": "action", "data": action_data})
+        action2 = _wrap_signed(token, {"type": "action", "data": action_data})
+        action3 = _wrap_signed(token, {"type": "action", "data": action_data})
+
+        ws = MockWebSocket(messages=[_auth_msg(), action1, action2, action3])
+        await ws_server._handle_ws(ws)
+
+        error_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "error"]
+        assert len(error_msgs) >= 1
+        assert "rate limit" in error_msgs[0]["data"]["message"].lower()
+
+    @pytest.mark.mitre_t1499
+    @pytest.mark.asyncio
+    async def test_ws_rate_limit_shared_with_http(self, ws_server):
+        """HTTP and WS share the same rate limiter instance."""
+        ws_server.http_handler._rate_limiter = RateLimiter(max_actions=1, window_seconds=60.0)
+        ws_server.http_handler._rate_limiter.check()  # Use up the allowed action
+
+        token = "test_ws_token_xyz"
+        action_data = {"action_id": "ok", "type": "approve", "value": True}
+        action_msg = _wrap_signed(token, {"type": "action", "data": action_data})
+
+        ws = MockWebSocket(messages=[_auth_msg(), action_msg])
+        await ws_server._handle_ws(ws)
+
+        error_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "error"]
+        assert len(error_msgs) >= 1
+
+    @pytest.mark.mitre_t1499
+    @pytest.mark.asyncio
+    async def test_heartbeat_not_rate_limited(self, ws_server):
+        """Heartbeat messages should not be subject to rate limiting."""
+        ws_server.http_handler._rate_limiter = RateLimiter(max_actions=0, window_seconds=60.0)
+
+        token = "test_ws_token_xyz"
+        heartbeat = _wrap_signed(token, {"type": "heartbeat"})
+        ws = MockWebSocket(messages=[_auth_msg(), heartbeat])
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 1
+
+
+# ---------------------------------------------------------------------------
+# 24f. Unsigned message rejection (crypto-enabled mode)
+# ---------------------------------------------------------------------------
+
+
+class TestWSUnsignedRejection:
+    """When crypto is enabled, unsigned messages (except auth) must be rejected."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_unsigned_action_rejected(self, ws_server):
+        """An unsigned action message must be silently dropped."""
+        assert ws_server._nonce_tracker is not None
+
+        unsigned_action = json.dumps(
+            {
+                "type": "action",
+                "data": {"action_id": "x", "type": "approve", "value": True},
+            }
+        )
+        heartbeat = _wrap_signed("test_ws_token_xyz", {"type": "heartbeat"})
+        ws = MockWebSocket(messages=[_auth_msg(), unsigned_action, heartbeat])
+        await ws_server._handle_ws(ws)
+
+        actions = ws_server.contract.get_actions()
+        assert len(actions["actions"]) == 0
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 1
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_unsigned_heartbeat_rejected(self, ws_server):
+        """An unsigned heartbeat must be silently dropped."""
+        assert ws_server._nonce_tracker is not None
+
+        unsigned_hb = json.dumps({"type": "heartbeat"})
+        ws = MockWebSocket(messages=[_auth_msg(), unsigned_hb])
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 0
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_unsigned_request_state_rejected(self, ws_server):
+        """An unsigned request_state must be silently dropped."""
+        assert ws_server._nonce_tracker is not None
+
+        unsigned_req = json.dumps({"type": "request_state"})
+        ws = MockWebSocket(messages=[_auth_msg(), unsigned_req])
+        await ws_server._handle_ws(ws)
+
+        state_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "state_updated"]
+        assert len(state_msgs) == 0
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_invalid_signature_rejected(self, ws_server):
+        """A message with an invalid HMAC signature must be silently dropped."""
+        assert ws_server._nonce_tracker is not None
+
+        nonce = generate_nonce()
+        payload = {"type": "heartbeat"}
+        payload_str = json.dumps(payload, separators=(",", ":"))
+        bad_envelope = json.dumps(
+            {
+                "p": payload,
+                "nonce": nonce,
+                "sig": "deadbeef" * 8,
+                "ps": payload_str,
+            }
+        )
+
+        ws = MockWebSocket(messages=[_auth_msg(), bad_envelope])
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 0
+
+
+# ---------------------------------------------------------------------------
+# 24g. Nonce replay detection
+# ---------------------------------------------------------------------------
+
+
+class TestWSNonceReplay:
+    """Replayed nonces must be rejected to prevent replay attacks."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_replayed_nonce_rejected(self, ws_server):
+        """A message with a previously-seen nonce must be silently dropped."""
+        assert ws_server._nonce_tracker is not None
+
+        token = "test_ws_token_xyz"
+        nonce = generate_nonce()
+        payload = {"type": "heartbeat"}
+        payload_str = json.dumps(payload, separators=(",", ":"))
+        sig = _make_hmac_sig(token, payload, nonce)
+
+        signed_msg = json.dumps({"p": payload, "nonce": nonce, "sig": sig, "ps": payload_str})
+
+        # Send the same signed message twice — second should be rejected
+        ws = MockWebSocket(messages=[_auth_msg(), signed_msg, signed_msg])
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 1
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_unique_nonces_both_accepted(self, ws_server):
+        """Two messages with different nonces should both be accepted."""
+        assert ws_server._nonce_tracker is not None
+
+        token = "test_ws_token_xyz"
+        hb1 = _wrap_signed(token, {"type": "heartbeat"})
+        hb2 = _wrap_signed(token, {"type": "heartbeat"})
+
+        ws = MockWebSocket(messages=[_auth_msg(), hb1, hb2])
+        await ws_server._handle_ws(ws)
+
+        ack_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "heartbeat_ack"]
+        assert len(ack_msgs) == 2
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_replayed_action_nonce_not_appended(self, ws_server):
+        """Replayed action messages must not be appended to the data contract."""
+        assert ws_server._nonce_tracker is not None
+
+        token = "test_ws_token_xyz"
+        nonce = generate_nonce()
+        action_payload = {
+            "type": "action",
+            "data": {"action_id": "ok", "type": "approve", "value": True},
+        }
+        payload_str = json.dumps(action_payload, separators=(",", ":"))
+        sig = _make_hmac_sig(token, action_payload, nonce)
+
+        signed_action = json.dumps({"p": action_payload, "nonce": nonce, "sig": sig, "ps": payload_str})
+
+        ws = MockWebSocket(messages=[_auth_msg(), signed_action, signed_action])
+        await ws_server._handle_ws(ws)
+
+        actions = ws_server.contract.get_actions()
+        assert len(actions["actions"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# 24h. WS action security gate integration (behavioral)
+# ---------------------------------------------------------------------------
+
+
+class TestWSActionSecurityGateIntegration:
+    """SecurityGate must reject invalid actions on the WS path (behavioral test)."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    @pytest.mark.asyncio
+    async def test_ws_invalid_action_type_rejected(self, ws_server):
+        """An action with an unknown type should be rejected with error message."""
+        token = "test_ws_token_xyz"
+        bad_action = {
+            "type": "action",
+            "data": {
+                "action_id": "evil",
+                "type": "evil_unknown_type",
+                "value": True,
+            },
+        }
+        msg = _wrap_signed(token, bad_action)
+
+        ws = MockWebSocket(messages=[_auth_msg(), msg])
+        await ws_server._handle_ws(ws)
+
+        error_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "error"]
+        assert len(error_msgs) >= 1
+        assert "invalid" in error_msgs[0]["data"]["message"].lower()
+
+        actions = ws_server.contract.get_actions()
+        assert len(actions["actions"]) == 0
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    @pytest.mark.asyncio
+    async def test_ws_missing_action_id_rejected(self, ws_server):
+        """An action without action_id should be rejected."""
+        token = "test_ws_token_xyz"
+        bad_action = {
+            "type": "action",
+            "data": {"type": "approve", "value": True},  # no action_id
+        }
+        msg = _wrap_signed(token, bad_action)
+
+        ws = MockWebSocket(messages=[_auth_msg(), msg])
+        await ws_server._handle_ws(ws)
+
+        error_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "error"]
+        assert len(error_msgs) >= 1
+
+        actions = ws_server.contract.get_actions()
+        assert len(actions["actions"]) == 0
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    @pytest.mark.asyncio
+    async def test_ws_valid_action_accepted(self, ws_server):
+        """A valid action should be accepted and appended."""
+        token = "test_ws_token_xyz"
+        good_action = {
+            "type": "action",
+            "data": {"action_id": "approve", "type": "approve", "value": True},
+        }
+        msg = _wrap_signed(token, good_action)
+
+        ws = MockWebSocket(messages=[_auth_msg(), msg])
+        await ws_server._handle_ws(ws)
+
+        error_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "error"]
+        assert len(error_msgs) == 0
+
+        actions = ws_server.contract.get_actions()
+        assert len(actions["actions"]) == 1
+        assert actions["actions"][0]["action_id"] == "approve"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm10
+    @pytest.mark.asyncio
+    async def test_ws_oversized_value_rejected(self, ws_server):
+        """An action with an oversized value should be rejected."""
+        token = "test_ws_token_xyz"
+        big_action = {
+            "type": "action",
+            "data": {
+                "action_id": "submit",
+                "type": "submit",
+                "value": "x" * 200_000,
+            },
+        }
+        msg = _wrap_signed(token, big_action)
+
+        ws = MockWebSocket(messages=[_auth_msg(), msg])
+        await ws_server._handle_ws(ws)
+
+        error_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "error"]
+        assert len(error_msgs) >= 1
+
+        actions = ws_server.contract.get_actions()
+        assert len(actions["actions"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# 24i. WS error message does not leak rejection details
+# ---------------------------------------------------------------------------
+
+
+class TestWSErrorMessageOpacity:
+    """WS error messages must use generic text, not leak SecurityGate details."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_error_message_is_generic(self, ws_server):
+        """Error messages for rejected actions must say 'Invalid action'."""
+        token = "test_ws_token_xyz"
+        bad_action = {
+            "type": "action",
+            "data": {"action_id": "evil", "type": "evil_type", "value": True},
+        }
+        msg = _wrap_signed(token, bad_action)
+        ws = MockWebSocket(messages=[_auth_msg(), msg])
+        await ws_server._handle_ws(ws)
+
+        error_msgs = [m for m in ws.sent_json if isinstance(m, dict) and m.get("type") == "error"]
+        assert len(error_msgs) >= 1
+        error_text = error_msgs[0]["data"]["message"]
+        assert error_text == "Invalid action"

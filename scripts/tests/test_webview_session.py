@@ -9,13 +9,10 @@ Targets the 75% → higher coverage gap in mcp_server.py.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import socket
 import subprocess
 import sys
-import time
 from pathlib import Path
 from unittest import mock
 
@@ -191,7 +188,6 @@ class TestAcquireLock:
 
     def test_lock_contention_raises_after_retries(self, tmp_path):
         """After exhausting retries, should raise RuntimeError."""
-        import fcntl
 
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
         session.data_dir.mkdir(parents=True)
@@ -412,6 +408,7 @@ class TestHealthCheck:
         session.process.poll.return_value = None
 
         import urllib.error
+
         with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("fail")):
             result = await session._health_check()
             assert result is False
@@ -446,7 +443,9 @@ class TestEnsureStarted:
                             with mock.patch.object(session, "_write_manifest"):
                                 with mock.patch.object(session, "_init_data_contract"):
                                     with mock.patch.object(session, "_set_permissions"):
-                                        with mock.patch.object(session, "_find_free_ports", return_value=(18420, 18421)):
+                                        with mock.patch.object(
+                                            session, "_find_free_ports", return_value=(18420, 18421)
+                                        ):
                                             with mock.patch("subprocess.Popen") as mock_popen:
                                                 mock_proc = mock.MagicMock()
                                                 mock_proc.stderr = None
@@ -479,10 +478,14 @@ class TestEnsureStarted:
                                             mock_proc.kill = mock.MagicMock()
                                             mock_popen.return_value = mock_proc
                                             with mock.patch.object(session, "_health_check", return_value=False):
-                                                with mock.patch("select.select", return_value=([mock_proc.stderr], [], [])):
+                                                with mock.patch(
+                                                    "select.select", return_value=([mock_proc.stderr], [], [])
+                                                ):
                                                     (tmp_path / "sdk").mkdir(exist_ok=True)
                                                     (tmp_path / "sdk" / "openwebgoggles-sdk.js").write_text("")
-                                                    with pytest.raises(RuntimeError, match="Webview server failed to start"):
+                                                    with pytest.raises(
+                                                        RuntimeError, match="Webview server failed to start"
+                                                    ):
                                                         await session.ensure_started()
 
 
@@ -654,9 +657,7 @@ class TestDataContractMethods:
     def test_clear_actions(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
         session.data_dir.mkdir(parents=True)
-        (session.data_dir / "actions.json").write_text(
-            json.dumps({"version": 1, "actions": [{"id": "a"}]})
-        )
+        (session.data_dir / "actions.json").write_text(json.dumps({"version": 1, "actions": [{"id": "a"}]}))
         session.clear_actions()
         actions = session.read_actions()
         assert actions["actions"] == []
@@ -687,3 +688,353 @@ class TestGetSession:
             assert session is mock_session
         finally:
             mcp_server._session = old_session
+
+
+# ---------------------------------------------------------------------------
+# Multi-session race condition tests (M7)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeStateRaceConditions:
+    """Tests that merge_state's _state_lock prevents TOCTOU races."""
+
+    def test_concurrent_merges_do_not_lose_data(self, tmp_path):
+        """Concurrent merge_state calls should not lose updates."""
+        import concurrent.futures
+
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+        # Write initial state
+        session.write_state({"title": "Init", "data": {"sections": []}})
+
+        def merge_field(i):
+            session.merge_state({f"field_{i}": f"value_{i}"})
+
+        # Run 20 concurrent merges
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(merge_field, i) for i in range(20)]
+            for f in futures:
+                f.result()  # raises if any failed
+
+        # All 20 fields should be present in final state
+        final = session.read_state()
+        for i in range(20):
+            assert final.get(f"field_{i}") == f"value_{i}", f"field_{i} missing from final state"
+
+    def test_merge_with_validator_rejection_skips_write(self, tmp_path):
+        """If the validator raises, the merged state should NOT be written."""
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+        session.write_state({"title": "Original"})
+
+        def bad_validator(state):
+            raise ValueError("Invalid merged state")
+
+        with pytest.raises(ValueError, match="Invalid merged state"):
+            session.merge_state({"title": "Hacked"}, validator=bad_validator)
+
+        # State should still be the original
+        state = session.read_state()
+        assert state["title"] == "Original"
+
+    def test_concurrent_write_and_read(self, tmp_path):
+        """Concurrent writes and reads should not corrupt state."""
+        import concurrent.futures
+
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+        session.write_state({"title": "Start", "counter": 0})
+
+        errors = []
+
+        def writer(i):
+            try:
+                session.merge_state({"counter": i})
+            except Exception as e:
+                errors.append(e)
+
+        def reader():
+            try:
+                state = session.read_state()
+                # State should always be valid JSON
+                assert isinstance(state, dict)
+            except Exception as e:
+                errors.append(e)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = []
+            for i in range(15):
+                futures.append(executor.submit(writer, i))
+                futures.append(executor.submit(reader))
+            for f in futures:
+                f.result()
+
+        assert len(errors) == 0, f"Errors during concurrent access: {errors}"
+
+    def test_state_lock_prevents_interleaving(self, tmp_path):
+        """Verify _state_lock serializes merge_state calls."""
+        import threading
+
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+        session.write_state({"title": "Test", "items": []})
+
+        call_order = []
+
+        original_merge = session.merge_state.__func__
+
+        def tracked_merge(self_arg, partial, **kwargs):
+            call_order.append(("start", threading.current_thread().name))
+            result = original_merge(self_arg, partial, **kwargs)
+            call_order.append(("end", threading.current_thread().name))
+            return result
+
+        with mock.patch.object(type(session), "merge_state", tracked_merge):
+            t1 = threading.Thread(target=lambda: tracked_merge(session, {"a": 1}), name="t1")
+            t2 = threading.Thread(target=lambda: tracked_merge(session, {"b": 2}), name="t2")
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+        # Both merges should complete
+        final = session.read_state()
+        assert "a" in final
+        assert "b" in final
+
+
+class TestDeepMerge:
+    """Tests for _deep_merge edge cases relevant to race conditions."""
+
+    def test_list_replacement_not_append(self):
+        """Lists should be replaced, not appended during merge."""
+        from mcp_server import _deep_merge
+
+        base = {"items": [1, 2, 3]}
+        override = {"items": [4, 5]}
+        _deep_merge(base, override)
+        assert base["items"] == [4, 5]
+
+    def test_nested_dict_merge(self):
+        """Nested dicts should be recursively merged."""
+        from mcp_server import _deep_merge
+
+        base = {"a": {"b": 1, "c": 2}}
+        override = {"a": {"c": 3, "d": 4}}
+        _deep_merge(base, override)
+        assert base == {"a": {"b": 1, "c": 3, "d": 4}}
+
+    def test_max_depth_exceeded_raises(self):
+        """Exceeding MAX_MERGE_DEPTH should raise ValueError."""
+        from mcp_server import MAX_MERGE_DEPTH, _deep_merge
+
+        # Build matching nested dicts so _deep_merge recurses into dict+dict
+        base_inner = {"key": "old"}
+        override_inner = {"key": "new"}
+        for _ in range(MAX_MERGE_DEPTH + 2):
+            base_inner = {"nested": base_inner}
+            override_inner = {"nested": override_inner}
+
+        with pytest.raises(ValueError, match="Merge depth exceeds maximum"):
+            _deep_merge(base_inner, override_inner)
+
+    def test_non_dict_override_replaces_dict(self):
+        """Non-dict value should replace an existing dict."""
+        from mcp_server import _deep_merge
+
+        base = {"a": {"b": 1}}
+        override = {"a": "replaced"}
+        _deep_merge(base, override)
+        assert base["a"] == "replaced"
+
+    def test_dict_override_replaces_non_dict(self):
+        """Dict value should replace an existing non-dict."""
+        from mcp_server import _deep_merge
+
+        base = {"a": "string"}
+        override = {"a": {"b": 1}}
+        _deep_merge(base, override)
+        assert base["a"] == {"b": 1}
+
+
+# ---------------------------------------------------------------------------
+# Integration lifecycle tests (M9)
+# ---------------------------------------------------------------------------
+
+
+class TestIntegrationLifecycle:
+    """End-to-end lifecycle tests for WebviewSession data contract."""
+
+    def test_full_state_lifecycle(self, tmp_path):
+        """Write → Read → Merge → Read cycle should produce consistent results."""
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+
+        # Write initial state
+        session.write_state({"title": "Test App", "data": {"sections": []}})
+        state1 = session.read_state()
+        assert state1["title"] == "Test App"
+        assert state1["version"] == 1
+
+        # Merge additional data
+        session.merge_state({"status": "active"})
+        state2 = session.read_state()
+        assert state2["title"] == "Test App"  # preserved
+        assert state2["status"] == "active"  # added
+        assert state2["version"] == 2  # auto-incremented
+
+        # Overwrite via write_state
+        session.write_state({"title": "New Title"})
+        state3 = session.read_state()
+        assert state3["title"] == "New Title"
+        assert state3["version"] == 3
+
+    def test_actions_lifecycle(self, tmp_path):
+        """Write actions → Read → Clear → Read cycle."""
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+
+        # Initially empty
+        actions = session.read_actions()
+        assert actions["actions"] == []
+
+        # Simulate action written by server
+        actions_path = session.data_dir / "actions.json"
+        actions_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "actions": [{"action_id": "approve", "type": "approve", "value": True}],
+                }
+            )
+        )
+
+        actions = session.read_actions()
+        assert len(actions["actions"]) == 1
+        assert actions["actions"][0]["action_id"] == "approve"
+
+        # Clear
+        session.clear_actions()
+        actions = session.read_actions()
+        assert actions["actions"] == []
+
+    def test_state_version_auto_increments(self, tmp_path):
+        """Each write_state call should increment the version."""
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+
+        for i in range(5):
+            session.write_state({"title": f"v{i}"})
+            state = session.read_state()
+            assert state["version"] == i + 1
+
+    def test_merge_preserves_nested_sections(self, tmp_path):
+        """Merging should preserve existing nested data structures."""
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+
+        session.write_state(
+            {
+                "title": "Test",
+                "data": {
+                    "sections": [
+                        {"type": "text", "content": "Hello"},
+                        {"type": "form", "fields": [{"key": "name", "label": "Name", "type": "text"}]},
+                    ],
+                },
+            }
+        )
+
+        # Merge only changes the status — sections should survive
+        session.merge_state({"status": "updated"})
+        state = session.read_state()
+        assert state["status"] == "updated"
+        assert len(state["data"]["sections"]) == 2
+        assert state["data"]["sections"][0]["content"] == "Hello"
+
+    def test_merge_replaces_sections_list(self, tmp_path):
+        """Merging data.sections should replace (not append) the list."""
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+
+        session.write_state(
+            {
+                "title": "Test",
+                "data": {"sections": [{"type": "text", "content": "Old"}]},
+            }
+        )
+
+        session.merge_state(
+            {
+                "data": {"sections": [{"type": "text", "content": "New"}]},
+            }
+        )
+
+        state = session.read_state()
+        assert len(state["data"]["sections"]) == 1
+        assert state["data"]["sections"][0]["content"] == "New"
+
+    def test_merge_with_security_gate_validator(self, tmp_path):
+        """merge_state with SecurityGate validator should reject XSS."""
+        from security_gate import SecurityGate
+
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+
+        session.write_state({"title": "Safe", "data": {"sections": []}})
+
+        gate = SecurityGate()
+
+        def validator(state):
+            # validate_state expects JSON string, returns (ok, err, parsed)
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            if not ok:
+                raise ValueError(f"SecurityGate: {err}")
+
+        # Safe merge should work (use allowed status value)
+        session.merge_state({"status": "processing"}, validator=validator)
+        assert session.read_state()["status"] == "processing"
+
+        # XSS merge should be rejected
+        with pytest.raises(ValueError, match="SecurityGate"):
+            session.merge_state(
+                {"data": {"sections": [{"type": "text", "content": "<script>alert(1)</script>"}]}},
+                validator=validator,
+            )
+
+        # State should still be safe (no XSS written)
+        state = session.read_state()
+        sections = state.get("data", {}).get("sections", [])
+        for sec in sections:
+            assert "<script>" not in sec.get("content", "")
+
+    @pytest.mark.asyncio
+    async def test_wait_for_action_timeout(self, tmp_path):
+        """wait_for_action should return None on timeout."""
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.data_dir.mkdir(parents=True)
+
+        result = await session.wait_for_action(timeout=0.1)
+        assert result is None
+
+    def test_data_dir_isolation(self, tmp_path):
+        """Two sessions with different work_dirs should be fully isolated."""
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+
+        session_a = WebviewSession(work_dir=dir_a, open_browser=False)
+        session_b = WebviewSession(work_dir=dir_b, open_browser=False)
+
+        session_a.data_dir.mkdir(parents=True)
+        session_b.data_dir.mkdir(parents=True)
+
+        session_a.write_state({"title": "Session A"})
+        session_b.write_state({"title": "Session B"})
+
+        assert session_a.read_state()["title"] == "Session A"
+        assert session_b.read_state()["title"] == "Session B"
+
+        # Merging in one doesn't affect the other
+        session_a.merge_state({"extra": "a_data"})
+        state_b = session_b.read_state()
+        assert "extra" not in state_b

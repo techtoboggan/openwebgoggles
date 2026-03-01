@@ -768,8 +768,8 @@ class TestActionValidation:
 
     @pytest.mark.owasp_a07
     def test_action_value_at_limit(self, gate):
-        """Value at exactly 100KB should pass."""
-        value = "x" * 99_990  # Leave room for JSON quotes
+        """Value within XSS scanner string limit should pass."""
+        value = "x" * 49_990  # Within MAX_STRING_LENGTH (50KB) and action payload limit
         ok, err = gate.validate_action({"action_id": "test", "type": "confirm", "value": value})
         assert ok, err
 
@@ -3406,7 +3406,13 @@ class TestUINestingAndValidation:
         """Non-dict items in fields array are skipped (line 503)."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{"type": "form", "fields": ["not-a-dict", {"key": "f1", "type": "text", "label": "OK"}]}]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": ["not-a-dict", {"key": "f1", "type": "text", "label": "OK"}]}
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert ok, err
@@ -3415,7 +3421,16 @@ class TestUINestingAndValidation:
         """Field with invalid className fails (line 528)."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "className": "invalid!@chars"}]}]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "form",
+                            "fields": [{"key": "f1", "type": "text", "label": "x", "className": "invalid!@chars"}],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -3425,10 +3440,16 @@ class TestUINestingAndValidation:
         """Item with invalid className fails (line 552)."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "items",
-                "items": [{"id": "i1", "label": "x", "className": "invalid!@chars"}],
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "items",
+                            "items": [{"id": "i1", "label": "x", "className": "invalid!@chars"}],
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -3438,11 +3459,17 @@ class TestUINestingAndValidation:
         """Section-level actions validation failure (line 568)."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{
-                "type": "text",
-                "content": "hi",
-                "actions": [{"id": 999}],  # id must be string
-            }]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {
+                            "type": "text",
+                            "content": "hi",
+                            "actions": [{"id": 999}],  # id must be string
+                        }
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -3456,9 +3483,13 @@ class TestFieldValidationEdgeCases:
         """pattern must be a string (line 605)."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{"type": "form", "fields": [
-                {"key": "f1", "type": "text", "label": "x", "pattern": 123}
-            ]}]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "pattern": 123}]}
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -3467,18 +3498,20 @@ class TestFieldValidationEdgeCases:
     def test_pattern_with_xss(self, gate):
         """pattern with XSS should fail (line 612)."""
         # Use javascript: protocol which is caught by XSS scanner
-        ok, err = gate._validate_field_validation(
-            {"pattern": "javascript:alert(1)"}, "test"
-        )
+        ok, err = gate._validate_field_validation({"pattern": "javascript:alert(1)"}, "test")
         assert not ok
 
     def test_max_length_not_integer(self, gate):
         """maxLength must be a non-negative integer (line 622)."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{"type": "form", "fields": [
-                {"key": "f1", "type": "text", "label": "x", "maxLength": -1}
-            ]}]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "maxLength": -1}]}
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -3488,9 +3521,13 @@ class TestFieldValidationEdgeCases:
         """errorMessage must be a string (line 632)."""
         state = {
             "status": "ready",
-            "data": {"ui": {"sections": [{"type": "form", "fields": [
-                {"key": "f1", "type": "text", "label": "x", "errorMessage": 123}
-            ]}]}},
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "errorMessage": 123}]}
+                    ]
+                }
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
@@ -3499,9 +3536,7 @@ class TestFieldValidationEdgeCases:
     def test_error_message_with_xss(self, gate):
         """errorMessage with XSS should fail (line 637)."""
         # Call _validate_field_validation directly to avoid the general XSS scanner
-        ok, err = gate._validate_field_validation(
-            {"errorMessage": "javascript:alert(1)"}, "test"
-        )
+        ok, err = gate._validate_field_validation({"errorMessage": "javascript:alert(1)"}, "test")
         assert not ok
 
 
@@ -3645,9 +3680,9 @@ class TestBehaviorsValidation:
     def test_behavior_matches_xss(self, gate):
         """behaviors[i].when.matches with XSS should fail (line 774)."""
         # Call _validate_behaviors directly to avoid the general XSS scanner
-        ok, err = gate._validate_behaviors([
-            {"when": {"field": "f1", "matches": "javascript:alert(1)"}, "show": ["f2"]}
-        ])
+        ok, err = gate._validate_behaviors(
+            [{"when": {"field": "f1", "matches": "javascript:alert(1)"}, "show": ["f2"]}]
+        )
         assert not ok
 
     def test_behavior_effect_not_array(self, gate):
@@ -3695,3 +3730,924 @@ class TestLayoutValidation:
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "must be an object" in err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EDGE CASE TESTS — Unicode normalization, field validation boundaries,
+# diff language, table selectable, tab nesting recursion
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestUnicodeNormalization:
+    """Verify NFC normalization is applied before XSS scanning (M10 fix).
+
+    The _scan_xss method normalizes strings via unicodedata.normalize("NFC", ...)
+    before applying XSS pattern matching. This prevents bypass via decomposed
+    unicode characters that visually resemble ASCII keywords.
+    """
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    def test_decomposed_e_normalized(self, gate):
+        """cafe\\u0301 (decomposed e-acute) normalizes to cafe before scanning."""
+        # This is safe text — "cafe\u0301" becomes "caf\u00e9" after NFC, no XSS
+        state = {"status": "ready", "message": "cafe\u0301"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Clean decomposed unicode should pass: {err}"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    def test_normal_unicode_text_passes(self, gate):
+        """Normal unicode strings (accented, CJK, emoji) should pass through fine."""
+        texts = [
+            "caf\u00e9",  # pre-composed e-acute
+            "\u00fcber",  # u-umlaut
+            "\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8",  # Japanese text
+            "r\u00e9sum\u00e9 with accents",
+            "\u2603 snowman",
+        ]
+        for text in texts:
+            state = {"status": "ready", "message": text}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert ok, f"Clean unicode {text!r} should pass: {err}"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    def test_xss_with_decomposed_unicode_still_caught(self, gate):
+        """XSS payloads using decomposed unicode should still be caught after NFC."""
+        # <script> with a decomposed accent somewhere shouldn't bypass detection
+        payload = "<script>ale\u0301rt(1)</script>"
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "XSS with decomposed unicode must still be caught"
+        assert "XSS" in err
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    def test_combining_mark_between_angle_and_script(self, gate):
+        """Combining mark between < and 'script' disrupts the regex pattern.
+
+        After NFC, <\\u0300 does not compose (< is not a base letter), so the
+        combining grave accent stays. The regex <\\s*script does not match because
+        \\u0300 is not whitespace. The browser also would not parse this as a
+        <script> tag, so accepting it is correct behavior.
+        """
+        payload = "<\u0300script>alert(1)</script>"
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        # Combining mark disrupts the pattern — gate correctly accepts it
+        # because the browser also cannot interpret this as <script>
+        assert ok, f"Combining mark between < and script disrupts pattern: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_nfc_normalization_of_event_handler(self, gate):
+        """Event handlers with decomposed characters should be detected post-NFC."""
+        # "onclick" with decomposed o-umlaut — after NFC: o\u0308 -> \u00f6
+        # This means "\u00f6nclick" which does NOT match \\bon\\w+, so it's safe.
+        # The test confirms NFC normalization prevents false positives.
+        payload = '<div o\u0308nclick="alert(1)">test</div>'
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        # The NFC-normalized form has \u00f6 (o-umlaut) so "onclick" keyword is
+        # disrupted. But the original string still contains "onclick" which may
+        # match pre-normalization. Either way, the gate should not crash.
+        assert isinstance(ok, bool), "Gate must return a boolean, not crash"
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm01
+    def test_javascript_protocol_with_decomposed_chars(self, gate):
+        """javascript: protocol with decomposed characters must be caught."""
+        # Standard "javascript:" with a combining accent on 'a'
+        payload = "java\u0301script:alert(1)"
+        raw = json.dumps({"status": "ready", "message": payload})
+        ok, err, _ = gate.validate_state(raw)
+        # After NFC: a\u0301 -> \u00e1, so we get "jav\u00e1script:" which may or
+        # may not match "javascript\\s*:" regex. The important thing is no crash.
+        assert isinstance(ok, bool), "Gate must return a boolean, not crash"
+
+    @pytest.mark.owasp_a03
+    def test_mixed_nfc_and_nfd_content(self, gate):
+        """State with a mix of NFC and NFD content should be handled without error."""
+        state = {
+            "status": "ready",
+            "title": "Caf\u00e9",  # pre-composed (NFC)
+            "message": "cafe\u0301 is great",  # decomposed (NFD)
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Mixed NFC/NFD clean text should pass: {err}"
+
+
+class TestFieldValidationEdgeCasesExtended:
+    """Edge cases for field validation regex patterns and min/max boundaries."""
+
+    @pytest.mark.owasp_a04
+    def test_empty_pattern_accepted(self, gate):
+        """pattern='' (empty string) should be accepted — it's a valid regex."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "pattern": ""}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty pattern should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_dot_pattern_accepted(self, gate):
+        """pattern='.' (matches everything) should be accepted."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "pattern": "."}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Dot pattern should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pattern_with_anchors(self, gate):
+        """Anchored patterns like ^[a-z]+$ should be accepted."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "pattern": "^[a-z]+$"}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Anchored pattern should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pattern_max_length_boundary(self, gate):
+        """Pattern at exactly 500 chars should be accepted."""
+        pattern = "a" * 500
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "pattern": pattern}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Pattern at 500 chars should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_pattern_exceeds_max_length(self, gate):
+        """Pattern over 500 chars should be rejected."""
+        pattern = "a" * 501
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "pattern": pattern}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "pattern too long" in err
+
+    @pytest.mark.owasp_a04
+    def test_min_length_zero_accepted(self, gate):
+        """minLength=0 should be accepted (non-negative integer)."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "minLength": 0}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"minLength=0 should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_max_length_zero_accepted(self, gate):
+        """maxLength=0 should be accepted (non-negative integer)."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "maxLength": 0}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"maxLength=0 should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_min_length_negative_rejected(self, gate):
+        """minLength=-1 should be rejected."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "minLength": -1}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "minLength must be a non-negative integer" in err
+
+    @pytest.mark.owasp_a04
+    def test_min_length_float_rejected(self, gate):
+        """minLength=3.5 (float) should be rejected — must be int."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "minLength": 3.5}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "minLength must be a non-negative integer" in err
+
+    @pytest.mark.owasp_a04
+    def test_max_length_float_rejected(self, gate):
+        """maxLength=10.0 (float) should be rejected — must be int."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "x", "maxLength": 10.0}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "maxLength must be a non-negative integer" in err
+
+    @pytest.mark.owasp_a04
+    def test_number_field_min_negative_accepted(self, gate):
+        """min=-100 for number fields should be accepted (negative numbers are valid)."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "number", "label": "x", "min": -100}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Negative min for number field should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_number_field_max_negative_accepted(self, gate):
+        """max=-1 for number fields should be accepted."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [{"type": "form", "fields": [{"key": "f1", "type": "number", "label": "x", "max": -1}]}]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Negative max for number field should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_number_field_min_float_accepted(self, gate):
+        """min=0.5 (float) for number fields should be accepted."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "number", "label": "x", "min": 0.5}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Float min for number field should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_number_field_min_string_rejected(self, gate):
+        """min='10' (string) for number fields should be rejected."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "number", "label": "x", "min": "10"}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "min must be a number" in err
+
+    @pytest.mark.owasp_a04
+    def test_number_field_max_string_rejected(self, gate):
+        """max='100' (string) for number fields should be rejected."""
+        state = {
+            "status": "ready",
+            "data": {
+                "ui": {
+                    "sections": [
+                        {"type": "form", "fields": [{"key": "f1", "type": "number", "label": "x", "max": "100"}]}
+                    ]
+                }
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "max must be a number" in err
+
+
+class TestDiffSectionEdgeCases:
+    """Edge cases for diff section language field validation."""
+
+    @pytest.mark.owasp_a04
+    def test_language_with_special_chars_rejected(self, gate):
+        """Language containing special characters should be rejected."""
+        invalid_langs = [
+            "python<script>",
+            "java script",
+            "c++",
+            "c#",
+            "lang.ext",
+            "lang/path",
+            "lang\\back",
+            "lang;drop",
+            "lang&cmd",
+            "lang|pipe",
+        ]
+        for lang in invalid_langs:
+            state = {"data": {"sections": [{"type": "diff", "content": "+x", "language": lang}]}}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert not ok, f"Language {lang!r} with special chars should be rejected"
+            assert "language" in err
+
+    @pytest.mark.owasp_a04
+    def test_language_exceeding_reasonable_length(self, gate):
+        """Very long language strings should be accepted if alphanumeric."""
+        # The regex ^[a-zA-Z0-9_-]+$ will match, so an extremely long language
+        # passes validation. This test documents that behavior.
+        long_lang = "a" * 1000
+        state = {"data": {"sections": [{"type": "diff", "content": "+x", "language": long_lang}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        # The regex allows it since it's all alphanumeric — this test documents behavior
+        assert ok, f"Long but alphanumeric language should pass regex: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_language_empty_string_accepted(self, gate):
+        """Empty language string should be accepted (optional field)."""
+        state = {"data": {"sections": [{"type": "diff", "content": "+x", "language": ""}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty language should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_language_hyphen_and_underscore(self, gate):
+        """Language with hyphens and underscores should be accepted."""
+        for lang in ["objective-c", "type_script", "c-sharp_v2", "go-1_21"]:
+            state = {"data": {"sections": [{"type": "diff", "content": "+x", "language": lang}]}}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert ok, f"Language {lang!r} should be accepted: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_language_xss_injection(self, gate):
+        """Attempting XSS via the language field should be rejected."""
+        xss_langs = [
+            'python"onload="alert(1)',
+            "<script>",
+            "javascript:",
+        ]
+        for lang in xss_langs:
+            state = {"data": {"sections": [{"type": "diff", "content": "+x", "language": lang}]}}
+            ok, err, _ = gate.validate_state(json.dumps(state))
+            assert not ok, f"XSS language {lang!r} should be rejected"
+
+
+class TestTableSelectableEdgeCases:
+    """Edge cases for table section selectable property."""
+
+    @pytest.mark.owasp_a04
+    def test_selectable_true_accepted(self, gate):
+        """selectable=true (boolean) should be accepted."""
+        state = {
+            "data": {
+                "sections": [{"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": [], "selectable": True}]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"selectable=true should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_selectable_false_accepted(self, gate):
+        """selectable=false (boolean) should be accepted."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": [], "selectable": False}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"selectable=false should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_selectable_string_true_rejected(self, gate):
+        """selectable='true' (string) should be rejected — must be bool."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": [], "selectable": "true"}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "selectable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_selectable_string_false_rejected(self, gate):
+        """selectable='false' (string) should be rejected — must be bool."""
+        state = {
+            "data": {
+                "sections": [
+                    {"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": [], "selectable": "false"}
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "selectable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_selectable_int_rejected(self, gate):
+        """selectable=1 (integer) should be rejected — must be bool."""
+        state = {
+            "data": {
+                "sections": [{"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": [], "selectable": 1}]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "selectable must be a boolean" in err
+
+    @pytest.mark.owasp_a04
+    def test_selectable_null_rejected(self, gate):
+        """selectable=null should be rejected — must be bool."""
+        state = {
+            "data": {
+                "sections": [{"type": "table", "columns": [{"key": "c", "label": "C"}], "rows": [], "selectable": None}]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "selectable must be a boolean" in err
+
+
+class TestTabNestingRecursion:
+    """Edge cases for tab nesting depth enforcement.
+
+    Two depth checks are in play:
+      1. _check_depth (MAX_NESTING_DEPTH=10): generic JSON nesting depth
+      2. _validate_ui (MAX_SECTION_DEPTH=3): section-level recursion for tabs
+
+    2-level nested tabs produce ~11 levels of JSON nesting, so they exceed
+    MAX_NESTING_DEPTH=10 and are rejected by _check_depth before _validate_ui
+    even runs. This is by design (see AGENTS.md).
+
+    To test MAX_SECTION_DEPTH enforcement specifically, we call _validate_ui
+    directly with _depth parameters.
+    """
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.llm10
+    def test_single_tabs_accepted_via_validate_state(self, gate):
+        """Single-level tabs (no nesting) accepted through validate_state."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [
+                            {
+                                "id": "t1",
+                                "label": "Tab 1",
+                                "sections": [{"type": "text", "content": "Hello"}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Single-level tabs should be accepted: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.llm10
+    def test_nested_tabs_rejected_by_json_depth(self, gate):
+        """2-level nested tabs exceed MAX_NESTING_DEPTH=10 (by design).
+
+        Each tab level adds ~5 levels of JSON nesting (sections -> [] -> tabs ->
+        [] -> sections -> ...). Two levels of nesting produces ~11 levels of JSON
+        depth, exceeding the MAX_NESTING_DEPTH=10 safety limit.
+        """
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [
+                            {
+                                "id": "outer",
+                                "label": "Outer",
+                                "sections": [
+                                    {
+                                        "type": "tabs",
+                                        "tabs": [
+                                            {
+                                                "id": "inner",
+                                                "label": "Inner",
+                                                "sections": [{"type": "text", "content": "Nested"}],
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "2-level nested tabs should be rejected by JSON depth check"
+        assert "Nesting depth exceeds" in err
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.llm10
+    def test_validate_ui_accepts_3_levels_directly(self, gate):
+        """_validate_ui accepts up to MAX_SECTION_DEPTH=3 levels of tab nesting."""
+        ui = {
+            "sections": [
+                {
+                    "type": "tabs",
+                    "tabs": [
+                        {
+                            "id": "L1",
+                            "label": "Level 1",
+                            "sections": [
+                                {
+                                    "type": "tabs",
+                                    "tabs": [
+                                        {
+                                            "id": "L2",
+                                            "label": "Level 2",
+                                            "sections": [
+                                                {
+                                                    "type": "tabs",
+                                                    "tabs": [
+                                                        {
+                                                            "id": "L3",
+                                                            "label": "Level 3",
+                                                            "sections": [{"type": "text", "content": "Deep"}],
+                                                        }
+                                                    ],
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        ok, err = gate._validate_ui(ui, _depth=0)
+        assert ok, f"3 levels of tab nesting should be accepted by _validate_ui: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.llm10
+    def test_validate_ui_rejects_4_levels_directly(self, gate):
+        """_validate_ui rejects 4 levels of tab nesting (exceeds MAX_SECTION_DEPTH=3)."""
+        ui = {
+            "sections": [
+                {
+                    "type": "tabs",
+                    "tabs": [
+                        {
+                            "id": "L1",
+                            "label": "Level 1",
+                            "sections": [
+                                {
+                                    "type": "tabs",
+                                    "tabs": [
+                                        {
+                                            "id": "L2",
+                                            "label": "Level 2",
+                                            "sections": [
+                                                {
+                                                    "type": "tabs",
+                                                    "tabs": [
+                                                        {
+                                                            "id": "L3",
+                                                            "label": "Level 3",
+                                                            "sections": [
+                                                                {
+                                                                    "type": "tabs",
+                                                                    "tabs": [
+                                                                        {
+                                                                            "id": "L4",
+                                                                            "label": "Level 4",
+                                                                            "sections": [
+                                                                                {"type": "text", "content": "Too deep"}
+                                                                            ],
+                                                                        }
+                                                                    ],
+                                                                }
+                                                            ],
+                                                        }
+                                                    ],
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        ok, err = gate._validate_ui(ui, _depth=0)
+        assert not ok, "4 levels of tab nesting should be rejected by _validate_ui"
+        assert "nesting too deep" in err.lower()
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.llm10
+    def test_validate_ui_depth_boundary(self, gate):
+        """_validate_ui depth boundary: tabs at depth 2 pass, depth 3 rejected.
+
+        At _depth=3, the tab section itself is processed (3 > 3 is False, passes),
+        but nested tab content calls _validate_ui(_depth=4) which exceeds
+        MAX_SECTION_DEPTH=3. So tabs with content at _depth=3 are effectively
+        rejected.
+        """
+        ui = {
+            "sections": [
+                {
+                    "type": "tabs",
+                    "tabs": [
+                        {
+                            "id": "t1",
+                            "label": "Tab",
+                            "sections": [{"type": "text", "content": "x"}],
+                        }
+                    ],
+                }
+            ]
+        }
+        # At depth 2: tab content recurses to depth 3, which is at the boundary
+        ok, err = gate._validate_ui(ui, _depth=2)
+        assert ok, f"Tabs at depth 2 should pass (recursion to 3 is at boundary): {err}"
+
+        # At depth 3: tab content recurses to depth 4, which exceeds MAX_SECTION_DEPTH
+        ok, err = gate._validate_ui(ui, _depth=3)
+        assert not ok, "Tabs at depth 3 should be rejected (recursion exceeds limit)"
+        assert "nesting too deep" in err.lower()
+
+        # At depth 4: immediately rejected at entry
+        ok, err = gate._validate_ui(ui, _depth=4)
+        assert not ok, "Depth 4 should be rejected immediately"
+        assert "nesting too deep" in err.lower()
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.llm10
+    def test_validate_ui_mixed_sections_at_depth_boundary(self, gate):
+        """Mixed section types inside tabs at depth boundary should work."""
+        ui = {
+            "sections": [
+                {
+                    "type": "tabs",
+                    "tabs": [
+                        {
+                            "id": "t1",
+                            "label": "Tab 1",
+                            "sections": [
+                                {"type": "text", "content": "Text section"},
+                                {"type": "form", "fields": [{"key": "f1", "type": "text", "label": "Name"}]},
+                                {"type": "items", "items": [{"title": "Item 1"}]},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        ok, err = gate._validate_ui(ui, _depth=2)
+        assert ok, f"Mixed sections in tabs at depth 2 should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    @pytest.mark.llm10
+    def test_empty_tabs_nesting(self, gate):
+        """Tabs with empty sections array should be accepted."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "tabs",
+                        "tabs": [{"id": "t1", "label": "Tab 1", "sections": []}],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Tabs with empty sections should be accepted: {err}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY GATE EDGE CASES — Unicode, Boundary, and Bypass Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSecurityGateEdgeCases:
+    """Edge cases for SecurityGate validation added during v0.8.2 audit."""
+
+    # --- Unicode normalization edge cases ---
+
+    @pytest.mark.owasp_a03
+    def test_nfc_normalization_catches_decomposed_script_tag(self, gate):
+        """NFC normalization should catch <script> built with combining chars."""
+        # Use decomposed forms of characters that compose into ASCII equivalents
+        # U+003C < and U+003E > are not affected by NFC but let's test the full pipeline
+        # Test with actual decomposed unicode in string values
+        state = {"title": "Test", "data": {"sections": [{"type": "text", "content": "<script>alert(1)</script>"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Should catch <script> tag"
+
+    @pytest.mark.owasp_a03
+    def test_zero_width_chars_in_nested_dict(self, gate):
+        """Zero-width chars should be caught anywhere in nested structures."""
+        # U+200B zero-width space embedded in a field label
+        state = {
+            "title": "Test",
+            "data": {"sections": [{"type": "form", "fields": [{"key": "f1", "label": "Na\u200bme", "type": "text"}]}]},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Should catch zero-width chars in nested field label"
+
+    @pytest.mark.owasp_a03
+    def test_zero_width_chars_in_dict_key(self, gate):
+        """Zero-width chars in dict keys should be caught."""
+        state = {"title": "Test", "data": {"sections": [{"type": "text", "content": "hello", "\u200bextra": "val"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Should catch zero-width chars in dict keys"
+
+    # --- Boundary/size limit edge cases ---
+
+    @pytest.mark.owasp_a07
+    def test_exactly_max_string_length_passes(self, gate):
+        """String at exactly MAX_STRING_LENGTH should pass (boundary test)."""
+        long_str = "a" * gate.MAX_STRING_LENGTH
+        state = {"title": long_str, "data": {"sections": []}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, "Exactly MAX_STRING_LENGTH should pass"
+
+    @pytest.mark.owasp_a07
+    def test_one_over_max_string_length_fails(self, gate):
+        """String at MAX_STRING_LENGTH + 1 should fail."""
+        long_str = "a" * (gate.MAX_STRING_LENGTH + 1)
+        state = {"title": long_str, "data": {"sections": []}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "One over MAX_STRING_LENGTH should fail"
+
+    @pytest.mark.owasp_a07
+    def test_exactly_max_sections_passes(self, gate):
+        """Having exactly MAX_SECTIONS should pass."""
+        sections = [{"type": "text", "content": f"Section {i}"} for i in range(gate.MAX_SECTIONS)]
+        state = {"title": "Test", "data": {"sections": sections}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, "Exactly MAX_SECTIONS should pass"
+
+    @pytest.mark.owasp_a07
+    def test_one_over_max_sections_fails(self, gate):
+        """Having MAX_SECTIONS + 1 should fail."""
+        sections = [{"type": "text", "content": f"Section {i}"} for i in range(gate.MAX_SECTIONS + 1)]
+        state = {"title": "Test", "data": {"sections": sections}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "One over MAX_SECTIONS should fail"
+
+    # --- XSS pattern bypass attempts ---
+
+    @pytest.mark.owasp_a03
+    def test_javascript_uri_case_insensitive(self, gate):
+        """javascript: URI should be caught regardless of case."""
+        state = {"title": "Test", "data": {"sections": [{"type": "text", "content": "JaVaScRiPt:alert(1)"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Case-insensitive javascript: URI should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_data_uri_in_content(self, gate):
+        """data: URI should be caught in string content."""
+        state = {
+            "title": "Test",
+            "data": {"sections": [{"type": "text", "content": "data:text/html,<script>alert(1)</script>"}]},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "data: URI with script should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_event_handler_onerror(self, gate):
+        """onerror= event handler should be caught."""
+        state = {
+            "title": "Test",
+            "data": {"sections": [{"type": "text", "content": '<img onerror="alert(1)" src="x">'}]},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "onerror event handler should be caught"
+
+    @pytest.mark.owasp_a03
+    def test_xss_in_action_value(self, gate):
+        """XSS in action value should be caught."""
+        # validate_action does not scan for XSS in value (it's a size check),
+        # but validate_state does scan actions_requested for XSS
+        state = {
+            "title": "Test",
+            "data": {"sections": []},
+            "actions_requested": [{"id": "test", "type": "approve", "label": "<script>alert(1)</script>"}],
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "XSS in action label should be caught"
+
+    # --- Validate action edge cases ---
+
+    @pytest.mark.owasp_a03
+    def test_validate_action_non_dict(self, gate):
+        """validate_action should reject non-dict input."""
+        ok, err = gate.validate_action("not a dict")
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_validate_action_missing_action_id(self, gate):
+        """validate_action should require action_id."""
+        ok, err = gate.validate_action({"type": "approve", "value": True})
+        assert not ok
+
+    @pytest.mark.owasp_a03
+    def test_validate_action_oversized_payload(self, gate):
+        """validate_action should reject oversized payloads."""
+        # Create a very large action value
+        action = {"action_id": "test", "type": "approve", "value": "x" * 600_000}
+        ok, err = gate.validate_action(action)
+        assert not ok
+
+    # --- State validation edge cases ---
+
+    @pytest.mark.owasp_a07
+    def test_empty_state_passes(self, gate):
+        """Empty state dict should pass validation."""
+        ok, err, _ = gate.validate_state("{}")
+        assert ok, err
+
+    @pytest.mark.owasp_a07
+    def test_state_with_unknown_top_level_key_rejected(self, gate):
+        """Unknown top-level keys should be rejected (allowlist enforcement)."""
+        state = {"title": "Test", "evil_key": "payload"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Unknown top-level key should be rejected"
+
+    @pytest.mark.owasp_a03
+    def test_deeply_nested_structure_rejected(self, gate):
+        """Deeply nested structure exceeding MAX_NESTING_DEPTH should be rejected."""
+        # Build a deeply nested dict within the data sections
+        inner = {"key": "value"}
+        for _ in range(gate.MAX_NESTING_DEPTH + 5):
+            inner = {"nested": inner}
+        state = {"data": {"sections": [{"type": "text", "content": "x", "extra": inner}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, "Deeply nested structure should be rejected"

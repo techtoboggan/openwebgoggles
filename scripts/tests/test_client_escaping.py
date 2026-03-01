@@ -31,7 +31,7 @@ def esc_html(s: str) -> str:
     """Mirror of escHtml() / escapeHtml() / esc() used across all apps.
 
     All apps encode at least & < > "
-    The security-qa and dynamic apps use string .replace chains.
+    The item-triage and dynamic apps use string .replace chains.
     The approval-review and template apps use a DOM textContent trick which
     encodes the same set.
     """
@@ -394,18 +394,18 @@ class TestSourceCodePatterns:
         assert "onclick" not in src, "template/app.js should not use inline onclick handlers"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_uses_dom_api_for_inputs(self):
-        """security-qa/app.js must use addEventListener instead of inline oninput/onchange."""
-        src = self._read_js("examples/security-qa/app.js")
+    def test_item_triage_uses_dom_api_for_inputs(self):
+        """item-triage/app.js must use addEventListener instead of inline oninput/onchange."""
+        src = self._read_js("examples/item-triage/app.js")
         assert "addEventListener" in src, "Must use addEventListener for input events"
         # Must NOT have inline event handlers
         inline = re.findall(r"\bon(?:input|change)\s*=", src)
         assert len(inline) == 0, f"Found inline handlers: {inline}"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_eschtml_complete(self):
-        """security-qa escHtml must encode & < > "."""
-        src = self._read_js("examples/security-qa/app.js")
+    def test_item_triage_eschtml_complete(self):
+        """item-triage escHtml must encode & < > "."""
+        src = self._read_js("examples/item-triage/app.js")
         # Find escHtml function body
         match = re.search(r"function\s+escHtml\s*\([^)]*\)\s*\{([^}]+)\}", src)
         assert match, "escHtml function not found"
@@ -428,7 +428,7 @@ class TestSourceCodePatterns:
         apps = [
             "examples/approval-review/app.js",
             "assets/template/app.js",
-            "examples/security-qa/app.js",
+            "examples/item-triage/app.js",
             "assets/apps/dynamic/app.js",
         ]
         for path in apps:
@@ -450,7 +450,7 @@ class TestSourceCodePatterns:
             "assets/apps/dynamic/utils.js": ("esc", "escAttr"),
             # Refactored apps use DOM API — only need HTML escape for innerHTML fallback
             "examples/approval-review/app.js": ("escapeHtml",),
-            "examples/security-qa/app.js": ("escHtml",),
+            "examples/item-triage/app.js": ("escHtml",),
             "assets/template/app.js": ("escapeHtml",),
         }
         for path, required_fns in apps.items():
@@ -730,22 +730,22 @@ class TestSecurityHardening:
         assert len(inline) == 0, f"Found inline handlers in approval-review: {inline}"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_no_inline_handlers(self):
-        """security-qa/app.js must not use inline onclick/oninput/onchange."""
-        src = self._read_js("examples/security-qa/app.js")
+    def test_item_triage_no_inline_handlers(self):
+        """item-triage/app.js must not use inline onclick/oninput/onchange."""
+        src = self._read_js("examples/item-triage/app.js")
         import re
 
         inline = re.findall(r"\bon(?:click|input|change|focus|blur|submit|load)\s*=", src)
-        assert len(inline) == 0, f"Found inline handlers in security-qa/app.js: {inline}"
+        assert len(inline) == 0, f"Found inline handlers in item-triage/app.js: {inline}"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_html_no_inline_handlers(self):
-        """security-qa/index.html must not use inline onclick attributes."""
-        src = self._read_js("examples/security-qa/index.html")
+    def test_item_triage_html_no_inline_handlers(self):
+        """item-triage/index.html must not use inline onclick attributes."""
+        src = self._read_js("examples/item-triage/index.html")
         import re
 
         inline = re.findall(r"\bon(?:click|input|change|focus|blur|submit|load)\s*=", src)
-        assert len(inline) == 0, f"Found inline handlers in security-qa/index.html: {inline}"
+        assert len(inline) == 0, f"Found inline handlers in item-triage/index.html: {inline}"
 
     @pytest.mark.owasp_a03
     def test_approval_review_uses_addeventlistener(self):
@@ -754,9 +754,9 @@ class TestSecurityHardening:
         assert "addEventListener" in src, "Must use addEventListener instead of inline handlers"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_uses_addeventlistener(self):
-        """security-qa must use addEventListener for CSP compliance."""
-        src = self._read_js("examples/security-qa/app.js")
+    def test_item_triage_uses_addeventlistener(self):
+        """item-triage must use addEventListener for CSP compliance."""
+        src = self._read_js("examples/item-triage/app.js")
         assert "addEventListener" in src, "Must use addEventListener instead of inline handlers"
 
     # ── H1: Example apps must NOT expose globals via window.* ─────────────
@@ -771,9 +771,9 @@ class TestSecurityHardening:
         assert len(exports) == 0, f"Found window exports: {exports}"
 
     @pytest.mark.owasp_a03
-    def test_security_qa_no_window_exports(self):
-        """security-qa should not export functions to window (encapsulated IIFE)."""
-        src = self._read_js("examples/security-qa/app.js")
+    def test_item_triage_no_window_exports(self):
+        """item-triage should not export functions to window (encapsulated IIFE)."""
+        src = self._read_js("examples/item-triage/app.js")
         import re
 
         exports = re.findall(r"window\.\w+\s*=\s*function", src)

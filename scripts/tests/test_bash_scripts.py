@@ -177,7 +177,7 @@ class TestStartWebviewValidation:
         good_names = [
             "my-app",
             "approval-review",
-            "security-qa",
+            "item-triage",
             "app2.0",
             "My_App_v3",
             "test",

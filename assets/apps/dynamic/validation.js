@@ -72,15 +72,21 @@
     return hasErrors ? errors : null;
   };
 
+  // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
+  function _safeQuery(attr, value) {
+    var escaped = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
+    return document.querySelector("[" + attr + '="' + escaped + '"]');
+  }
+
   // ─── Show/clear validation error for a specific field ───────────────────────
   OWG.showFieldError = function (key, message) {
     validationErrors[key] = message;
-    var errorEl = document.querySelector('[data-error-for="' + key + '"]');
+    var errorEl = _safeQuery("data-error-for", key);
     if (errorEl) {
       errorEl.textContent = message || "";
     }
     // Add invalid class to parent field container
-    var fieldEl = document.querySelector('[data-field-key="' + key + '"]');
+    var fieldEl = _safeQuery("data-field-key", key);
     if (fieldEl) {
       var container = fieldEl.closest(".field");
       if (container) container.classList.toggle("field-invalid", !!message);
@@ -89,9 +95,9 @@
 
   OWG.clearFieldError = function (key) {
     delete validationErrors[key];
-    var errorEl = document.querySelector('[data-error-for="' + key + '"]');
+    var errorEl = _safeQuery("data-error-for", key);
     if (errorEl) errorEl.textContent = "";
-    var fieldEl = document.querySelector('[data-field-key="' + key + '"]');
+    var fieldEl = _safeQuery("data-field-key", key);
     if (fieldEl) {
       var container = fieldEl.closest(".field");
       if (container) container.classList.remove("field-invalid");

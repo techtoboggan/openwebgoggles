@@ -21,8 +21,8 @@ import logging
 import os
 import platform
 import secrets
-import signal
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -242,6 +242,28 @@ class WebviewSession:
             logger.info("Removing stale PID file (pid=%d no longer running).", pid)
             pid_file.unlink(missing_ok=True)
             return
+
+        # Verify the process is actually a webview server (prevent PID reuse attacks)
+        try:
+            import subprocess as _sp
+
+            result = _sp.run(  # noqa: S603
+                ["ps", "-p", str(pid), "-o", "command="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            cmd = result.stdout.strip()
+            if cmd and "webview_server" not in cmd and "python" not in cmd.lower():
+                logger.warning(
+                    "PID %d is alive but not a webview server (cmd=%s). Removing stale PID file.",
+                    pid,
+                    cmd[:80],
+                )
+                pid_file.unlink(missing_ok=True)
+                return
+        except Exception:
+            pass  # If we can't verify, proceed with caution (kill is still user-scoped)
 
         # PID is alive — kill it
         logger.warning("Killing stale webview server (pid=%d) from previous session.", pid)
@@ -1053,7 +1075,7 @@ async def _signal_reload_monitor() -> None:
                 pass
             _session = None
 
-        _exec_reload()
+        _mark_stale("current", "reload-requested")
 
 
 def _track_tool_call(fn):  # type: ignore[no-untyped-def]
@@ -1465,8 +1487,9 @@ async def webview(
     session = await _get_session()
     try:
         await session.ensure_started(app)
-    except Exception as e:
-        return {"error": f"Failed to start webview: {e}"}
+    except Exception:
+        logger.warning("Failed to start webview", exc_info=True)
+        return {"error": "Failed to start webview server"}
 
     session.clear_actions()
     session.write_state(state)
@@ -1547,8 +1570,9 @@ async def webview_update(
     session = await _get_session()
     try:
         await session.ensure_started(app)
-    except Exception as e:
-        return {"error": f"Failed to start webview: {e}"}
+    except Exception:
+        logger.warning("Failed to start webview", exc_info=True)
+        return {"error": "Failed to start webview server"}
 
     # Do NOT clear actions — preserve pending user actions
     if merge:
@@ -1604,8 +1628,9 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
 
     try:
         await _session.close(message=message)
-    except Exception as e:
-        return {"error": f"Error closing session: {e}"}
+    except Exception:
+        logger.warning("Error closing session", exc_info=True)
+        return {"error": "Failed to close session"}
 
     _session = None
     return {"status": "ok", "message": "Webview closed."}
@@ -1848,6 +1873,7 @@ def _read_pid_file(path: Path) -> int | None:
 
 # -- restart ----------------------------------------------------------------
 
+
 def _cmd_restart() -> None:
     """Find the running MCP server and trigger a seamless restart via SIGUSR1."""
     data_dir_arg = None
@@ -1903,6 +1929,7 @@ def _cmd_restart() -> None:
 
 
 # -- status -----------------------------------------------------------------
+
 
 def _cmd_status() -> None:
     """Show the current state of the MCP server and webview."""
@@ -1969,6 +1996,7 @@ def _cmd_status() -> None:
 
 
 # -- doctor -----------------------------------------------------------------
+
 
 def _cmd_doctor() -> None:
     """Diagnose the OpenWebGoggles setup and environment."""
@@ -2082,6 +2110,7 @@ def _cmd_doctor() -> None:
     if lock_file.exists():
         # Check if it's held by a live process
         import fcntl
+
         try:
             fd = os.open(str(lock_file), os.O_RDONLY)
             try:

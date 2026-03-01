@@ -40,12 +40,38 @@
   wv.on("state_updated", function (s) { if (!done) render(s); });
   wv.on("close",         function (d) {
     done = true;
-    U.safeHTML(els.content, '<div class="done-state"><div class="done-icon">\u2713</div><div style="color:var(--green);font-weight:600">Session closed</div><div class="done-msg">' + U.esc((d && d.message) || "") + "</div></div>");
+    // Build close message via DOM API (prevents HTML structure injection)
+    var wrap = document.createElement("div");
+    wrap.className = "done-state";
+    var icon = document.createElement("div");
+    icon.className = "done-icon";
+    icon.textContent = "\u2713";
+    var label = document.createElement("div");
+    label.style.cssText = "color:var(--green);font-weight:600";
+    label.textContent = "Session closed";
+    var msg = document.createElement("div");
+    msg.className = "done-msg";
+    msg.textContent = (d && d.message) || "";
+    wrap.appendChild(icon);
+    wrap.appendChild(label);
+    wrap.appendChild(msg);
+    els.content.textContent = "";
+    els.content.appendChild(wrap);
   });
 
   // Clear all keys from an Object.create(null) dict without replacing it
   // (OWG namespace is frozen — properties can't be reassigned, but inner objects are mutable)
   function clearObj(obj) { for (var k in obj) delete obj[k]; }
+
+  // Safe shallow copy that skips prototype-polluting keys (__proto__, constructor, prototype)
+  var DANGEROUS_KEYS = /^(__proto__|constructor|prototype)$/;
+  function safeCopy(obj) {
+    var copy = {};
+    for (var k in obj) {
+      if (!DANGEROUS_KEYS.test(k)) copy[k] = obj[k];
+    }
+    return copy;
+  }
 
   // ─── Main renderer ──────────────────────────────────────────────────────────
   function render(state) {
@@ -206,14 +232,14 @@
     // Collect value
     var value;
     if (type === "approve" || type === "confirm" || type === "primary") {
-      value = Object.keys(U.formValues).length ? Object.assign({}, U.formValues) : true;
+      value = Object.keys(U.formValues).length ? safeCopy(U.formValues) : true;
     } else if (type === "reject" || type === "danger" || type === "delete") {
-      value = Object.keys(U.formValues).length ? Object.assign({}, U.formValues) : false;
+      value = Object.keys(U.formValues).length ? safeCopy(U.formValues) : false;
     } else if (type === "submit") {
-      value = Object.assign({}, U.formValues);
+      value = safeCopy(U.formValues);
     } else {
       var itemId = btn && btn.dataset && btn.dataset.item;
-      value = itemId !== undefined ? { item_id: itemId, form: Object.assign({}, U.formValues) } : Object.assign({}, U.formValues);
+      value = itemId !== undefined ? { item_id: itemId, form: safeCopy(U.formValues) } : safeCopy(U.formValues);
     }
 
     // Build action payload with optional context
