@@ -109,7 +109,7 @@
   // ─── Show all validation errors (after submit attempt) ──────────────────────
   OWG.showAllErrors = function (errors) {
     for (var key in errors) {
-      if (errors.hasOwnProperty(key)) {
+      if (Object.prototype.hasOwnProperty.call(errors, key)) {
         OWG.showFieldError(key, errors[key]);
       }
     }
@@ -121,7 +121,7 @@
   // ─── Check if there are currently any validation errors ─────────────────────
   OWG.hasValidationErrors = function () {
     for (var key in validationErrors) {
-      if (validationErrors.hasOwnProperty(key)) return true;
+      if (Object.prototype.hasOwnProperty.call(validationErrors, key)) return true;
     }
     return false;
   };

@@ -63,10 +63,12 @@
   // (OWG namespace is frozen — properties can't be reassigned, but inner objects are mutable)
   function clearObj(obj) { for (var k in obj) delete obj[k]; }
 
-  // Safe shallow copy that skips prototype-polluting keys (__proto__, constructor, prototype)
+  // Safe shallow copy that skips prototype-polluting keys (__proto__, constructor, prototype).
+  // Uses Object.create(null) to produce a prototype-less dict — prevents any
+  // prototype chain interference when the copy is serialized to JSON.
   var DANGEROUS_KEYS = /^(__proto__|constructor|prototype)$/;
   function safeCopy(obj) {
-    var copy = {};
+    var copy = Object.create(null);
     for (var k in obj) {
       if (!DANGEROUS_KEYS.test(k)) copy[k] = obj[k];
     }

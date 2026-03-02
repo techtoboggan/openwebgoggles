@@ -92,7 +92,7 @@ class RateLimiter:
 
     def check(self) -> bool:
         """Return True if the action is allowed, False if rate-limited."""
-        now = time.time()
+        now = time.monotonic()
         cutoff = now - self.window_seconds
         self._timestamps = [t for t in self._timestamps if t > cutoff]
         if len(self._timestamps) >= self.max_actions:
@@ -121,7 +121,12 @@ class DataContract:
 
     def write_json(self, path: Path, data: dict) -> None:
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
+        # Restrictive permissions: temp files may contain session tokens or state data
+        old_umask = os.umask(0o077)
+        try:
+            tmp.write_text(json.dumps(data, indent=2))
+        finally:
+            os.umask(old_umask)
         tmp.replace(path)
 
     def get_manifest(self) -> dict | None:
@@ -276,6 +281,11 @@ class WebviewHTTPHandler:
                 await self._send_response(writer, 431, {"error": "Too many headers"})
                 return
 
+            # Reject Transfer-Encoding to prevent HTTP request smuggling
+            if "transfer-encoding" in headers:
+                await self._send_response(writer, 400, {"error": "Transfer-Encoding not supported"})
+                return
+
             # Read body for POST/PUT/DELETE
             body = b""
             if method in ("POST", "PUT", "DELETE"):
@@ -426,6 +436,11 @@ class WebviewHTTPHandler:
                 xss = self._security_gate._scan_xss(message, "close.message")
                 if xss:
                     message = "Session complete."  # Fallback to safe default
+            else:
+                # Defense-in-depth: strip basic HTML when SecurityGate unavailable
+                import html as _html
+
+                message = _html.escape(message)
             await self._broadcast({"type": "close", "data": {"message": message, "delay_ms": delay_ms}})
             await self._send_response(writer, 200, {"ok": True, "clients_notified": len(self.ws_clients)})
 
@@ -604,6 +619,15 @@ class WebviewServer:
         else:
             manifest = self.contract.get_manifest()
             self.session_token = manifest.get("session", {}).get("token", "") if manifest else ""
+        # Guard against trivial/placeholder tokens that provide no security
+        _TRIVIAL_TOKENS = frozenset({"", "REDACTED", "test", "token", "secret"})
+        if self.session_token in _TRIVIAL_TOKENS:
+            logger.error(
+                "Session token is empty or trivial (%r) — generating a random token. "
+                "Set OCV_SESSION_TOKEN for persistent sessions.",
+                self.session_token[:8] if self.session_token else "(empty)",
+            )
+            self.session_token = secrets.token_hex(32)
 
         # Ephemeral cryptographic identity (keys live in memory only, never on disk)
         self._private_key: bytes | None = None
@@ -667,9 +691,13 @@ class WebviewServer:
         else:
             logger.warning("WebSocket not available (pip install websockets). Running HTTP-only mode.")
 
-        # Write PID file
+        # Write PID file (restrictive perms on shared systems)
         pid_path = self.data_dir / ".server.pid"
-        pid_path.write_text(str(os.getpid()))
+        old_umask = os.umask(0o077)
+        try:
+            pid_path.write_text(str(os.getpid()))
+        finally:
+            os.umask(old_umask)
 
         logger.info("Server ready. PID: %d", os.getpid())
 
@@ -719,6 +747,7 @@ class WebviewServer:
         await websocket.send(envelope)
 
     MAX_WEBSOCKET_CLIENTS = 50  # Prevent connection exhaustion DoS
+    MAX_WS_MESSAGE_SIZE = 1_048_576  # 1MB max per WS message (matches SDK limit)
 
     async def _handle_ws(self, websocket):  # noqa: C901 — TODO: extract message handlers  # pragma: no cover
         # Reject if at capacity (defense against connection exhaustion)
@@ -756,6 +785,12 @@ class WebviewServer:
                 await self._send_ws_signed(websocket, {"type": "connected", "state": state})
 
             async for message in websocket:
+                # Server-side message size guard (matches client-side 1MB limit)
+                if isinstance(message, str | bytes) and len(message) > self.MAX_WS_MESSAGE_SIZE:
+                    logger.warning(
+                        "WS: Rejected oversized message (%d bytes, max %d)", len(message), self.MAX_WS_MESSAGE_SIZE
+                    )
+                    continue
                 try:
                     msg = json.loads(message)
                 except json.JSONDecodeError:

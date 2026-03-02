@@ -858,7 +858,12 @@ class WebviewSession:
     @staticmethod
     def _write_json(path: Path, data: dict[str, Any]) -> None:
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
+        # Restrictive permissions: temp files may contain session tokens or state data
+        old_umask = os.umask(0o077)
+        try:
+            tmp.write_text(json.dumps(data, indent=2))
+        finally:
+            os.umask(old_umask)
         tmp.replace(path)
 
     def _cleanup_process(self) -> None:

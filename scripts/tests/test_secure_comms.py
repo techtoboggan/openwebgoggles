@@ -97,7 +97,7 @@ class TestChannelBinding:
         # Verification with real key must fail for rogue signature
         with pytest.raises(Exception):
             verify_key.verify(
-                (nonce + payload).encode("utf-8"),
+                (nonce + "\x00" + payload).encode("utf-8"),
                 bytes.fromhex(rogue_sig),
             )
 
@@ -113,7 +113,7 @@ class TestChannelBinding:
         nonce = generate_nonce()
 
         # Browser signs with real token
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         browser_sig = hmac_module.new(real_token.encode(), message, hashlib.sha256).hexdigest()
 
         # Real server can verify
@@ -143,14 +143,14 @@ class TestChannelBinding:
 
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(server_pub))
         verify_key.verify(
-            (s2b_nonce + s2b_payload).encode("utf-8"),
+            (s2b_nonce + "\x00" + s2b_payload).encode("utf-8"),
             bytes.fromhex(s2b_sig),
         )  # Should not raise
 
         # Direction 2: browser→server (HMAC-SHA256)
         b2s_payload = '{"type":"action","data":{"action_id":"a","type":"confirm","value":true}}'
         b2s_nonce = generate_nonce()
-        b2s_message = (b2s_nonce + b2s_payload).encode("utf-8")
+        b2s_message = (b2s_nonce + "\x00" + b2s_payload).encode("utf-8")
         b2s_sig = hmac_module.new(session_token.encode(), b2s_message, hashlib.sha256).hexdigest()
 
         assert verify_hmac(session_token, b2s_payload, b2s_nonce, b2s_sig) is True
@@ -186,7 +186,7 @@ class TestProcessImpersonation:
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(real_pub))
         with pytest.raises(Exception):
             verify_key.verify(
-                (nonce + payload).encode("utf-8"),
+                (nonce + "\x00" + payload).encode("utf-8"),
                 bytes.fromhex(rogue_sig),
             )
 
@@ -202,7 +202,7 @@ class TestProcessImpersonation:
         nonce = generate_nonce()
 
         # Rogue signs with wrong token
-        rogue_msg = (nonce + payload).encode("utf-8")
+        rogue_msg = (nonce + "\x00" + payload).encode("utf-8")
         rogue_sig = hmac_module.new(rogue_token.encode(), rogue_msg, hashlib.sha256).hexdigest()
 
         # Server rejects
@@ -348,7 +348,7 @@ class TestMITMPrevention:
         token = os.urandom(32).hex()
         payload = '{"type":"action","data":{"action_id":"ok","type":"confirm","value":true}}'
         nonce = generate_nonce()
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(token.encode(), message, hashlib.sha256).hexdigest()
 
         # Tamper with one character
@@ -364,7 +364,7 @@ class TestMITMPrevention:
         nonce_a = generate_nonce()
         nonce_b = generate_nonce()
 
-        msg_a = (nonce_a + payload_a).encode("utf-8")
+        msg_a = (nonce_a + "\x00" + payload_a).encode("utf-8")
         sig_a = hmac_module.new(token.encode(), msg_a, hashlib.sha256).hexdigest()
 
         # Try to use nonce_b with sig_a
@@ -390,7 +390,7 @@ class TestMITMPrevention:
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(pub))
         with pytest.raises(Exception):
             verify_key.verify(
-                (nonce + payload_b).encode("utf-8"),
+                (nonce + "\x00" + payload_b).encode("utf-8"),
                 bytes.fromhex(sig_a),
             )
 
@@ -418,13 +418,13 @@ class TestMITMPrevention:
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(real_pub))
         with pytest.raises(Exception):
             verify_key.verify(
-                (fake_nonce + malicious_payload).encode("utf-8"),
+                (fake_nonce + "\x00" + malicious_payload).encode("utf-8"),
                 bytes.fromhex(proxy_sig),
             )
 
         # Proxy also can't forge browser messages without the session token
         proxy_token = os.urandom(32).hex()
-        proxy_b2s = (fake_nonce + malicious_payload).encode("utf-8")
+        proxy_b2s = (fake_nonce + "\x00" + malicious_payload).encode("utf-8")
         proxy_hmac = hmac_module.new(proxy_token.encode(), proxy_b2s, hashlib.sha256).hexdigest()
         assert verify_hmac(real_token, malicious_payload, fake_nonce, proxy_hmac) is False
 
@@ -447,7 +447,7 @@ class TestReplayPrevention:
 
         payload = '{"type":"action","data":{"action_id":"approve","type":"approve","value":true}}'
         nonce = generate_nonce()
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(token.encode(), message, hashlib.sha256).hexdigest()
 
         # First delivery: accepted
@@ -484,7 +484,7 @@ class TestReplayPrevention:
         # Original message
         old_nonce = generate_nonce()
         old_payload = '{"type":"action","data":{"action_id":"safe"}}'
-        old_msg = (old_nonce + old_payload).encode("utf-8")
+        old_msg = (old_nonce + "\x00" + old_payload).encode("utf-8")
         old_sig = hmac_module.new(token.encode(), old_msg, hashlib.sha256).hexdigest()
 
         # Record the nonce
@@ -726,14 +726,14 @@ class TestCrossCuttingSecurity:
         # 2. Browser verifies server signature
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(server_pub))
         verify_key.verify(
-            (state_nonce + state_payload).encode("utf-8"),
+            (state_nonce + "\x00" + state_payload).encode("utf-8"),
             bytes.fromhex(state_sig),
         )
 
         # 3. Browser sends signed action
         action_payload = json.dumps({"type": "action", "data": {"action_id": "ok", "type": "confirm", "value": True}})
         action_nonce = generate_nonce()
-        action_message = (action_nonce + action_payload).encode("utf-8")
+        action_message = (action_nonce + "\x00" + action_payload).encode("utf-8")
         action_sig = hmac_module.new(session_token.encode(), action_message, hashlib.sha256).hexdigest()
 
         # 4. Server verifies browser HMAC

@@ -40,11 +40,12 @@
     /@namespace/i,
     /@font-face/i,                   // Font exfiltration via unicode-range
     /@keyframes/i,                   // Global animation names bypass CSS scoping
+    /@media/i,                       // @media bypasses CSS scoping (unscoped selectors inside block)
     /@supports/i,                    // Feature queries can probe browser state
     /@layer/i,                       // Cascade layer manipulation
     /url\s*\(/i,                     // Block ALL url() — prevents data exfiltration
-    /\\u00[0-9a-fA-F]{2}/,          // Unicode escape obfuscation
-    /\\[0-9a-fA-F]{1,6}/,           // CSS hex escape obfuscation
+    /\\/,                            // Block ALL backslash escapes — non-hex escapes bypass keyword patterns
+    /\/\*/,                          // CSS comments can split keywords (e.g. ur/**/l())
   ];
 
   OWG.isCSSSafe = function (css) {
@@ -186,6 +187,11 @@
             child.removeAttribute(attrs[j].name);
           } else if (name === "id" || name === "name") {
             child.removeAttribute(attrs[j].name);
+          } else if (name.indexOf("data-") === 0) {
+            // Strip ALL data-* attributes — prevents phantom action injection.
+            // Our own renderers generate data-action-id, data-field-key etc.
+            // with proper escaping; injected HTML must not set these.
+            child.removeAttribute(attrs[j].name);
           } else if (name === "href" || name === "src" || name === "action" || name === "formaction" || name === "xlink:href") {
             var val = attrs[j].value;
             if (DANGEROUS_URL_RE.test(val) || !SAFE_URL_PROTOCOL_RE.test(val.trim())) {
@@ -207,6 +213,8 @@
 
   // ─── ANSI color support (for log sections) ─────────────────────────────────
   // Converts basic ANSI escape codes to safe HTML spans with balanced open/close.
+  var MAX_ANSI_NESTING = 20;  // Cap nesting to prevent DoS via deeply nested ANSI codes
+
   OWG.escAnsi = function (escapedText) {
     // Input MUST be already HTML-escaped via esc(). ANSI codes use \u001b which
     // survives esc() since it's not an HTML special char.
@@ -221,6 +229,7 @@
     };
     var result = escapedText.replace(/\u001b\[([0-9;]*)m/g, function (match, code) {
       if (ANSI_MAP[match]) {
+        if (openCount >= MAX_ANSI_NESTING) return "";  // Cap nesting depth
         openCount++;
         return '<span class="' + ANSI_MAP[match] + '">';
       }

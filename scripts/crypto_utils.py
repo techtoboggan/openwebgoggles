@@ -87,6 +87,9 @@ def generate_nonce() -> str:
 # ---------------------------------------------------------------------------
 
 
+_DOMAIN_SEP = "\x00"  # Null byte delimiter between nonce and payload for domain separation
+
+
 def sign_message(private_key_seed: bytes, payload: str, nonce: str) -> str:
     """Sign a message using Ed25519.
 
@@ -96,10 +99,11 @@ def sign_message(private_key_seed: bytes, payload: str, nonce: str) -> str:
         nonce: unique nonce string
 
     Returns:
-        Hex-encoded Ed25519 signature over (nonce + payload)
+        Hex-encoded Ed25519 signature over (nonce + \\x00 + payload)
+        The null-byte delimiter prevents nonce/payload concatenation ambiguity.
     """
     nacl = _lazy_nacl()
-    message = (nonce + payload).encode("utf-8")
+    message = (nonce + _DOMAIN_SEP + payload).encode("utf-8")
 
     if nacl is None:
         # Fallback: HMAC-SHA256
@@ -130,7 +134,10 @@ def verify_hmac(token: str, payload: str, nonce: str, signature_hex: str) -> boo
     Returns:
         True if signature is valid
     """
-    message = (nonce + payload).encode("utf-8")
+    # Reject empty tokens — they provide no security
+    if not token:
+        return False
+    message = (nonce + _DOMAIN_SEP + payload).encode("utf-8")
     expected = hmac.new(token.encode("utf-8"), message, hashlib.sha256).digest()
     try:
         received = bytes.fromhex(signature_hex)
@@ -163,8 +170,10 @@ class NonceTracker:
     def check_and_record(self, nonce: str) -> bool:
         """Returns True if the nonce is fresh (not seen before).
         Returns False if it's a replay.  Thread-safe."""
+        if not isinstance(nonce, str) or not nonce:
+            return False
         with self._lock:
-            now = time.time()
+            now = time.monotonic()  # monotonic clock — immune to wall-clock adjustments
             self._prune(now)
 
             if nonce in self._seen:

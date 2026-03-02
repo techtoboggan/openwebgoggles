@@ -68,8 +68,26 @@
 
   // --- Event system ---
 
+  var MAX_LISTENERS_PER_EVENT = 100;  // Prevent listener accumulation / memory leak
+
   OpenWebGoggles.prototype.on = function (event, callback) {
     if (!this._listeners[event]) this._listeners[event] = [];
+    // Prevent duplicate registration of the same callback
+    for (var i = 0; i < this._listeners[event].length; i++) {
+      if (this._listeners[event][i] === callback) {
+        var self = this;
+        return function () {
+          self._listeners[event] = self._listeners[event].filter(function (cb) {
+            return cb !== callback;
+          });
+        };
+      }
+    }
+    // Cap listener count to prevent unbounded memory growth
+    if (this._listeners[event].length >= MAX_LISTENERS_PER_EVENT) {
+      console.warn("OpenWebGoggles: Listener limit reached for '" + event + "' — oldest listener removed");
+      this._listeners[event].shift();
+    }
     this._listeners[event].push(callback);
     var self = this;
     return function () {
@@ -244,7 +262,8 @@
         "raw", encoder.encode(this._token),
         { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
       ).then(function (key) {
-        return crypto.subtle.sign("HMAC", key, encoder.encode(nonce + payload));
+        // Null-byte delimiter between nonce and payload for domain separation
+        return crypto.subtle.sign("HMAC", key, encoder.encode(nonce + "\0" + payload));
       }).then(function (sigBuf) {
         var sigArr = new Uint8Array(sigBuf);
         var sigHex = "";
@@ -361,7 +380,8 @@
    */
   OpenWebGoggles.prototype._verifyEdDSA = function (verifyKey, nonce, payloadStr, sigHex) {
     var encoder = new TextEncoder();
-    var message = encoder.encode(nonce + payloadStr);
+    // Null-byte delimiter between nonce and payload for domain separation
+    var message = encoder.encode(nonce + "\0" + payloadStr);
     var sigBytes = new Uint8Array(sigHex.match(/.{1,2}/g).map(function (b) {
       return parseInt(b, 16);
     }));

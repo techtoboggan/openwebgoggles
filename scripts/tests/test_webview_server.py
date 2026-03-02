@@ -1801,7 +1801,7 @@ class MockWebSocket:
 def _make_hmac_sig(token: str, payload_dict: dict, nonce: str) -> str:
     """Create a valid HMAC-SHA256 signature matching what the browser SDK sends."""
     payload_str = json.dumps(payload_dict, separators=(",", ":"))
-    message = (nonce + payload_str).encode("utf-8")
+    message = (nonce + "\x00" + payload_str).encode("utf-8")
     return hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).digest().hex()
 
 
@@ -2535,3 +2535,161 @@ class TestWSErrorMessageOpacity:
         assert len(error_msgs) >= 1
         error_text = error_msgs[0]["data"]["message"]
         assert error_text == "Invalid action"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 30. TRANSFER-ENCODING REJECTION — HTTP request smuggling prevention
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTransferEncodingRejection:
+    """Transfer-Encoding header must be rejected to prevent request smuggling."""
+
+    def test_transfer_encoding_check_in_source(self):
+        """handle_request must check for Transfer-Encoding and return 400."""
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        assert "transfer-encoding" in src, "Must check for Transfer-Encoding header"
+        assert "400" in src, "Must return 400 for Transfer-Encoding"
+
+    def test_transfer_encoding_not_supported_message(self):
+        """Error message must indicate Transfer-Encoding is not supported."""
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        assert "Transfer-Encoding not supported" in src
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 31. WS OVERSIZED RAW FRAME REJECTION — MAX_WS_MESSAGE_SIZE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWSRawFrameSizeLimit:
+    """WebSocket raw message size guard (1 MB max)."""
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.llm10
+    @pytest.mark.asyncio
+    async def test_oversized_str_message_dropped(self, ws_server):
+        """A string WS message exceeding 1 MB is silently dropped."""
+        oversized = "x" * (1_048_576 + 1)  # Just over 1 MB
+
+        ws = MockWebSocket(messages=[_auth_msg(), oversized])
+        await ws_server._handle_ws(ws)
+
+        # No error/crash, but the oversized message is not processed
+        sent = ws.sent_json
+        # Should only see the "connected" message, no crash or processed action
+        action_responses = [m for m in sent if isinstance(m, dict) and m.get("type") == "action_response"]
+        assert len(action_responses) == 0
+
+    @pytest.mark.owasp_a03
+    @pytest.mark.asyncio
+    async def test_oversized_bytes_message_dropped(self, ws_server):
+        """A binary WS frame exceeding 1 MB is also dropped."""
+        oversized = b"x" * (1_048_576 + 1)
+
+        ws = MockWebSocket(messages=[_auth_msg(), oversized])
+        await ws_server._handle_ws(ws)
+
+        sent = ws.sent_json
+        action_responses = [m for m in sent if isinstance(m, dict) and m.get("type") == "action_response"]
+        assert len(action_responses) == 0
+
+    def test_max_ws_message_size_constant(self):
+        """MAX_WS_MESSAGE_SIZE must be defined as 1 MB."""
+        assert hasattr(WebviewServer, "MAX_WS_MESSAGE_SIZE")
+        assert WebviewServer.MAX_WS_MESSAGE_SIZE == 1_048_576
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 32. TRIVIAL TOKEN GUARD — auto-replace weak session tokens
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTrivialTokenGuard:
+    """Trivial/placeholder tokens are replaced with random ones."""
+
+    @pytest.mark.parametrize(
+        "trivial_token",
+        ["REDACTED", "test", "token", "secret"],
+    )
+    def test_trivial_token_replaced(self, tmp_data_dir, trivial_token):
+        """Tokens matching _TRIVIAL_TOKENS are replaced with random 32-byte hex."""
+        sdk_path = tmp_data_dir / "sdk.js"
+        sdk_path.write_text("// SDK placeholder")
+
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": trivial_token}):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=18420,
+                ws_port=18421,
+                sdk_path=str(sdk_path),
+            )
+
+        # Token should be different from the trivial one
+        assert server.session_token != trivial_token
+        # Should be a 64-char hex string (32 bytes)
+        assert len(server.session_token) == 64
+        assert all(c in "0123456789abcdef" for c in server.session_token)
+
+    def test_valid_token_not_replaced(self, tmp_data_dir):
+        """A proper hex token is kept as-is."""
+        sdk_path = tmp_data_dir / "sdk.js"
+        sdk_path.write_text("// SDK placeholder")
+        good_token = "a" * 64
+
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": good_token}):
+            server = WebviewServer(
+                data_dir=str(tmp_data_dir),
+                http_port=18420,
+                ws_port=18421,
+                sdk_path=str(sdk_path),
+            )
+
+        assert server.session_token == good_token
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 33. TEMP FILE UMASK — restrictive permissions on data contract writes
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTempFileUmask:
+    """Atomic file writes must use restrictive umask."""
+
+    def test_umask_in_write_json_source(self):
+        """DataContract.write_json must set umask(0o077) during writes."""
+        import inspect
+
+        src = inspect.getsource(DataContract.write_json)
+        assert "umask" in src, "write_json must use umask for file writes"
+        assert "0o077" in src, "umask must be restrictive (0o077)"
+        assert "finally" in src, "umask must be restored in a finally block"
+
+    def test_umask_in_pid_write_source(self):
+        """PID file write must also use umask."""
+        import inspect
+
+        src = inspect.getsource(WebviewServer.start)
+        # PID write should be wrapped in umask
+        assert "umask" in src, "PID file write should use umask"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 34. RATE LIMITER MONOTONIC CLOCK
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestRateLimiterClock:
+    """Rate limiter must use monotonic clock, not wall clock."""
+
+    def test_uses_monotonic_in_source(self):
+        """RateLimiter.check() must use time.monotonic(), not time.time()."""
+        import inspect
+
+        src = inspect.getsource(RateLimiter.check)
+        assert "monotonic" in src, "RateLimiter must use time.monotonic()"
+        assert "time.time()" not in src, "RateLimiter must NOT use time.time()"

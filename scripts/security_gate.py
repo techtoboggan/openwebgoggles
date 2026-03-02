@@ -121,7 +121,13 @@ class SecurityGate:
     # --- Zero-width characters that can bypass pattern matching ---
     # These invisible chars can be inserted between keywords (e.g. java[ZWS]script:)
     # to bypass regex-based XSS detection while still being rendered by browsers.
-    ZERO_WIDTH_CHARS = re.compile(r"[\u200b\u200c\u200d\u200e\u200f\ufeff\u00ad\u2060\u180e]")
+    ZERO_WIDTH_CHARS = re.compile(
+        r"[\x00\u200b\u200c\u200d\u200e\u200f\ufeff\u00ad\u2060\u180e"
+        r"\u202a-\u202e"  # Bidi embedding/override (LRE, RLE, PDF, LRO, RLO)
+        r"\u2066-\u2069"  # Bidi isolate (LRI, RLI, FSI, PDI)
+        r"\u206a-\u206f"  # Deprecated formatting (ISS, ASS, IAFS, AAFS, NADS, NODS)
+        r"]"
+    )
 
     # --- XSS detection patterns (case-insensitive) ---
     XSS_PATTERNS = [
@@ -185,9 +191,10 @@ class SecurityGate:
         re.compile(r"@keyframes", re.IGNORECASE),  # Global animation names bypass CSS scoping
         re.compile(r"@supports", re.IGNORECASE),  # Feature queries can probe browser state
         re.compile(r"@layer", re.IGNORECASE),  # Cascade layer manipulation
+        re.compile(r"@media", re.IGNORECASE),  # @media blocks bypass CSS scoping (_scopeCSS)
         re.compile(r"url\s*\(", re.IGNORECASE),  # Block ALL url() — prevents data exfiltration via http(s)
-        re.compile(r"\\u00[0-9a-fA-F]{2}"),  # Unicode escape obfuscation
-        re.compile(r"\\[0-9a-fA-F]{1,6}"),  # CSS hex escape obfuscation
+        re.compile(r"\\"),  # Block ALL backslash escapes — non-hex escapes like \m bypass keyword patterns
+        re.compile(r"/\*"),  # CSS comments can split keywords to bypass patterns (e.g. ur/**/l())
     ]
 
     # --- Metric section ---
@@ -223,17 +230,26 @@ class SecurityGate:
         r"\([^)]*\|[^)]*\)"  # group with alternation
         r"[+*{]"  # followed by quantifier
     )
+    # Catch quantifiers ANYWHERE inside a quantified group: (.*a)+, ([a-z]*a)+, etc.
+    # These cause exponential backtracking even though the inner quantifier isn't adjacent to the paren.
+    _REDOS_INNER_QUANTIFIER = re.compile(
+        r"\([^)]*[+*][^)]*\)"  # group containing a quantifier anywhere inside
+        r"\s*[+*{]"  # followed by outer quantifier
+    )
 
     @classmethod
     def _is_redos_safe(cls, pattern: str) -> bool:
         """Check if a regex pattern is likely safe from catastrophic backtracking.
 
         Rejects patterns with nested quantifiers like (a+)+, (.*)*,
-        and alternation under quantifiers like (a|b)+ with overlap.
+        (.*a)+ (inner quantifier not adjacent to paren), and
+        alternation under quantifiers like (a|b)+ with overlap.
         """
         if cls._REDOS_NESTED_QUANTIFIER.search(pattern):
             return False
         if cls._REDOS_ALTERNATION_QUANTIFIER.search(pattern):
+            return False
+        if cls._REDOS_INNER_QUANTIFIER.search(pattern):
             return False
         return True
 
@@ -444,6 +460,10 @@ class SecurityGate:
                 return False, "Action context is not JSON-serializable"
             if len(context_json) > 10_000:
                 return False, f"Action context too large: {len(context_json)} bytes (max 10000)"
+
+        # Depth check before XSS scan (prevents RecursionError DoS)
+        if not self._check_depth(action):
+            return False, "Action nesting exceeds maximum depth"
 
         # XSS scan action values (defense-in-depth: actions are broadcast to other WS clients)
         xss = self._scan_xss(action, "action")

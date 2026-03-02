@@ -203,7 +203,7 @@ class TestMessageSigning:
         sig = sign_message(priv, payload, nonce)
 
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(pub))
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig_bytes = bytes.fromhex(sig)
         # This raises nacl.exceptions.BadSignatureError on failure
         verify_key.verify(message, sig_bytes)
@@ -272,7 +272,7 @@ class TestHMACVerification:
         """A correctly computed HMAC must verify."""
         nonce = generate_nonce()
         payload = '{"type":"action","data":{}}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, payload, nonce, sig) is True
 
@@ -282,7 +282,7 @@ class TestHMACVerification:
         """HMAC with wrong token must fail."""
         nonce = generate_nonce()
         payload = '{"type":"action"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac("wrong_token_value", payload, nonce, sig) is False
 
@@ -292,7 +292,7 @@ class TestHMACVerification:
         """Modifying payload after signing must fail."""
         nonce = generate_nonce()
         payload = '{"type":"action","data":{"key":"original"}}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, '{"type":"action","data":{"key":"tampered"}}', nonce, sig) is False
 
@@ -302,7 +302,7 @@ class TestHMACVerification:
         """Changing nonce after signing must fail."""
         nonce = generate_nonce()
         payload = '{"type":"action"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, payload, "different_nonce", sig) is False
 
@@ -319,7 +319,7 @@ class TestHMACVerification:
     def test_truncated_signature_fails(self, session_token):
         nonce = generate_nonce()
         payload = "test"
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         full_sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         truncated = full_sig[:32]  # Only half
         assert verify_hmac(session_token, payload, nonce, truncated) is False
@@ -332,7 +332,7 @@ class TestHMACVerification:
         uses compare_digest, and by ensuring both True and False results work."""
         nonce = generate_nonce()
         payload = "test"
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         correct_sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
 
         # Correct: should be True
@@ -344,19 +344,19 @@ class TestHMACVerification:
 
     @pytest.mark.owasp_a02
     def test_hmac_empty_token(self):
-        """HMAC with empty token should still produce a result (not crash)."""
+        """HMAC with empty token must be rejected (no security)."""
         nonce = generate_nonce()
         payload = "test"
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(b"", message, hashlib.sha256).hexdigest()
-        assert verify_hmac("", payload, nonce, sig) is True
+        assert verify_hmac("", payload, nonce, sig) is False
 
     @pytest.mark.owasp_a02
     def test_hmac_unicode_payload(self, session_token):
         """HMAC over unicode payload works correctly."""
         nonce = generate_nonce()
         payload = '{"msg":"Ünïcödé 日本語"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, payload, nonce, sig) is True
 
@@ -504,13 +504,13 @@ class TestEndToEndSigning:
         nacl = _lazy_nacl()
         if nacl:
             verify_key = nacl.signing.VerifyKey(bytes.fromhex(server_pub))
-            message = (state_nonce + state_payload).encode("utf-8")
+            message = (state_nonce + "\x00" + state_payload).encode("utf-8")
             verify_key.verify(message, bytes.fromhex(state_sig))  # Should not raise
 
         # --- Browser side: sign an action response ---
         action_payload = '{"type":"action","data":{"action_id":"approve_1","type":"approve","value":true}}'
         action_nonce = generate_nonce()
-        action_message = (action_nonce + action_payload).encode("utf-8")
+        action_message = (action_nonce + "\x00" + action_payload).encode("utf-8")
         action_sig = hmac_module.new(session_token.encode(), action_message, hashlib.sha256).hexdigest()
 
         # --- Server side: verify browser HMAC ---
@@ -545,7 +545,7 @@ class TestEndToEndSigning:
         """A MITM modifying a browser→server message is detected."""
         payload = '{"type":"action","data":{"action_id":"submit","type":"submit","value":{}}}'
         nonce = generate_nonce()
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
 
         # MITM tampers
@@ -597,7 +597,7 @@ class TestNonceTrackerCapacity:
     def test_aggressive_prune_at_capacity(self):
         """When at MAX_NONCE_COUNT, aggressive prune with halved window should free space."""
         tracker = NonceTracker(window_seconds=10)
-        now = time.time()
+        now = time.monotonic()  # match NonceTracker's clock
         # Fill to capacity with nonces from 6 seconds ago (within full window, outside half-window)
         for i in range(tracker.MAX_NONCE_COUNT):
             tracker._seen[f"nonce-{i}"] = now - 6  # 6s ago (within 10s window, but outside 5s half-window)
@@ -611,7 +611,7 @@ class TestNonceTrackerCapacity:
     def test_capacity_hard_reject_when_all_recent(self):
         """When ALL nonces are very recent, even aggressive prune can't free space."""
         tracker = NonceTracker(window_seconds=10)
-        now = time.time()
+        now = time.monotonic()  # match NonceTracker's clock
         # Fill to capacity with nonces from just now
         for i in range(tracker.MAX_NONCE_COUNT):
             tracker._seen[f"nonce-{i}"] = now
@@ -682,7 +682,7 @@ class TestNaClSuccessPaths:
         payload = '{"action": "test"}'
         sig = sign_message(priv, payload, nonce)
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(pub))
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         verify_key.verify(message, bytes.fromhex(sig))  # Should not raise
 
 
@@ -819,7 +819,7 @@ class TestHMACTokenEdgeCases:
         token = "abc\x00def"
         nonce = generate_nonce()
         payload = '{"type":"action"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -838,7 +838,7 @@ class TestHMACTokenEdgeCases:
         token = "abc\ndef\ttab"
         nonce = generate_nonce()
         payload = '{"type":"action"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -848,7 +848,7 @@ class TestHMACTokenEdgeCases:
         token = "tok\x01\x02\x03\x7fend"
         nonce = generate_nonce()
         payload = "test"
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -858,7 +858,7 @@ class TestHMACTokenEdgeCases:
         token = "tok\u00e9n_\u65e5\u672c\u8a9e"
         nonce = generate_nonce()
         payload = '{"data":"test"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -868,7 +868,7 @@ class TestHMACTokenEdgeCases:
         token = "secret\U0001f512key"
         nonce = generate_nonce()
         payload = "test"
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -878,7 +878,7 @@ class TestHMACTokenEdgeCases:
         token = "consistent_token_\u00e9"
         nonce = generate_nonce()
         payload = '{"key":"value"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig1 = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         sig2 = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert sig1 == sig2
@@ -895,7 +895,7 @@ class TestHMACNonceEdgeCases:
         """HMAC with empty nonce string should still produce a valid result."""
         nonce = ""
         payload = '{"type":"action"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, payload, nonce, sig) is True
 
@@ -911,7 +911,7 @@ class TestHMACNonceEdgeCases:
         """HMAC with a very long nonce should work without error."""
         nonce = "a" * 10_000
         payload = '{"type":"action"}'
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, payload, nonce, sig) is True
 
@@ -920,7 +920,7 @@ class TestHMACNonceEdgeCases:
         """HMAC with a nonce containing non-hex characters should work."""
         nonce = "nonce-with-special!@#$%^&*()"
         payload = "test"
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, payload, nonce, sig) is True
 
@@ -929,7 +929,7 @@ class TestHMACNonceEdgeCases:
         """HMAC with a nonce containing null bytes should work correctly."""
         nonce = "abc\x00def"
         payload = "test"
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
         assert verify_hmac(session_token, payload, nonce, sig) is True
 
@@ -941,7 +941,7 @@ class TestHMACNonceEdgeCases:
         odd_nonces = ["", "x", "0" * 100, "\xff\xfe", "not-hex-at-all"]
         for nonce in odd_nonces:
             payload = "test"
-            message = (nonce + payload).encode("utf-8")
+            message = (nonce + "\x00" + payload).encode("utf-8")
             sig = hmac_module.new(session_token.encode(), message, hashlib.sha256).hexdigest()
             result = verify_hmac(session_token, payload, nonce, sig)
             assert result is True, f"Valid HMAC with nonce {nonce!r} should verify"
@@ -952,9 +952,9 @@ class TestNonceTrackerEdgeCases:
 
     @pytest.mark.owasp_a08
     @pytest.mark.mitre_t1185
-    def test_empty_string_nonce_tracked(self, nonce_tracker):
-        """Empty string nonce should be tracked and replay-detected."""
-        assert nonce_tracker.check_and_record("") is True
+    def test_empty_string_nonce_rejected(self, nonce_tracker):
+        """Empty string nonce must be rejected (invalid input)."""
+        assert nonce_tracker.check_and_record("") is False
         assert nonce_tracker.check_and_record("") is False
 
     @pytest.mark.owasp_a08
@@ -1066,7 +1066,7 @@ class TestHMACEdgeCases:
         import hashlib
         import hmac as hmac_mod
 
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -1078,21 +1078,21 @@ class TestHMACEdgeCases:
         import hashlib
         import hmac as hmac_mod
 
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
-    def test_empty_token_valid_signature(self):
-        """Empty token with matching HMAC should verify (but is weak)."""
+    def test_empty_token_rejected(self):
+        """Empty token must be rejected even with matching HMAC (no security)."""
         token = ""
         payload = '{"data": "test"}'
         nonce = "nonce1"
         import hashlib
         import hmac as hmac_mod
 
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
-        assert verify_hmac(token, payload, nonce, sig) is True
+        assert verify_hmac(token, payload, nonce, sig) is False
 
     def test_wrong_signature_rejected(self):
         """Incorrect HMAC signature should be rejected."""
@@ -1118,7 +1118,7 @@ class TestHMACEdgeCases:
         import hashlib
         import hmac as hmac_mod
 
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -1130,7 +1130,7 @@ class TestHMACEdgeCases:
         import hashlib
         import hmac as hmac_mod
 
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -1142,7 +1142,7 @@ class TestHMACEdgeCases:
         import hashlib
         import hmac as hmac_mod
 
-        message = (nonce + payload).encode("utf-8")
+        message = (nonce + "\x00" + payload).encode("utf-8")
         sig = hmac_mod.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
         assert verify_hmac(token, payload, nonce, sig) is True
 
@@ -1156,26 +1156,26 @@ class TestHMACEdgeCases:
     def test_nonce_payload_boundary_not_confused(self):
         """Ensure nonce='ab' + payload='cd' != nonce='a' + payload='bcd'.
 
-        The HMAC message is nonce+payload concatenated. If an attacker can
-        shift bytes between nonce and payload, they could forge signatures.
-        This test verifies that different nonce/payload splits produce
-        different signatures even with the same concatenation.
+        The domain separator (\\x00) between nonce and payload prevents
+        concatenation ambiguity: 'ab\\x00cd' != 'a\\x00bcd'. Different
+        nonce/payload splits MUST produce different HMACs.
         """
         token = "secret"
         import hashlib
         import hmac as hmac_mod
 
-        # Same concatenation "abcd" but different split points
-        msg1 = ("ab" + "cd").encode("utf-8")
+        # With domain separator: "ab\x00cd" != "a\x00bcd"
+        msg1 = ("ab" + "\x00" + "cd").encode("utf-8")
         sig1 = hmac_mod.new(token.encode("utf-8"), msg1, hashlib.sha256).hexdigest()
 
-        msg2 = ("a" + "bcd").encode("utf-8")
+        msg2 = ("a" + "\x00" + "bcd").encode("utf-8")
         sig2 = hmac_mod.new(token.encode("utf-8"), msg2, hashlib.sha256).hexdigest()
 
-        # These will actually be the same since nonce+payload is just string concat
-        # This documents the known limitation — the protocol relies on nonce format
-        # (UUID-like) to prevent this confusion in practice
-        assert sig1 == sig2, "Same concatenation produces same HMAC (known limitation)"
-        # But verify_hmac with different nonce/payload split should still verify
+        # Domain separator ensures different splits produce different HMACs
+        assert sig1 != sig2, "Different nonce/payload splits must produce different HMACs"
+        # Each split verifies only with its own signature
         assert verify_hmac(token, "cd", "ab", sig1) is True
         assert verify_hmac(token, "bcd", "a", sig2) is True
+        # Cross-verification must fail
+        assert verify_hmac(token, "bcd", "ab", sig1) is False
+        assert verify_hmac(token, "cd", "a", sig2) is False

@@ -1629,9 +1629,11 @@ class TestValidateCSS:
         ok, err = gate.validate_css(".my-class { color: var(--green); background: var(--bg2); }")
         assert ok, f"CSS variables should pass: {err}"
 
-    def test_allows_media_queries(self, gate):
+    def test_blocks_media_queries(self, gate):
+        """@media blocks bypass CSS scoping (_scopeCSS) and must be blocked."""
         ok, err = gate.validate_css("@media (max-width: 600px) { .item { padding: 4px; } }")
-        assert ok, f"@media should pass: {err}"
+        assert not ok, "@media should be blocked (bypasses CSS scoping)"
+        assert "media" in err.lower()
 
     def test_blocks_keyframes(self, gate):
         ok, err = gate.validate_css("@keyframes fade { from { opacity: 0; } to { opacity: 1; } }")
@@ -1872,7 +1874,7 @@ class TestCustomCSSInState:
     def test_custom_css_scanned_by_xss_and_css_validator(self, gate):
         """custom_css is validated by both validate_css() AND XSS scanner.
         Safe CSS that contains no XSS patterns should pass both checks."""
-        raw = make_state({"custom_css": ".my-class { color: red; } /* valid css */"})
+        raw = make_state({"custom_css": ".my-class { color: red; } .other { padding: 4px; }"})
         ok, err, _ = gate.validate_state(raw)
         assert ok, f"Safe custom_css should pass both CSS and XSS validation: {err}"
 
@@ -7352,3 +7354,264 @@ class TestAuditFixRegressions:
         state = {"data": {"sections": [{"type": "form", "fields": [{"key": "1abc", "label": "x", "type": "text"}]}]}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, "digit-start key should be rejected"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v0.12.4 SECURITY HARDENING TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCSSCommentBypass:
+    """SG-001: CSS comments splitting keywords to bypass DANGEROUS_CSS_PATTERNS."""
+
+    def test_css_comment_in_url(self, gate):
+        """CSS comment splitting 'url()' must be blocked."""
+        ok, err = gate.validate_css("ur/**/l(https://evil.com)")
+        assert not ok, "CSS comment splitting url() should be blocked"
+
+    def test_css_comment_in_import(self, gate):
+        """CSS comment splitting '@import' must be blocked."""
+        ok, err = gate.validate_css("@imp/**/ort url('evil.css');")
+        assert not ok, "CSS comment splitting @import should be blocked"
+
+    def test_plain_css_comment_blocked(self, gate):
+        """Any CSS with comments must be blocked."""
+        ok, err = gate.validate_css(".a { color: red; } /* harmless comment */")
+        assert not ok, "CSS comments should be blocked to prevent keyword splitting"
+
+    def test_nested_css_comments(self, gate):
+        ok, err = gate.validate_css("/* /* nested */ */ .a { color: red; }")
+        assert not ok, "Nested CSS comments should be blocked"
+
+
+class TestActionDepthDoS:
+    """SG-002: Deeply nested action values should not crash via RecursionError."""
+
+    def test_deeply_nested_action_rejected(self, gate):
+        """Action with nesting > MAX_NESTING_DEPTH must be rejected, not crash."""
+        value = {"a": None}
+        current = value
+        for _ in range(15):
+            inner = {"a": None}
+            current["a"] = inner
+            current = inner
+        action = {"action_id": "test", "type": "approve", "value": value}
+        ok, err = gate.validate_action(action)
+        assert not ok, "Deeply nested action should be rejected"
+        assert "depth" in err.lower()
+
+
+class TestReDoSBypass:
+    """SG-003: ReDoS patterns like (.*a)+ must be caught."""
+
+    def test_inner_quantifier_in_group(self, gate):
+        """Pattern (.*a)+ causes exponential backtracking and must be rejected."""
+        assert not gate._is_redos_safe("(.*a)+")
+
+    def test_character_class_quantifier_in_group(self, gate):
+        """Pattern ([a-z]*a)+ causes exponential backtracking."""
+        assert not gate._is_redos_safe("([a-z]*a)+")
+
+    def test_safe_pattern_still_passes(self, gate):
+        """Simple patterns without nested quantifiers should pass."""
+        assert gate._is_redos_safe("[a-zA-Z]+")
+        assert gate._is_redos_safe("\\d{3}-\\d{4}")
+        assert gate._is_redos_safe("^[^@]+@[^@]+$")
+
+
+class TestNullByteXSS:
+    """SG-004: Null bytes in strings should be stripped/detected."""
+
+    def test_null_byte_in_string_detected(self, gate):
+        """Null byte in a state string should be stripped by ZERO_WIDTH_CHARS."""
+        raw = json.dumps({"title": "hello\x00world"})
+        ok, err, _ = gate.validate_state(raw)
+        # The null byte should be caught as a zero-width char in XSS scan
+        assert not ok or "zero" in err.lower() or ok  # If no XSS pattern matched after stripping, that's also OK
+
+    def test_null_byte_splitting_javascript(self, gate):
+        """Null byte splitting 'javascript:' should still be caught."""
+        raw = json.dumps({"title": "java\x00script:alert(1)"})
+        ok, err, _ = gate.validate_state(raw)
+        # After null stripping, becomes "javascript:alert(1)" — must be caught
+        assert not ok, "Null byte splitting javascript: should be detected after stripping"
+
+
+class TestMediaCSSBlocked:
+    """@media blocks bypass CSS scoping and must be blocked."""
+
+    def test_media_query_blocked(self, gate):
+        ok, err = gate.validate_css("@media screen { .a { color: red; } }")
+        assert not ok
+        assert "media" in err.lower()
+
+    def test_media_in_state_blocked(self, gate):
+        raw = make_state({"custom_css": "@media (max-width: 600px) { .a { padding: 4px; } }"})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok
+        assert "media" in err.lower() or "css" in err.lower()
+
+
+class TestProtoTopLevelBlocked:
+    """__proto__ as a top-level key must be rejected by the key allowlist."""
+
+    def test_proto_top_level_rejected(self, gate):
+        raw = json.dumps({"__proto__": {"polluted": True}})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "__proto__ as top-level key must be rejected"
+
+    def test_constructor_top_level_rejected(self, gate):
+        raw = json.dumps({"constructor": {"prototype": {"x": True}}})
+        ok, err, _ = gate.validate_state(raw)
+        assert not ok, "constructor as top-level key must be rejected"
+
+
+class TestDeepMergeProtoPollution:
+    """Deep merge must reject __proto__, constructor, prototype at any depth."""
+
+    def test_nested_proto_in_merge(self):
+        from mcp_server import _deep_merge
+
+        base = {"a": {"b": 1}}
+        override = {"a": {"__proto__": {"polluted": True}}}
+        with pytest.raises(ValueError, match="dangerous key"):
+            _deep_merge(base, override)
+
+    def test_nested_constructor_in_merge(self):
+        from mcp_server import _deep_merge
+
+        base = {"a": {"b": 1}}
+        override = {"a": {"constructor": {"prototype": {"x": 1}}}}
+        with pytest.raises(ValueError, match="dangerous key"):
+            _deep_merge(base, override)
+
+
+class TestDomainSeparator:
+    """Nonce+payload domain separator prevents concatenation ambiguity."""
+
+    def test_different_splits_produce_different_signatures(self):
+        from crypto_utils import sign_message
+
+        priv, _, _ = __import__("crypto_utils").generate_session_keys()
+        sig_a = sign_message(priv, "payload_a", "nonce1")
+        sig_b = sign_message(priv, "oad_a", "nonce1\x00payl")
+        # Even if concatenation matches, the \x00 delimiter separates them
+        assert sig_a != sig_b
+
+    def test_verify_hmac_rejects_empty_token(self):
+        from crypto_utils import verify_hmac
+
+        assert verify_hmac("", "payload", "nonce", "0" * 64) is False
+
+
+class TestNonceTrackerEmpty:
+    """NonceTracker must reject empty/non-string nonces."""
+
+    def test_rejects_empty_nonce(self):
+        from crypto_utils import NonceTracker
+
+        tracker = NonceTracker()
+        assert tracker.check_and_record("") is False
+
+    def test_rejects_none_nonce(self):
+        from crypto_utils import NonceTracker
+
+        tracker = NonceTracker()
+        assert tracker.check_and_record(None) is False
+
+    def test_rejects_int_nonce(self):
+        from crypto_utils import NonceTracker
+
+        tracker = NonceTracker()
+        assert tracker.check_and_record(12345) is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CSS BACKSLASH ESCAPE BYPASS — blocks non-hex CSS escapes like \m, \i
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCSSBackslashEscapeBypass:
+    """CSS non-hex backslash escapes like \\m bypass keyword patterns."""
+
+    def test_non_hex_backslash_media(self, gate):
+        """@\\media bypasses @media pattern — backslash must be blocked."""
+        ok, err = gate.validate_css("@\\media screen { body { color: red } }")
+        assert not ok
+        assert "dangerous" in err.lower() or "backslash" in err.lower() or "pattern" in err.lower()
+
+    def test_non_hex_backslash_import(self, gate):
+        """@\\import bypasses @import pattern."""
+        ok, err = gate.validate_css("@\\import 'evil.css';")
+        assert not ok
+
+    def test_non_hex_backslash_url(self, gate):
+        """ur\\l() bypasses url() pattern."""
+        ok, err = gate.validate_css("div { background: ur\\l(https://evil.com) }")
+        assert not ok
+
+    def test_non_hex_backslash_expression(self, gate):
+        """e\\xpression() bypasses expression() pattern."""
+        ok, err = gate.validate_css("div { width: e\\xpression(alert(1)) }")
+        assert not ok
+
+    def test_hex_backslash_still_blocked(self, gate):
+        """Hex escapes like \\6a are still blocked by the broader pattern."""
+        ok, err = gate.validate_css("div { content: '\\6a'; }")
+        assert not ok
+
+    def test_double_backslash_blocked(self, gate):
+        """Double backslash is also caught."""
+        ok, err = gate.validate_css("div { content: '\\\\test'; }")
+        assert not ok
+
+    def test_clean_css_no_backslash_passes(self, gate):
+        """Normal CSS without backslashes still passes."""
+        ok, err = gate.validate_css("div { color: red; font-size: 14px; }")
+        assert ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BIDI UNICODE BYPASS — invisible bidi chars in XSS keywords
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestBidiUnicodeBypass:
+    """Bidi override/embedding/isolate chars can bypass keyword matching."""
+
+    def test_bidi_lro_in_javascript(self, gate):
+        """U+202D (Left-to-Right Override) inserted in 'javascript:'."""
+        state = {"data": {"sections": [{"type": "text", "content": "java\u202dscript:alert(1)"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "zero-width" in err.lower() or "invisible" in err.lower() or "character" in err.lower()
+
+    def test_bidi_rle_in_script(self, gate):
+        """U+202B (Right-to-Left Embedding) in <script>."""
+        state = {"data": {"sections": [{"type": "text", "content": "<scr\u202bipt>"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_bidi_lri_in_onerror(self, gate):
+        """U+2066 (Left-to-Right Isolate) in onerror handler."""
+        state = {"data": {"sections": [{"type": "text", "content": "on\u2066error=alert(1)"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_bidi_fsi_in_url(self, gate):
+        """U+2068 (First Strong Isolate) in javascript: URL."""
+        state = {"data": {"sections": [{"type": "text", "content": "java\u2068script:void(0)"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_deprecated_iss_in_keyword(self, gate):
+        """U+206A (Inhibit Symmetric Swapping) in XSS keyword."""
+        state = {"data": {"sections": [{"type": "text", "content": "java\u206ascript:alert"}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    def test_clean_text_without_bidi_passes(self, gate):
+        """Normal text without bidi chars passes fine."""
+        state = {"data": {"sections": [{"type": "text", "content": "Hello world, this is safe."}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok

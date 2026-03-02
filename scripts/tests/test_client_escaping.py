@@ -1479,3 +1479,102 @@ class TestCSSEscapeFallbackRegex:
             assert char in regex_str or char.replace("\\\\", "\\") in regex_str, (
                 f"Fallback regex in {js_file} missing {char_desc} escape"
             )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ANSI NESTING CAP — MAX_ANSI_NESTING in utils.js
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAnsiNestingCap:
+    """escAnsi() must cap nesting depth to prevent DoS."""
+
+    _UTILS_PATH = _PROJECT_ROOT / "assets" / "apps" / "dynamic" / "utils.js"
+
+    def _read_utils(self) -> str:
+        return self._UTILS_PATH.read_text()
+
+    def test_max_ansi_nesting_constant_exists(self):
+        """MAX_ANSI_NESTING must be defined in utils.js."""
+        src = self._read_utils()
+        assert "MAX_ANSI_NESTING" in src, "MAX_ANSI_NESTING constant must exist"
+
+    def test_max_ansi_nesting_value_is_20(self):
+        """MAX_ANSI_NESTING must be set to 20."""
+        src = self._read_utils()
+        match = re.search(r"MAX_ANSI_NESTING\s*=\s*(\d+)", src)
+        assert match, "MAX_ANSI_NESTING assignment not found"
+        assert int(match.group(1)) == 20
+
+    def test_nesting_cap_checked_in_escAnsi(self):
+        """escAnsi must check openCount against MAX_ANSI_NESTING."""
+        src = self._read_utils()
+        assert (
+            "openCount >= MAX_ANSI_NESTING" in src
+            or "openCount>MAX_ANSI_NESTING" in src
+            or ("openCount>=MAX_ANSI_NESTING" in src)
+        ), "escAnsi must enforce the nesting cap"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SDK LISTENER CAP — MAX_LISTENERS_PER_EVENT in openwebgoggles-sdk.js
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSDKListenerCap:
+    """JS SDK must cap listeners per event to prevent memory leaks."""
+
+    _SDK_PATH = _PROJECT_ROOT / "assets" / "sdk" / "openwebgoggles-sdk.js"
+
+    def _read_sdk(self) -> str:
+        return self._SDK_PATH.read_text()
+
+    def test_max_listeners_constant_exists(self):
+        """MAX_LISTENERS_PER_EVENT must be defined in SDK."""
+        src = self._read_sdk()
+        assert "MAX_LISTENERS_PER_EVENT" in src, "MAX_LISTENERS_PER_EVENT constant must exist"
+
+    def test_max_listeners_value_is_100(self):
+        """MAX_LISTENERS_PER_EVENT must be set to 100."""
+        src = self._read_sdk()
+        match = re.search(r"MAX_LISTENERS_PER_EVENT\s*=\s*(\d+)", src)
+        assert match, "MAX_LISTENERS_PER_EVENT assignment not found"
+        assert int(match.group(1)) == 100
+
+    def test_listener_dedup_in_on_method(self):
+        """The on() method must deduplicate listener references."""
+        src = self._read_sdk()
+        # Should check for existing identical function references via === equality
+        assert "=== callback" in src or "indexOf(fn)" in src or "includes(fn)" in src, (
+            "on() method must check for duplicate listener references"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CSS CLIENT-SERVER SYNC — DANGEROUS_CSS_RE must match DANGEROUS_CSS_PATTERNS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCSSClientServerSync:
+    """Client DANGEROUS_CSS_RE must be fully synced with server DANGEROUS_CSS_PATTERNS."""
+
+    _UTILS_PATH = _PROJECT_ROOT / "assets" / "apps" / "dynamic" / "utils.js"
+
+    def _read_utils(self) -> str:
+        return self._UTILS_PATH.read_text()
+
+    def test_backslash_pattern_in_client(self):
+        """Client must block ALL backslash escapes (not just hex)."""
+        src = self._read_utils()
+        # Should have a single /\\/ pattern, not the old hex-specific ones
+        assert "/\\\\/" in src, "Client must have a general backslash pattern (/\\\\/)"
+
+    def test_css_comment_pattern_in_client(self):
+        """Client must block CSS comments (/*)."""
+        src = self._read_utils()
+        assert "/\\*/" in src or "/*" in src, "Client must block CSS comments"
+
+    def test_no_old_hex_patterns_in_client(self):
+        """Old hex-specific patterns should be replaced by the general backslash pattern."""
+        src = self._read_utils()
+        assert "u00[0-9a-fA-F]" not in src, "Old \\u00[hex] pattern should be replaced by general backslash pattern"

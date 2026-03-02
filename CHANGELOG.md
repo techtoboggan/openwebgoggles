@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4] - 2026-03-02
+
+### Security
+
+- **Nonce–payload domain separator** — Added `\x00` null byte delimiter between nonce and payload in HMAC-SHA256 and Ed25519 signing (both Python and JS SDK). Prevents concatenation ambiguity where different nonce+payload splits could produce identical signatures.
+- **CSS comment keyword-splitting blocked** — SecurityGate now rejects CSS containing `/*` comments, which could split dangerous keywords (e.g., `ur/**/l()` bypassing `url()` detection).
+- **@media CSS scoping bypass blocked** — `@media` blocks bypass `_scopeCSS()` selector rewriting. Now blocked server-side (SecurityGate) and client-side (`DANGEROUS_CSS_RE`).
+- **Action depth DoS prevented** — `validate_action()` now checks nesting depth before calling `_scan_xss()`, preventing `RecursionError` from ~997-level nested JSON payloads.
+- **ReDoS inner-quantifier detection** — Enhanced `_is_redos_safe()` to catch patterns like `(.*a)+` where a quantifier inside a quantified group causes catastrophic backtracking.
+- **Null byte XSS bypass blocked** — Added `\x00` to `ZERO_WIDTH_CHARS` set. Browsers strip null bytes, so `java\x00script:` would bypass keyword matching while executing as `javascript:`.
+- **Empty HMAC token rejection** — `verify_hmac()` now rejects empty tokens (which produce valid but meaningless signatures).
+- **Monotonic clock for nonce replay** — `NonceTracker` switched from `time.time()` to `time.monotonic()`, immune to wall-clock adjustments that could invalidate the replay window.
+- **Empty/non-string nonce rejection** — `NonceTracker.check_and_record()` rejects empty strings and non-string nonces.
+- **`data-*` attribute stripping** — `sanitizeHTML()` now strips all `data-*` attributes from rendered HTML, preventing phantom action injection via `data-action-id` on injected elements.
+- **ANSI nesting cap** — `escAnsi()` caps open `<span>` nesting at 20 levels to prevent quadratic DOM growth from crafted ANSI sequences.
+- **`safeCopy` prototype isolation** — `safeCopy()` in `app.js` now uses `Object.create(null)` instead of `{}`, eliminating prototype chain pollution vectors.
+- **Temp file restrictive umask** — Atomic file writes in `webview_server.py` and `mcp_server.py` use `umask(0o077)` to prevent world-readable `.tmp` files.
+- **Trivial token guard** — Server generates a random 32-byte token if the session token is empty or matches known trivial values (`"REDACTED"`, `"test"`, etc.).
+- **WebSocket message size limit** — 1 MB cap on incoming WebSocket messages prevents memory exhaustion from oversized payloads.
+- **Transfer-Encoding rejection** — HTTP handler rejects requests with `Transfer-Encoding` header (chunked encoding not supported by raw asyncio server).
+- **SDK listener accumulation cap** — `on()` method limited to 100 listeners per event with duplicate function prevention, preventing memory leaks from repeated `on()` calls.
+- **CSS backslash escape bypass blocked** — Non-hex CSS escapes like `\m` bypass keyword-based patterns (`@\media` → `@media` in browser). Replaced two hex-specific patterns with a single broad `\\` pattern blocking all backslashes.
+- **Bidi Unicode bypass blocked** — Added 15 invisible bidi/formatting characters (U+202A-202E, U+2066-2069, U+206A-206F) to `ZERO_WIDTH_CHARS`. These can be inserted in XSS keywords to evade pattern matching.
+- **Binary WebSocket frame bypass fixed** — WS message size guard now checks both `str` and `bytes` frames (was `str`-only, allowing oversized binary frames).
+- **Client CSS pattern desync fixed** — `DANGEROUS_CSS_RE` in `utils.js` now includes CSS comment (`/*`) and general backslash patterns, matching server-side `DANGEROUS_CSS_PATTERNS`.
+- **PID file restrictive umask** — PID file write now uses `umask(0o077)`, consistent with other file writes.
+- **Rate limiter monotonic clock** — `RateLimiter` switched from `time.time()` to `time.monotonic()`, matching NonceTracker's clock immunity.
+- **validation.js hasOwnProperty hardened** — `showAllErrors()` and `hasValidationErrors()` now use `Object.prototype.hasOwnProperty.call()` safe pattern.
+
+### Added
+
+- **56 new security tests** covering: CSS backslash bypass (7), bidi Unicode bypass (6), CSS comment splitting (4), action depth DoS (1), ReDoS inner-quantifier (3), null byte XSS (2), @media blocking (2), proto pollution (4), domain separator (2), nonce tracker (3), Transfer-Encoding rejection (2), WS raw frame size (3), trivial token guard (5), temp file umask (2), rate limiter clock (1), ANSI nesting cap (3), SDK listener cap (3), CSS client-server sync (3).
+
+### Changed
+
+- Test count: 1664 → 1752 (1665 unit + 32 BDD + 55 E2E, 0 failures, 16 skipped)
+- Streamlined AGENTS.md — consolidated redundant sections, removed legacy content, updated all references to current state.
+
 ## [0.12.3] - 2026-03-02
 
 ### Added
