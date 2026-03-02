@@ -6,16 +6,18 @@ This file captures architectural decisions, coding standards, and lessons learne
 
 ```
 scripts/              Python source (NOT src/)
-  mcp_server.py       MCP server — tools, session management, presets
+  mcp_server.py       MCP server — tools, session management, presets, hot-reload
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (1627+ tests: 1577 unit + 50 E2E)
+  tests/              pytest suite (1660+ tests: 1577 unit + 32 BDD + 55 E2E)
     conftest.py       Shared fixtures: gate, session_keys, nonce_tracker, session_token, E2E Playwright fixtures
     test_security_gate.py
     test_client_escaping.py
     test_mcp_server.py
     test_browser_e2e.py  Playwright E2E tests (headless Chromium, @pytest.mark.slow)
+    features/         BDD feature files (Gherkin scenarios)
+    steps/            BDD step definitions (pytest-bdd)
 assets/
   sdk/                Client JS SDK (openwebgoggles-sdk.js)
   apps/dynamic/       Built-in dynamic renderer
@@ -137,6 +139,17 @@ When `webview_update(merge=True)` is used, the **merged result** must be re-vali
 
 Runtime `.style` manipulation via JavaScript (e.g., `el.style.display = "none"` after DOM creation) is safe — it bypasses `sanitizeHTML`. But initial HTML must use classes.
 
+### Text Overflow Protection
+
+All text containers use `overflow-wrap: break-word; word-break: break-word;` to prevent long unbroken strings (URLs, base64 data, error paths) from overflowing their containers. This applies to:
+- `.message-box` — text sections
+- `.markdown-content` — markdown rendered content
+- `.item-content` — item list titles/subtitles (also has `min-width: 0`)
+- `.owg-table th, .owg-table td` — table cells
+- `.markdown-content th, .markdown-content td` — markdown table cells
+
+Plain text sections (without `format: "markdown"`) use `.message-box-plain` which adds `white-space: pre-wrap` to preserve newlines and indentation. To render code blocks, use `format: "markdown"` with fenced code blocks.
+
 ### Client-Side: CSS Scoping
 
 `_scopeCSS()` in `utils.js` prepends `#content` to all custom CSS selectors. This prevents agent-supplied CSS from defacing security-critical UI elements (header, session badge, connection indicator).
@@ -199,6 +212,43 @@ Fixtures (`conftest.py`):
 - `webview_session` — starts/reuses a WebviewSession subprocess
 - `playwright_browser` — starts/reuses headless Chromium
 - `e2e_page` — fresh browser context per test, navigated to webview URL
+
+### BDD Tests (pytest-bdd)
+
+Feature files in `scripts/tests/features/` with step definitions in `scripts/tests/steps/` cover lifecycle and integration scenarios using Gherkin syntax:
+
+```bash
+# Run BDD tests
+python -m pytest scripts/tests/steps/ -v -m bdd
+```
+
+Feature coverage (32 scenarios):
+- `hot_reload.feature` (9) — version monitor, mtime detection, error backoff, path recovery
+- `import_fallback.feature` (5) — relative/absolute import resolution
+- `mcp_lifecycle.feature` (5) — lifespan startup/cleanup, background tasks
+- `stale_server.feature` (5) — tool rejection, host notification
+- `cli_lifecycle.feature` (4) — SIGUSR1, status, PID files
+- `installation.feature` (4) — version detection, METADATA reading
+
+Key BDD fixtures (`steps/conftest.py`):
+- `version_monitor_env` — saves/restores module globals (`_reload_pending`, `_active_tool_calls`, `_session`, `_stale_version_msg`, `_signal_reload_requested`)
+- `mock_dist_info(tmp_path)` — creates real dist-info directory with METADATA file
+- `mock_dist_info_v2(tmp_path)` — second version dist-info for upgrade scenarios
+
+### Hot-Reload Architecture
+
+The version monitor (`_version_monitor()` in `mcp_server.py`) uses two-tier detection:
+1. **Cheap mtime check** — polls dist-info directory stat every 30s
+2. **Full version read** — only when mtime changes, reads METADATA directly from disk
+
+Key design decisions:
+- **Direct METADATA reading** — bypasses `importlib.metadata` which caches in-process and doesn't flush in pipx/venv installs
+- **Path recovery** — if dist-info path is lost during upgrade, re-discovers via `_get_installed_version_info()`
+- **Exponential backoff** — consecutive errors use increasing sleep intervals; gives up after 10 errors
+- **Async startup** — initial metadata lookup runs in `run_in_executor()` to avoid blocking MCP lifespan (prevents -32001 timeout)
+- **Task done-callbacks** — all background tasks attach `_task_done_callback` to log unhandled crashes
+- **Host notification** — `_notify_host_stale()` proactively sends log message to MCP host via `send_log_message(level="error")`
+- **mtime=None recovery** — when `last_mtime is None` (after "unknown" version), the next successful stat forces a version recheck
 
 ### Top-Level Key Allowlist Gotcha
 

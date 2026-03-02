@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openwebgoggles"
-version = "0.12.2"
+version = "0.12.3"
 description = "Browser-based human-in-the-loop UIs for AI coding agents"
 readme = "README.md"
 license = "Apache-2.0"
@@ -39,6 +39,7 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-playwright>=0.6.2,<1",
     "pytest-timeout>=2.3",
+    "pytest-bdd>=7.0,<8",
     "ruff>=0.9",
     "pre-commit>=4.0",
 ]
@@ -131,7 +132,9 @@ markers = [
     "mitre_t1568: MITRE ATT&CK T1568 Dynamic Resolution",
     "secure_comms: Secure communications between webview and agent",
     "slow: Integration tests that start real subprocesses",
+    "bdd: BDD feature scenarios (Gherkin-driven)",
 ]
+bdd_features_base_dir = "scripts/tests/features"
 
 [tool.coverage.run]
 source = ["scripts"]

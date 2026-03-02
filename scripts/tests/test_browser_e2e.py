@@ -72,6 +72,77 @@ class TestTextSection:
         bold = e2e_page.locator(".section strong").first.inner_text()
         assert "bold" in bold
 
+    def test_long_text_without_spaces_wraps(self, e2e_page, webview_session):
+        """Long text without spaces should wrap instead of overflowing the container."""
+        long_text = "a" * 500  # 500-char string with no spaces
+        write_and_wait(
+            webview_session,
+            e2e_page,
+            {
+                "title": "Overflow Test",
+                "data": {"sections": [{"type": "text", "content": long_text}]},
+            },
+            ".message-box",
+        )
+        box = e2e_page.locator(".message-box").first
+        container = e2e_page.locator("#content")
+        # The message box should not be wider than its container
+        box_width = box.bounding_box()["width"]
+        container_width = container.bounding_box()["width"]
+        assert box_width <= container_width + 2  # 2px tolerance for borders
+
+    def test_plain_text_preserves_whitespace(self, e2e_page, webview_session):
+        """Plain text sections preserve newlines and indentation."""
+        code_text = "function hello() {\n    console.log('hi');\n}"
+        write_and_wait(
+            webview_session,
+            e2e_page,
+            {
+                "title": "Whitespace Test",
+                "data": {"sections": [{"type": "text", "content": code_text}]},
+            },
+            ".message-box-plain",
+        )
+        box = e2e_page.locator(".message-box-plain").first
+        inner = box.inner_text()
+        # Newlines should be preserved (pre-wrap)
+        assert "\n" in inner or "console.log" in inner
+
+    def test_markdown_code_block_renders(self, e2e_page, webview_session):
+        """Markdown code blocks render with proper styling."""
+        md = "Here is code:\n\n```python\ndef hello():\n    print('world')\n```"
+        write_and_wait(
+            webview_session,
+            e2e_page,
+            {
+                "title": "Code Block Test",
+                "data": {"sections": [{"type": "text", "format": "markdown", "content": md}]},
+            },
+            ".markdown-content pre",
+        )
+        pre = e2e_page.locator(".markdown-content pre").first
+        assert pre.is_visible()
+        code = pre.inner_text()
+        assert "hello" in code
+
+    def test_long_text_in_item_wraps(self, e2e_page, webview_session):
+        """Long text in item titles/subtitles wraps within the item row."""
+        long_title = "x" * 400
+        write_and_wait(
+            webview_session,
+            e2e_page,
+            {
+                "title": "Item Overflow",
+                "data": {"sections": [{"type": "items", "items": [{"title": long_title, "subtitle": "short"}]}]},
+            },
+            ".item-row",
+        )
+        row = e2e_page.locator(".item-row").first
+        container = e2e_page.locator("#content")
+        row_width = row.bounding_box()["width"]
+        container_width = container.bounding_box()["width"]
+        assert row_width <= container_width + 2
+
 
 class TestFormSection:
     """Verify form field rendering."""

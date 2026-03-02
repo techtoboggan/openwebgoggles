@@ -918,6 +918,7 @@ _active_tool_calls_lock = asyncio.Lock()
 _reload_pending: bool = False
 _reload_task: asyncio.Task | None = None
 _RELOAD_CHECK_INTERVAL = 30  # seconds
+_MAX_MONITOR_ERRORS = 10  # give up after this many consecutive errors
 
 # Signal-triggered restart (SIGUSR1 from `openwebgoggles restart`)
 _signal_reload_requested: bool = False
@@ -927,6 +928,15 @@ def _sigusr1_handler(signum: int, frame: Any) -> None:  # noqa: ARG001
     """Handle SIGUSR1 by setting a flag for the event loop to pick up."""
     global _signal_reload_requested
     _signal_reload_requested = True
+
+
+def _task_done_callback(task: asyncio.Task) -> None:
+    """Log unhandled exceptions from background tasks so they don't vanish silently."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Background task %r crashed: %s", task.get_name(), exc, exc_info=exc)
 
 
 # MCP server PID file — written on startup so `openwebgoggles restart` can find us
@@ -949,8 +959,54 @@ def _get_installed_version_info() -> tuple[str, Path | None]:
         return ("unknown", None)
 
 
-def _read_version_fresh() -> str:
-    """Read installed version bypassing importlib caches (Python 3.12+)."""
+def _get_site_packages_dirs() -> list[Path]:
+    """Return candidate site-packages directories for the current environment."""
+    dirs: list[Path] = []
+    for p in sys.path:
+        pp = Path(p)
+        if pp.name == "site-packages" and pp.is_dir():
+            dirs.append(pp)
+    return dirs
+
+
+def _read_version_fresh(dist_info_hint: Path | None = None) -> str:
+    """Read installed version by reading METADATA file directly from disk.
+
+    Bypasses importlib.metadata caches entirely, which don't always flush
+    in pipx/venv installs after ``pip install --upgrade``.
+
+    Strategy: (1) read METADATA from the known dist-info hint path,
+    (2) fall back to scanning site-packages for any openwebgoggles dist-info,
+    (3) fall back to importlib as last resort.
+    """
+    # Strategy 1: Direct file read from known dist-info path
+    if dist_info_hint is not None:
+        metadata_file = dist_info_hint / "METADATA"
+        try:
+            if metadata_file.is_file():
+                for line in metadata_file.read_text(encoding="utf-8").splitlines():
+                    if line.startswith("Version:"):
+                        return line.split(":", 1)[1].strip()
+        except OSError:
+            pass
+
+    # Strategy 2: Scan site-packages for any openwebgoggles dist-info
+    for site_dir in _get_site_packages_dirs():
+        try:
+            for entry in site_dir.iterdir():
+                if entry.name.startswith("openwebgoggles-") and entry.name.endswith(".dist-info"):
+                    metadata_file = entry / "METADATA"
+                    try:
+                        if metadata_file.is_file():
+                            for line in metadata_file.read_text(encoding="utf-8").splitlines():
+                                if line.startswith("Version:"):
+                                    return line.split(":", 1)[1].strip()
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+    # Strategy 3: Fall back to importlib as last resort
     importlib.invalidate_caches()
     try:
         dist = importlib.metadata.distribution("openwebgoggles")
@@ -962,12 +1018,28 @@ def _read_version_fresh() -> str:
 _stale_version_msg: str = ""
 
 
+async def _notify_host_stale(message: str) -> None:
+    """Attempt to send a log notification to the MCP host about staleness.
+
+    Best-effort — if the MCP session is not available or the notification
+    fails, the stale flag in _track_tool_call is the fallback.
+    """
+    try:
+        server = getattr(mcp, "_mcp_server", None) or getattr(mcp, "server", None)
+        if server is not None and hasattr(server, "send_log_message"):
+            await server.send_log_message(level="error", data=message)
+            logger.info("Sent stale notification to MCP host")
+    except Exception:
+        logger.debug("Could not send stale notification to MCP host (will notify on next tool call)")
+
+
 def _mark_stale(old_version: str, new_version: str) -> None:
     """Mark the server as stale after a package upgrade.
 
     Instead of os.execv() (which breaks the MCP stdio protocol by restarting
     the handshake mid-session), we set a flag so subsequent tool calls return
     a clear error asking the user/agent to restart the MCP server.
+    Also sends a best-effort log notification to the MCP host.
     """
     global _stale_version_msg
     _stale_version_msg = (
@@ -976,17 +1048,27 @@ def _mark_stale(old_version: str, new_version: str) -> None:
         f"Please restart the MCP server to pick up the new version."
     )
     logger.warning(_stale_version_msg)
+    # Best-effort MCP notification (non-blocking)
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_notify_host_stale(_stale_version_msg))
+    except RuntimeError:
+        pass  # No event loop — notification will happen via tool call rejection
 
 
 async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version comparison logic
-    """Background task: poll for package version changes and exec to reload.
+    """Background task: poll for package version changes and mark server stale.
 
     Two-tier detection: cheap mtime check every 30s, full version read only
-    when the dist-info directory changes.
+    when the dist-info directory changes.  The initial metadata lookup runs
+    in an executor to avoid blocking the MCP lifespan startup (which would
+    cause -32001 timeout errors from the host).
     """
     global _reload_pending
 
-    startup_version, dist_info_path = _get_installed_version_info()
+    # Defer initial metadata lookup to a thread so lifespan yields immediately
+    loop = asyncio.get_running_loop()
+    startup_version, dist_info_path = await loop.run_in_executor(None, _get_installed_version_info)
     if startup_version == "unknown":
         logger.info("Package not installed via pip — version monitor disabled.")
         return
@@ -1000,41 +1082,53 @@ async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version 
         except OSError:
             pass
 
+    consecutive_errors = 0
+
     while True:
         await asyncio.sleep(_RELOAD_CHECK_INTERVAL)
 
         try:
             # Tier 1: cheap mtime check
             mtime_changed = False
-            if dist_info_path is not None:
+            if dist_info_path is not None and dist_info_path.is_dir():
                 try:
                     current_mtime = dist_info_path.stat().st_mtime
-                    if last_mtime is not None and current_mtime != last_mtime:
+                    if last_mtime is None or current_mtime != last_mtime:
                         mtime_changed = True
                     last_mtime = current_mtime
                 except OSError:
                     # Directory gone — package is being upgraded
                     mtime_changed = True
             else:
+                # Path lost or gone — always try a version read to recover
                 mtime_changed = True
 
             if not mtime_changed:
+                consecutive_errors = 0  # healthy cycle
                 continue
 
             # Tier 2: full version read (only after mtime change)
-            current_version = _read_version_fresh()
+            current_version = _read_version_fresh(dist_info_hint=dist_info_path)
 
             if current_version == "unknown":
-                # Package temporarily missing during upgrade — retry next cycle
-                dist_info_path = None
+                # Package temporarily missing during upgrade — retry next cycle.
+                # Do NOT clear dist_info_path: we need it for recovery.
                 last_mtime = None
+                consecutive_errors = 0  # expected during upgrade, not an error
                 continue
 
-            if current_version == startup_version:
-                # Mtime changed but same version — update path in case it moved
+            # Re-discover dist-info path if we lost it (e.g. after upgrade)
+            if dist_info_path is None or not dist_info_path.is_dir():
                 _, dist_info_path = _get_installed_version_info()
                 if dist_info_path and dist_info_path.is_dir():
-                    last_mtime = dist_info_path.stat().st_mtime
+                    try:
+                        last_mtime = dist_info_path.stat().st_mtime
+                    except OSError:
+                        last_mtime = None
+
+            if current_version == startup_version:
+                # Mtime changed but same version — no upgrade
+                consecutive_errors = 0
                 continue
 
             # Version changed — mark server as stale
@@ -1061,7 +1155,21 @@ async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version 
         except asyncio.CancelledError:
             return
         except Exception:
-            logger.exception("Version monitor error (will retry)")
+            consecutive_errors += 1
+            if consecutive_errors >= _MAX_MONITOR_ERRORS:
+                logger.error(
+                    "Version monitor giving up after %d consecutive errors",
+                    consecutive_errors,
+                )
+                return
+            backoff = min(_RELOAD_CHECK_INTERVAL * (2.0**consecutive_errors), 300)
+            logger.exception(
+                "Version monitor error (attempt %d/%d, retry in %.0fs)",
+                consecutive_errors,
+                _MAX_MONITOR_ERRORS,
+                backoff,
+            )
+            await asyncio.sleep(backoff)
 
 
 async def _signal_reload_monitor() -> None:
@@ -1146,8 +1254,16 @@ def _cleanup_mcp_pid() -> None:
 async def lifespan(server: FastMCP):
     """MCP server lifecycle: version monitor + signal monitor on start, cleanup on shutdown."""
     global _reload_task
-    _reload_task = asyncio.create_task(_version_monitor())
-    signal_task = asyncio.create_task(_signal_reload_monitor())
+
+    # Register/re-register SIGUSR1 handler so it works even if main() was bypassed
+    if platform.system() != "Windows":
+        signal.signal(signal.SIGUSR1, _sigusr1_handler)
+
+    # Create background tasks with names + done callbacks for crash visibility
+    _reload_task = asyncio.create_task(_version_monitor(), name="version-monitor")
+    _reload_task.add_done_callback(_task_done_callback)
+    signal_task = asyncio.create_task(_signal_reload_monitor(), name="signal-monitor")
+    signal_task.add_done_callback(_task_done_callback)
 
     # Write PID file so `openwebgoggles restart` and `openwebgoggles status` can find us
     _write_mcp_pid()

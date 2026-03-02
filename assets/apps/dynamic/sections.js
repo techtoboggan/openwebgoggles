@@ -183,7 +183,7 @@
     if (sec.format === "markdown") {
       return '<div class="message-box">' + markdownBlock(sec.content || "") + "</div>";
     }
-    return '<div class="message-box">' + esc(sec.content || "") + "</div>";
+    return '<div class="message-box message-box-plain">' + esc(sec.content || "") + "</div>";
   }
 
   // ─── Actions section ────────────────────────────────────────────────────────

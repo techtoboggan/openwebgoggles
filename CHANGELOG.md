@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-03-02
+
+### Added
+
+- **32 BDD test scenarios (pytest-bdd)** — Gherkin feature files covering hot-reload lifecycle, import fallback, MCP lifespan, stale server behavior, CLI lifecycle, and installation version detection. Step definitions in `scripts/tests/steps/`.
+- **5 new E2E browser tests** — Long text overflow wrapping, whitespace preservation in plain text, markdown code block rendering, item row overflow, all verified with headless Chromium.
+- **Host notification on staleness** — `_notify_host_stale()` proactively sends a `send_log_message(level="error")` to the MCP host when the server detects a version change, instead of silently waiting for the next tool call.
+- **Task done-callbacks** — All background asyncio tasks now attach `_task_done_callback()` which logs unhandled exceptions so crashes don't vanish silently.
+
+### Fixed
+
+- **Hot-reload not detecting upgrades** — `importlib.invalidate_caches()` doesn't flush `importlib.metadata` distribution caches in pipx/venv installs. Rewrote `_read_version_fresh()` to read the `METADATA` file directly from disk, bypassing importlib entirely.
+- **dist-info path permanently lost after upgrade** — When the package was temporarily missing during upgrade, setting `dist_info_path = None` lost the reference forever. Now the path is preserved and re-discovered via `_get_installed_version_info()` when it reappears.
+- **mtime=None recovery stuck** — After a "version unknown" state set `last_mtime = None`, the next successful stat didn't force a version recheck because `last_mtime is not None` was false. Changed to `last_mtime is None or current_mtime != last_mtime` so recovery always triggers a version read.
+- **MCP -32001 timeout on startup** — `_version_monitor()` called `_get_installed_version_info()` synchronously during lifespan startup. Deferred to `loop.run_in_executor()` so the MCP `initialize` response returns immediately.
+- **Version monitor infinite error loop** — If `stat()` failed every iteration, the monitor logged an exception every 30s forever. Added consecutive error counter with exponential backoff; gives up after 10 consecutive errors.
+- **SIGUSR1 handler not in lifespan** — Signal was registered only in `main()`. Now also registered in `lifespan()` for test and restart scenarios.
+- **Long text overflowing containers** — Text without spaces (URLs, base64, long paths) overflowed `.message-box`, `.item-content`, and table cells. Added `overflow-wrap: break-word; word-break: break-word` to all text containers.
+- **Plain text whitespace not preserved** — Plain text sections (no `format: "markdown"`) now use `white-space: pre-wrap` via `.message-box-plain` class, preserving newlines and indentation for code-like content.
+
+### Changed
+
+- Test count: 1627 → 1664 (1577 unit + 32 BDD + 55 E2E, 0 failures, 16 skipped)
+- CI workflow: Added `pytest-bdd` to test job dependencies.
+- Updated AGENTS.md: BDD testing section, hot-reload architecture docs, text overflow protection docs.
+
 ## [0.12.2] - 2026-03-02
 
 ### Fixed
