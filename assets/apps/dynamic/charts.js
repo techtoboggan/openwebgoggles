@@ -30,10 +30,38 @@
     return c;
   }
 
+  // ─── Convert columns/rows to internal labels/datasets format ──────────────
+  // Allows chart sections to use the same {columns, rows} format as tables.
+  // First column becomes labels, remaining columns become datasets.
+  function columnsRowsToData(sec) {
+    var cols = sec.columns || [];
+    var rows = sec.rows || [];
+    if (!cols.length || !rows.length) return {};
+
+    var labelKey = cols[0].key;
+    var labels = rows.map(function (r) { return r[labelKey] != null ? String(r[labelKey]) : ""; });
+
+    var datasets = [];
+    for (var ci = 1; ci < cols.length; ci++) {
+      var col = cols[ci];
+      var values = rows.map(function (r) { return r[col.key] != null ? Number(r[col.key]) || 0 : 0; });
+      datasets.push({ label: col.label || col.key, values: values });
+    }
+
+    // For pie/donut: merge all value columns into a single dataset with separate colors
+    var ct = sec.chartType || "bar";
+    if ((ct === "pie" || ct === "donut") && datasets.length === 1) {
+      datasets[0].colors = [];
+    }
+
+    return { labels: labels, datasets: datasets };
+  }
+
   // ─── Chart dispatcher ──────────────────────────────────────────────────────
   OWG.renderChart = function (sec) {
     var ct = sec.chartType || "bar";
-    var data = sec.data || {};
+    // Support both {data: {labels, datasets}} and {columns, rows} formats
+    var data = sec.data || (sec.columns ? columnsRowsToData(sec) : {});
     var opts = sec.options || {};
     var w = Math.max(50, Math.min(2000, opts.width || 500));
     var h = Math.max(50, Math.min(1500, opts.height || 300));
@@ -339,7 +367,7 @@
     }
 
     // Bar/line/area: legend items from dataset labels
-    if (datasets.length <= 1 && !datasets[0].label) return "";
+    if (!datasets.length || (datasets.length === 1 && !datasets[0].label)) return "";
     var html = '<div class="owg-chart-legend">';
     datasets.forEach(function (ds, di) {
       if (!ds.label) return;

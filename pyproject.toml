@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openwebgoggles"
-version = "0.12.0"
+version = "0.12.1"
 description = "Browser-based human-in-the-loop UIs for AI coding agents"
 readme = "README.md"
 license = "Apache-2.0"
@@ -37,6 +37,8 @@ dev = [
     "pytest>=9.0,<10",
     "pytest-asyncio>=1.0,<2",
     "pytest-cov>=6.0",
+    "pytest-playwright>=0.6.2,<1",
+    "pytest-timeout>=2.3",
     "ruff>=0.9",
     "pre-commit>=4.0",
 ]
@@ -59,6 +61,7 @@ select = [
     "B",     # flake8-bugbear
     "UP",    # pyupgrade
     "S",     # flake8-bandit (security)
+    "C901",  # McCabe complexity (agent-friendly ceiling)
 ]
 ignore = [
     "S101",  # assert used (fine in tests)
@@ -66,6 +69,13 @@ ignore = [
     "S607",  # partial executable path (fine for our scripts)
     "E501",  # line too long (handled by formatter)
 ]
+
+[tool.ruff.lint.mccabe]
+# CC ≤ 15: optimal window for agentic code processing.
+# Functions above this threshold are too branchy for agents to reason
+# about reliably in one pass. Existing violations are grandfathered
+# with `# noqa: C901` and tracked for refactoring.
+max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/tests/*" = [

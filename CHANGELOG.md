@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-03-02
+
+### Added
+
+- **`showNav` top-level boolean** — Hide the auto-generated page tab bar (`showNav: false`) when navigation is handled entirely through `navigateTo` buttons, items, and tables.
+- **Per-page `hidden` boolean** — Exclude individual pages from the nav bar while keeping them reachable via `navigateTo`. Enables master-detail drill-down patterns.
+- **Chart `columns/rows` data format** — Charts now accept the same `columns`/`rows` tabular format used by table sections as an alternative to `data.labels/datasets`. The first column becomes labels; remaining columns become datasets.
+- **50 Playwright E2E browser tests** — Comprehensive end-to-end tests using headless Chromium validate all 10+ section types, SPA navigation, form submission round-trips, client-side validation, conditional behaviors, layouts, and chart rendering against a real browser. Marked `@pytest.mark.slow` with dedicated CI job.
+- **`pytest-timeout` dev dependency** — Added to pyproject.toml for CI E2E test timeout enforcement.
+
+### Fixed
+
+- **SPA page visibility stripped by sanitizer** — `sanitizeHTML()` strips all inline `style` attributes from non-SVG elements (security hardening), which silently removed `style="display:none"` from inactive SPA pages, making all pages visible simultaneously. Replaced with class-based visibility (`.owg-page-hidden`) that survives sanitization.
+- **Tab panel visibility stripped by sanitizer** — Same bug class as above. Inactive tab panels used `style="display:none"` which was stripped. Replaced with `.owg-tabs-hidden` CSS class.
+- **`validateAllRequired()` crash on `Object.create(null)`** — `fieldValidators.hasOwnProperty(key)` threw `TypeError` because `Object.create(null)` objects have no prototype chain. Fixed with `Object.prototype.hasOwnProperty.call()`.
+- **`renderLegend` crash on empty datasets** — Charts using `columns/rows` format (which produces empty `datasets` at parse time) would crash with `TypeError: Cannot read properties of undefined (reading 'label')`. Added guard for empty arrays.
+- **Silent page switching** — `navigateToPage()` no longer emits `_page_switch` actions. Page navigation is now purely client-side with no agent round-trip. The server-side `wait_for_action` also filters internal `_`-prefixed actions as defense-in-depth.
+
+### Changed
+
+- Test count: 1569 → 1627 (1577 unit + 50 E2E, 0 failures, 16 skipped)
+- E2E tests use deterministic waits (`wait_for_function`, `wait_for_selector`) instead of hardcoded timeouts for CI reliability.
+- Updated AGENTS.md: E2E testing section, inline style warning, `Object.create(null)` prototype safety docs.
+- Updated reference documentation: data-contract.md (major expansion with all section types), integration-guide.md (new metric/SPA/table examples), sdk-api.md (client-side navigation section), README (metric/chart section types, SPA navigation subsection).
+
 ## [0.12.0] - 2026-03-01
 
 ### Added
@@ -12,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Metric cards section** (`type: "metric"`) — KPI widgets with label, value, unit, change indicator (up/down/neutral), optional inline sparkline, and responsive grid layout (1-6 columns).
 - **Chart section** (`type: "chart"`) — Data-driven SVG charts rendered client-side from validated numeric arrays. Supports bar, line, area, pie, donut, and sparkline chart types. Colors via hex codes or named theme aliases (blue, green, red, yellow, purple, orange, cyan, pink). Options for legend, grid lines, stacked bars, and custom dimensions.
 - **Clickable table rows** — Extended `table` section with `clickable: true` and optional `clickActionId`. Row clicks emit an action with row data and context (section_index, row_index). Coexists with `selectable` checkboxes.
-- **SPA-style pages / navigation** — New top-level `pages` dict and `activePage` key. Renders an auto-generated navigation bar with instant client-side page switching. Each page has its own sections and actions. Emits `_page_switch` action so agents can react to navigation.
+- **SPA-style pages / navigation** — New top-level `pages` dict and `activePage` key. Renders an auto-generated navigation bar with instant client-side page switching. Each page has its own sections and actions.
 - **New file: `charts.js`** — Vanilla JS IIFE module for safe SVG chart generation. All SVG built from data (no raw SVG injection). Text through `esc()`, attributes through `escAttr()`, colors pre-validated by SecurityGate.
 - **`OWG.emitAction()`** — Exposed action dispatch function for sub-modules (used by clickable table rows and page navigation).
 - **360+ new tests** — End-to-end MCP integration tests, SecurityGate validation, client-side escaping, SVG safety, and security audit regression tests.

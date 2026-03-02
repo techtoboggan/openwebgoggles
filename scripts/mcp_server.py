@@ -465,6 +465,10 @@ class WebviewSession:
     ) -> dict[str, Any] | None:
         """Poll actions.json until a user action appears, or timeout.
 
+        Internal actions (action_id starting with ``_``, e.g. ``_page_switch``)
+        are navigation bookkeeping and do **not** break the wait.  Only
+        explicit user actions (approve / reject / submit buttons) count.
+
         Args:
             timeout: Maximum seconds to wait.
             on_progress: Optional ``async callable(elapsed, total)`` invoked
@@ -479,7 +483,12 @@ class WebviewSession:
         while time.monotonic() < deadline:
             try:
                 data = json.loads(actions_path.read_text())
-                if data.get("actions"):
+                actions = data.get("actions", [])
+                # Filter: only user-initiated actions break the wait.
+                # Internal actions (prefixed with _) like _page_switch are
+                # navigation bookkeeping and are ignored here.
+                user_actions = [a for a in actions if not str(a.get("action_id", "")).startswith("_")]
+                if user_actions:
                     return data
             except (FileNotFoundError, json.JSONDecodeError):
                 pass
@@ -966,7 +975,7 @@ def _mark_stale(old_version: str, new_version: str) -> None:
     logger.warning(_stale_version_msg)
 
 
-async def _version_monitor() -> None:
+async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version comparison logic
     """Background task: poll for package version changes and exec to reload.
 
     Two-tier detection: cheap mtime check every 30s, full version read only
@@ -1403,17 +1412,23 @@ async def webview(
           - rows (list): For "table" sections — array of row objects
           - clickable (bool): For "table" sections — enable row click drill-down
           - clickActionId (str): For "table" sections — action ID sent on row click
+          - navigateToField (str): For "table" sections — row field containing page key for client-side navigation
           - tabs (list): For "tabs" sections — [{id, label, sections: [...]}]
           - cards (list): For "metric" sections — [{label, value, unit?, change?, changeDirection?, sparkline?}]
           - chartType (str): For "chart" sections — "bar"|"line"|"area"|"pie"|"donut"|"sparkline"
+            Chart data can be provided as data: {labels, datasets} OR as columns/rows (same format as table sections).
       - pages (dict, optional): Multi-page SPA navigation. Each key is a page ID:
-          {page_id: {label, data: {sections: [...]}, actions_requested?: [...]}}
+          {page_id: {label, hidden?: bool, data: {sections: [...]}, actions_requested?: [...]}}
           When present, renders a navigation bar for instant client-side page switching.
+          Set hidden: true on a page to exclude it from the nav bar (still reachable via navigateTo).
+      - showNav (bool, optional): Show the page navigation bar. Default: true.
+          Set to false when navigation is handled entirely through navigateTo buttons/items/tables.
       - activePage (str, optional): Which page to show initially (must be a key in pages)
       - actions_requested (list): Top-level action buttons, each with:
           - id (str): Unique action identifier
           - label (str): Button text
           - type/style: "approve"|"reject"|"submit"|"primary"|"danger"|"success"|"warning"|"ghost"
+          - navigateTo (str, optional): Page key for client-side navigation (no agent round-trip)
       - behaviors (list, optional): Client-side conditional field rules.
           Each: {when: {field, equals|in|checked|...}, show|hide|enable|disable: [keys]}
       - layout (dict, optional): Multi-panel layout. {type: "sidebar"|"split", sidebarWidth?}
@@ -1422,7 +1437,7 @@ async def webview(
     Field types: text, textarea, number, select, checkbox, email, url, static
     Each field: {key, label, type, value?, default?, placeholder?, description?, options?, format?,
                  required?, pattern?, minLength?, maxLength?, errorMessage?}
-    Items: {title, subtitle?, id?, format?, className?, actions?}
+    Items: {title, subtitle?, id?, format?, className?, actions?, navigateTo?}
 
     Custom styling:
       - className: Available on sections, fields, and items. Alphanumeric + hyphens + spaces.
@@ -2038,7 +2053,7 @@ def _cmd_status() -> None:
 # -- doctor -----------------------------------------------------------------
 
 
-def _cmd_doctor() -> None:
+def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic functions
     """Diagnose the OpenWebGoggles setup and environment."""
     data_dir_arg = None
     if len(sys.argv) > 2:

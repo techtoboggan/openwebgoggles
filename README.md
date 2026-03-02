@@ -422,7 +422,7 @@ This means you can debug the entire system by looking at three JSON files. No hi
 
 Most use cases don't require custom HTML. The built-in `dynamic` app takes a JSON schema and renders a complete, styled interface.
 
-**Section types:** `text`, `items`, `form`, `actions`, `progress`, `log`, `diff`, `table`, `tabs`
+**Section types:** `text`, `items`, `form`, `actions`, `progress`, `log`, `diff`, `table`, `tabs`, `metric`, `chart`
 
 **Form field types:** `text`, `textarea`, `number`, `select`, `checkbox`, `email`, `url`, `static`
 
@@ -437,8 +437,10 @@ Beyond basic forms and text, the renderer supports content types purpose-built f
 - **`progress`** — Task checklist with status icons and percentage bar. Pair with `webview_update(merge=True)` to stream live progress as your agent works.
 - **`log`** — Scrolling terminal output with ANSI color support. Great for build output, test results, or any streaming text.
 - **`diff`** — Unified diff viewer with line numbers, green/red coloring, and hunk headers. Show code changes without forcing the human to read raw patches.
-- **`table`** — Sortable data table with optional row selection. Good for test results, dependency lists, or any tabular data.
+- **`table`** — Sortable data table with optional row selection. Supports clickable rows (`clickable: true`) that emit an action with the row data, or client-side navigation via `navigateToField`.
 - **`tabs`** — Client-side tabbed panels. Nest any other section types inside each tab. No server round-trip on tab switch.
+- **`metric`** — KPI cards in a responsive grid (1–6 columns). Each card supports a label, value, unit, change indicator, and inline SVG sparkline.
+- **`chart`** — Data-driven SVG charts: bar, line, area, pie, donut, and sparkline. Provide data as `{labels, datasets}` or reuse the `columns/rows` format from tables.
 
 ### Live Updates
 
@@ -496,6 +498,16 @@ Use `layout` + `panels` for side-by-side content:
 ```
 
 Layout types: `sidebar` (main + nav), `split` (equal columns). Both collapse to single-column on mobile.
+
+### SPA Navigation
+
+For multi-page dashboards, use `pages` to define a set of pages with instant client-side switching:
+
+- **`showNav`** (bool, default `true`) — Show or hide the auto-generated tab bar. Set `false` when navigation is handled entirely through buttons and items.
+- **Per-page `hidden`** (bool, default `false`) — Exclude a page from the tab bar while keeping it reachable via `navigateTo`.
+- **`navigateTo`** — Available on action buttons, item lists, and clickable table rows. Navigates to the target page instantly with no server round-trip.
+
+This lets agents build master-detail interfaces where the "home" page lists items, each item links to a hidden detail page, and a "Back" button returns to the list — all without the agent being involved in navigation.
 
 ## Custom Apps
 

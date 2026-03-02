@@ -2715,7 +2715,7 @@ class TestReDoSPrevention:
     def test_behavior_matches_redos_blocked(self, gate):
         """ReDoS patterns in behavior conditions must also be blocked."""
         state = {
-            "data": {"sections": [{"type": "form", "fields": [{"key": "x", "label": "X", "type": "text"}]}]},
+            "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": "x", "label": "X", "type": "text"}]}]}},
             "behaviors": [{"when": {"field": "x", "matches": "(a+)+"}, "show": ["y"]}],
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
@@ -2724,7 +2724,7 @@ class TestReDoSPrevention:
 
     def test_behavior_matches_safe_allowed(self, gate):
         state = {
-            "data": {"sections": [{"type": "form", "fields": [{"key": "x", "label": "X", "type": "text"}]}]},
+            "data": {"ui": {"sections": [{"type": "form", "fields": [{"key": "x", "label": "X", "type": "text"}]}]}},
             "behaviors": [{"when": {"field": "x", "matches": "^[a-z]+$"}, "show": ["y"]}],
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
@@ -4525,7 +4525,9 @@ class TestSecurityGateEdgeCases:
         # U+200B zero-width space embedded in a field label
         state = {
             "title": "Test",
-            "data": {"sections": [{"type": "form", "fields": [{"key": "f1", "label": "Na\u200bme", "type": "text"}]}]},
+            "data": {
+                "ui": {"sections": [{"type": "form", "fields": [{"key": "f1", "label": "Na\u200bme", "type": "text"}]}]}
+            },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, "Should catch zero-width chars in nested field label"
@@ -4585,7 +4587,7 @@ class TestSecurityGateEdgeCases:
         """data: URI should be caught in string content."""
         state = {
             "title": "Test",
-            "data": {"sections": [{"type": "text", "content": "data:text/html,<script>alert(1)</script>"}]},
+            "data": {"ui": {"sections": [{"type": "text", "content": "data:text/html,<script>alert(1)</script>"}]}},
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, "data: URI with script should be caught"
@@ -4595,7 +4597,7 @@ class TestSecurityGateEdgeCases:
         """onerror= event handler should be caught."""
         state = {
             "title": "Test",
-            "data": {"sections": [{"type": "text", "content": '<img onerror="alert(1)" src="x">'}]},
+            "data": {"ui": {"sections": [{"type": "text", "content": '<img onerror="alert(1)" src="x">'}]}},
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, "onerror event handler should be caught"
@@ -4971,6 +4973,392 @@ class TestTableClickable:
         state = _table_state({"clickable": True, "clickActionId": action_id})
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, f"clickActionId {action_id!r} should be rejected"
+
+    # --- navigateToField (client-side page navigation from row data) ---
+
+    @pytest.mark.owasp_a04
+    def test_navigate_to_field_valid(self, gate):
+        """Valid navigateToField on clickable table should pass."""
+        state = _table_state({"clickable": True, "navigateToField": "detailPage"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Valid navigateToField should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_navigate_to_field_dotted(self, gate):
+        """navigateToField with dots should pass (KEY_PATTERN allows dots)."""
+        state = _table_state({"clickable": True, "navigateToField": "detail.page"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Dotted navigateToField should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_navigate_to_field_too_long(self, gate):
+        """navigateToField >200 chars should be rejected."""
+        state = _table_state({"clickable": True, "navigateToField": "a" * 201})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "navigateToField too long" in err
+
+    @pytest.mark.owasp_a04
+    def test_navigate_to_field_not_string(self, gate):
+        """navigateToField=123 should be rejected."""
+        state = _table_state({"clickable": True, "navigateToField": 123})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "navigateToField must be a string" in err
+
+    @pytest.mark.owasp_a04
+    def test_navigate_to_field_invalid_format(self, gate):
+        """navigateToField with special chars should be rejected."""
+        state = _table_state({"clickable": True, "navigateToField": "$page"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "navigateToField" in err
+
+    @pytest.mark.owasp_a04
+    def test_navigate_to_field_empty_passes(self, gate):
+        """Empty navigateToField should pass (treated as falsy, skipped)."""
+        state = _table_state({"clickable": True, "navigateToField": ""})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"Empty navigateToField should pass: {err}"
+
+    @pytest.mark.owasp_a03
+    def test_navigate_to_field_xss_script(self, gate):
+        """XSS via <script> in navigateToField should be caught."""
+        state = _table_state({"clickable": True, "navigateToField": "<script>alert(1)</script>"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a04
+    def test_navigate_to_field_with_click_action(self, gate):
+        """navigateToField and clickActionId can coexist."""
+        state = _table_state({"clickable": True, "clickActionId": "drill", "navigateToField": "pageKey"})
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, f"navigateToField with clickActionId should pass: {err}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestNavigateTo — client-side page navigation on actions and items
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNavigateTo:
+    """Tests for navigateTo on actions and items (client-side page navigation)."""
+
+    # --- navigateTo on actions ---
+
+    @pytest.mark.owasp_a04
+    def test_action_navigate_to_valid(self, gate):
+        """Action with valid navigateTo should pass."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary", "navigateTo": "details"}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Action navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_action_navigate_to_dotted(self, gate):
+        """Action navigateTo with dots should pass."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary", "navigateTo": "page.detail"}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Dotted navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_action_navigate_to_hyphen(self, gate):
+        """Action navigateTo with hyphens should pass."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary", "navigateTo": "server-detail"}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Hyphenated navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_action_navigate_to_too_long(self, gate):
+        """navigateTo >200 chars on action should be rejected."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary", "navigateTo": "a" * 201}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "navigateTo too long" in err
+
+    @pytest.mark.owasp_a04
+    def test_action_navigate_to_not_string(self, gate):
+        """navigateTo=123 on action should be rejected."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary", "navigateTo": 123}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "navigateTo must be a string" in err
+
+    @pytest.mark.owasp_a04
+    def test_action_navigate_to_invalid_format(self, gate):
+        """navigateTo with special chars on action should be rejected."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary", "navigateTo": "$page"}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "navigateTo" in err
+
+    @pytest.mark.owasp_a03
+    def test_action_navigate_to_xss(self, gate):
+        """XSS in navigateTo on action should be caught."""
+        state = make_state(
+            {
+                "actions_requested": [
+                    {"id": "go", "label": "Go", "type": "primary", "navigateTo": "<script>alert(1)</script>"}
+                ],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+
+    @pytest.mark.owasp_a04
+    def test_action_navigate_to_empty_passes(self, gate):
+        """Empty navigateTo on action should pass (treated as falsy, skipped)."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary", "navigateTo": ""}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Empty navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_action_without_navigate_to_passes(self, gate):
+        """Action without navigateTo should still work normally."""
+        state = make_state(
+            {
+                "actions_requested": [{"id": "go", "label": "Go", "type": "primary"}],
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Action without navigateTo should pass: {err}"
+
+    # --- navigateTo on section actions ---
+
+    @pytest.mark.owasp_a04
+    def test_section_action_navigate_to_valid(self, gate):
+        """Section-level action with navigateTo should pass."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "actions",
+                                "actions": [
+                                    {"id": "nav", "label": "Details", "type": "primary", "navigateTo": "detailPage"}
+                                ],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Section action navigateTo should pass: {err}"
+
+    # --- navigateTo on items ---
+
+    @pytest.mark.owasp_a04
+    def test_item_navigate_to_valid(self, gate):
+        """Item with valid navigateTo should pass."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": "serverDetail"}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Item navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_item_navigate_to_dotted(self, gate):
+        """Item navigateTo with dots should pass."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": "server.detail"}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Dotted item navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_item_navigate_to_too_long(self, gate):
+        """navigateTo >200 chars on item should be rejected."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": "a" * 201}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "navigateTo too long" in err
+
+    @pytest.mark.owasp_a04
+    def test_item_navigate_to_not_string(self, gate):
+        """navigateTo=42 on item should be rejected."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": 42}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "navigateTo must be a string" in err
+
+    @pytest.mark.owasp_a04
+    def test_item_navigate_to_invalid_format(self, gate):
+        """navigateTo with special chars on item should be rejected."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": "page/../../etc"}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "navigateTo" in err
+
+    @pytest.mark.owasp_a03
+    def test_item_navigate_to_xss(self, gate):
+        """XSS in navigateTo on item should be caught."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": "<script>alert(1)</script>"}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+
+    @pytest.mark.owasp_a04
+    def test_item_navigate_to_empty_passes(self, gate):
+        """Empty navigateTo on item should pass (treated as falsy, skipped)."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": ""}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Empty item navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_item_without_navigate_to_passes(self, gate):
+        """Item without navigateTo should still work normally."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1"}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Item without navigateTo should pass: {err}"
+
+    @pytest.mark.owasp_a04
+    def test_item_navigate_to_starting_with_number_rejected(self, gate):
+        """navigateTo starting with number should be rejected (KEY_PATTERN)."""
+        state = make_state(
+            {
+                "data": {
+                    "ui": {
+                        "sections": [
+                            {
+                                "type": "items",
+                                "items": [{"title": "Server 1", "navigateTo": "1page"}],
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "navigateTo" in err
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -5645,28 +6033,161 @@ class TestChartSection:
     # --- Invalid data ---
 
     @pytest.mark.owasp_a04
-    def test_chart_missing_data(self, gate):
-        """Missing data field should be rejected."""
+    def test_chart_missing_data_and_columns(self, gate):
+        """Missing both data and columns should be rejected."""
         state = {"data": {"sections": [{"type": "chart", "chartType": "bar"}]}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
-        assert "data must be an object" in err
+        assert "chart requires either data or columns" in err
 
     @pytest.mark.owasp_a04
     def test_chart_data_not_dict(self, gate):
-        """data as string should be rejected."""
+        """data as string (not dict) without columns should be rejected."""
         state = {"data": {"sections": [{"type": "chart", "chartType": "bar", "data": "not-dict"}]}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
-        assert "data must be an object" in err
+        assert "chart requires either data or columns" in err
 
     @pytest.mark.owasp_a04
     def test_chart_data_as_array(self, gate):
-        """data as array should be rejected."""
+        """data as array without columns should be rejected."""
         state = {"data": {"sections": [{"type": "chart", "chartType": "bar", "data": [1, 2, 3]}]}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
-        assert "data must be an object" in err
+        assert "chart requires either data or columns" in err
+
+    # --- Tabular (columns/rows) chart format ---
+
+    @pytest.mark.owasp_a04
+    def test_chart_columns_rows_valid(self, gate):
+        """Chart with columns/rows format should pass validation."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "columns": [
+                            {"key": "month", "label": "Month"},
+                            {"key": "revenue", "label": "Revenue"},
+                        ],
+                        "rows": [
+                            {"month": "Jan", "revenue": 85},
+                            {"month": "Feb", "revenue": 92},
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    @pytest.mark.owasp_a04
+    def test_chart_columns_rows_donut(self, gate):
+        """Donut chart with columns/rows format should pass."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "donut",
+                        "columns": [
+                            {"key": "status", "label": "Status"},
+                            {"key": "count", "label": "Count"},
+                        ],
+                        "rows": [
+                            {"status": "Done", "count": 8},
+                            {"status": "WIP", "count": 5},
+                        ],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    @pytest.mark.owasp_a04
+    def test_chart_columns_empty(self, gate):
+        """Empty columns array should be rejected."""
+        state = {"data": {"sections": [{"type": "chart", "chartType": "bar", "columns": [], "rows": []}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "need at least 1 column" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_columns_missing_key(self, gate):
+        """Column without key should be rejected."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "columns": [{"label": "No key"}],
+                        "rows": [],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "key must be a non-empty string" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_columns_bad_key_format(self, gate):
+        """Column with invalid key format should be rejected."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "columns": [{"key": "<script>", "label": "Bad"}],
+                        "rows": [],
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+
+    @pytest.mark.owasp_a04
+    def test_chart_rows_not_array(self, gate):
+        """Rows as non-array should be rejected."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "columns": [{"key": "x", "label": "X"}],
+                        "rows": "not-array",
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "rows must be an array" in err
+
+    @pytest.mark.owasp_a04
+    def test_chart_columns_with_options(self, gate):
+        """Chart with columns/rows and options should pass."""
+        state = {
+            "data": {
+                "sections": [
+                    {
+                        "type": "chart",
+                        "chartType": "bar",
+                        "columns": [{"key": "x", "label": "X"}, {"key": "y", "label": "Y"}],
+                        "rows": [{"x": "A", "y": 10}],
+                        "options": {"showLegend": False, "stacked": True},
+                    }
+                ]
+            }
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
 
     @pytest.mark.owasp_a04
     def test_chart_labels_not_array(self, gate):
@@ -6126,7 +6647,7 @@ class TestPagesValidation:
             "pages": {
                 "home": {
                     "label": "Home",
-                    "data": {"sections": [{"type": "text", "content": "Welcome"}]},
+                    "data": {"ui": {"sections": [{"type": "text", "content": "Welcome"}]}},
                 }
             },
             "activePage": "home",
@@ -6395,7 +6916,7 @@ class TestPagesValidation:
         state = {
             "pages": {
                 "p1": {
-                    "data": {"sections": [{"type": "invalid_section_type"}]},
+                    "data": {"ui": {"sections": [{"type": "invalid_section_type"}]}},
                 }
             }
         }
@@ -6498,7 +7019,7 @@ class TestPagesValidation:
         state = {
             "pages": {
                 "p1": {
-                    "data": {"sections": [{"type": "text", "content": "<script>alert(1)</script>"}]},
+                    "data": {"ui": {"sections": [{"type": "text", "content": "<script>alert(1)</script>"}]}},
                 }
             }
         }
@@ -6593,6 +7114,91 @@ class TestPagesValidation:
         state = {"activePage": key}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok, f"activePage={key!r} should be rejected"
+
+    # --- showNav validation ---------------------------------------------------
+
+    def test_show_nav_true(self, gate):
+        """showNav=true should pass validation."""
+        state = {
+            "showNav": True,
+            "pages": {"home": {"label": "Home", "data": {"sections": []}}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_show_nav_false(self, gate):
+        """showNav=false should pass validation."""
+        state = {
+            "showNav": False,
+            "pages": {"home": {"label": "Home", "data": {"sections": []}}},
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_show_nav_non_bool_rejected(self, gate):
+        """showNav must be a boolean — strings rejected."""
+        state = {"showNav": "true"}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "showNav" in err
+
+    def test_show_nav_integer_rejected(self, gate):
+        """showNav must be a boolean — integers rejected."""
+        state = {"showNav": 1}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "showNav" in err
+
+    def test_show_nav_without_pages(self, gate):
+        """showNav is valid even without pages (no-op but not an error)."""
+        state = {"showNav": False, "data": {"sections": []}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    # --- Per-page hidden validation -------------------------------------------
+
+    def test_page_hidden_true(self, gate):
+        """pages.*.hidden=true should pass validation."""
+        state = {
+            "pages": {
+                "home": {"label": "Home", "data": {"sections": []}},
+                "detail": {"label": "Detail", "hidden": True, "data": {"sections": []}},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_page_hidden_false(self, gate):
+        """pages.*.hidden=false should pass validation."""
+        state = {
+            "pages": {
+                "home": {"label": "Home", "hidden": False, "data": {"sections": []}},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert ok, err
+
+    def test_page_hidden_non_bool_rejected(self, gate):
+        """pages.*.hidden must be a boolean — strings rejected."""
+        state = {
+            "pages": {
+                "home": {"label": "Home", "hidden": "yes", "data": {"sections": []}},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "hidden" in err
+
+    def test_page_hidden_integer_rejected(self, gate):
+        """pages.*.hidden must be a boolean — integers rejected."""
+        state = {
+            "pages": {
+                "home": {"label": "Home", "hidden": 0, "data": {"sections": []}},
+            },
+        }
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok
+        assert "hidden" in err
 
 
 # ===========================================================================

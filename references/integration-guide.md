@@ -177,3 +177,163 @@ The `data` field in state.json is freeform, but the built-in apps expect these s
 ### Custom apps
 
 Define your own `data` shape. Document it in your project's references.
+
+## Dynamic Renderer Examples
+
+The dynamic renderer (`assets/apps/dynamic/`) interprets JSON state directly — no custom HTML needed. Below are three examples demonstrating dashboard features.
+
+### 1. Metric Cards with Sparklines
+
+```json
+{
+  "title": "Application Metrics",
+  "data": {
+    "sections": [
+      {
+        "type": "metric",
+        "title": "Key Performance Indicators",
+        "columns": 3,
+        "cards": [
+          {
+            "label": "Response Time",
+            "value": "142",
+            "unit": "ms",
+            "change": "-18ms",
+            "changeDirection": "down",
+            "sparkline": [180, 165, 158, 150, 145, 142]
+          },
+          {
+            "label": "Throughput",
+            "value": "3,420",
+            "unit": "req/s",
+            "change": "+12%",
+            "changeDirection": "up",
+            "sparkline": [2800, 2950, 3100, 3250, 3350, 3420]
+          },
+          {
+            "label": "Error Rate",
+            "value": "0.2%",
+            "change": "-0.1%",
+            "changeDirection": "down"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Metric cards support sparklines (inline SVG charts), change indicators, and units. The `columns` property (1-6) controls the grid layout.
+
+### 2. Multi-Page SPA with Hidden Detail Pages
+
+```json
+{
+  "title": "Project Dashboard",
+  "showNav": false,
+  "pages": {
+    "home": {
+      "label": "Home",
+      "data": {
+        "sections": [
+          {
+            "type": "items",
+            "title": "Projects",
+            "items": [
+              {"title": "Auth Service", "subtitle": "3 issues", "navigateTo": "auth-detail"},
+              {"title": "API Gateway", "subtitle": "1 issue", "navigateTo": "api-detail"}
+            ]
+          }
+        ]
+      }
+    },
+    "auth-detail": {
+      "label": "Auth Service",
+      "hidden": true,
+      "data": {
+        "sections": [
+          {"type": "text", "title": "Auth Service", "content": "Detailed view..."},
+          {"type": "table", "title": "Issues", "columns": [{"key": "id", "label": "ID"}, {"key": "title", "label": "Title"}], "rows": [{"id": "AUTH-1", "title": "Token expiry too short"}]}
+        ]
+      },
+      "actions_requested": [
+        {"id": "back", "label": "Back to Projects", "type": "ghost", "navigateTo": "home"}
+      ]
+    },
+    "api-detail": {
+      "label": "API Gateway",
+      "hidden": true,
+      "data": {
+        "sections": [
+          {"type": "text", "title": "API Gateway", "content": "Detailed view..."}
+        ]
+      },
+      "actions_requested": [
+        {"id": "back", "label": "Back to Projects", "type": "ghost", "navigateTo": "home"}
+      ]
+    }
+  },
+  "activePage": "home"
+}
+```
+
+Setting `showNav: false` hides the tab bar. Hidden pages are excluded from nav but remain reachable via `navigateTo` on items and actions. Navigation is instant (client-side, no server round-trip).
+
+### 3. Clickable Table with NavigateTo Drill-Down
+
+```json
+{
+  "title": "Server Fleet",
+  "pages": {
+    "overview": {
+      "label": "Overview",
+      "data": {
+        "sections": [
+          {
+            "type": "table",
+            "title": "Servers",
+            "clickable": true,
+            "navigateToField": "detail_page",
+            "columns": [
+              {"key": "name", "label": "Server"},
+              {"key": "status", "label": "Status"},
+              {"key": "cpu", "label": "CPU"}
+            ],
+            "rows": [
+              {"name": "web-01", "status": "healthy", "cpu": "34%", "detail_page": "web01"},
+              {"name": "web-02", "status": "warning", "cpu": "89%", "detail_page": "web02"}
+            ]
+          }
+        ]
+      }
+    },
+    "web01": {
+      "label": "web-01",
+      "hidden": true,
+      "data": {
+        "sections": [
+          {"type": "metric", "cards": [{"label": "CPU", "value": "34%"}, {"label": "Memory", "value": "2.1 GB"}]}
+        ]
+      },
+      "actions_requested": [
+        {"id": "back", "label": "Back", "type": "ghost", "navigateTo": "overview"}
+      ]
+    },
+    "web02": {
+      "label": "web-02",
+      "hidden": true,
+      "data": {
+        "sections": [
+          {"type": "metric", "cards": [{"label": "CPU", "value": "89%"}, {"label": "Memory", "value": "5.8 GB"}]}
+        ]
+      },
+      "actions_requested": [
+        {"id": "back", "label": "Back", "type": "ghost", "navigateTo": "overview"}
+      ]
+    }
+  },
+  "activePage": "overview"
+}
+```
+
+Setting `navigateToField` on a clickable table makes row clicks navigate to the page specified in that field -- no action is emitted to the agent. Combine with hidden pages for master-detail drill-down patterns.

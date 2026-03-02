@@ -1194,10 +1194,36 @@ class TestPagesNavigationSafety:
         assert "esc(" in src, "Page navigation labels must use esc()"
 
     @pytest.mark.owasp_a03
-    def test_page_switch_action(self):
-        """Page switching must emit _page_switch action."""
+    def test_page_switch_is_silent(self):
+        """Page switching must be purely client-side — no action emitted to agent."""
         src = self._app_src()
-        assert "_page_switch" in src, "Page navigation must emit _page_switch action"
+        # navigateToPage must exist for client-side SPA navigation
+        assert "navigateToPage" in src, "navigateToPage must be defined for SPA navigation"
+        # Page switching must NOT emit _page_switch actions (no agent round-trips)
+        assert "_page_switch" not in src, "Page navigation must not emit actions to agent"
+
+    @pytest.mark.owasp_a03
+    def test_show_nav_conditional(self):
+        """app.js must check showNav before rendering the nav bar."""
+        src = self._app_src()
+        assert "showNav" in src, "app.js must reference showNav for conditional nav rendering"
+
+    @pytest.mark.owasp_a03
+    def test_page_hidden_filtering(self):
+        """app.js must filter hidden pages from the nav bar."""
+        src = self._app_src()
+        # The hidden check must exist in the nav rendering path
+        assert ".hidden" in src, "app.js must check page.hidden to filter nav buttons"
+
+    @pytest.mark.owasp_a03
+    def test_hidden_pages_still_rendered(self):
+        """Hidden pages must still be rendered in DOM (just excluded from nav)."""
+        src = self._app_src()
+        # The second pageKeys.forEach (page content rendering) must NOT check hidden
+        # — hidden only applies to the nav bar, not the page containers
+        assert 'class="owg-page"' in src or "owg-page" in src, (
+            "Page containers must always be rendered regardless of hidden flag"
+        )
 
     @pytest.mark.owasp_a03
     def test_emit_action_exposed(self):

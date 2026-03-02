@@ -190,6 +190,12 @@
     // Action buttons
     els.content.querySelectorAll("[data-action-id]").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        // Client-side page navigation — instant, no agent round-trip needed
+        var navTarget = btn.getAttribute("data-navigate-to");
+        if (navTarget) {
+          U.navigateToPage(navTarget);
+          return;
+        }
         handleAction(
           btn.getAttribute("data-action-id"),
           btn.getAttribute("data-action-type") || "action",
@@ -207,14 +213,11 @@
         els.content.querySelectorAll(".owg-nav-btn[data-page]").forEach(function (b) {
           b.classList.toggle("owg-nav-active", b.getAttribute("data-page") === target);
         });
-        // Show/hide pages
+        // Show/hide pages (class-based — survives sanitizeHTML style stripping)
         els.content.querySelectorAll(".owg-page[data-page-id]").forEach(function (p) {
-          p.style.display = p.getAttribute("data-page-id") === target ? "" : "none";
+          p.classList.toggle("owg-page-hidden", p.getAttribute("data-page-id") !== target);
         });
-        // Emit page switch action so agent can react
-        if (typeof U.emitAction === "function") {
-          U.emitAction("_page_switch", "action", target, { page: target });
-        }
+        // Pure client-side page switching — no action emitted to agent
       });
     });
 
@@ -316,25 +319,51 @@
     });
   };
 
+  // ─── Client-side page navigation (no agent round-trip) ────────────────────
+  U.navigateToPage = function (pageKey) {
+    if (!pageKey) return false;
+    // Check page exists (iterate + compare to avoid CSS selector injection)
+    var found = false;
+    els.content.querySelectorAll(".owg-page[data-page-id]").forEach(function (p) {
+      if (p.getAttribute("data-page-id") === pageKey) found = true;
+    });
+    if (!found) return false;
+    // Update nav active state
+    els.content.querySelectorAll(".owg-nav-btn[data-page]").forEach(function (b) {
+      b.classList.toggle("owg-nav-active", b.getAttribute("data-page") === pageKey);
+    });
+    // Show/hide pages (class-based — survives sanitizeHTML style stripping)
+    els.content.querySelectorAll(".owg-page[data-page-id]").forEach(function (p) {
+      p.classList.toggle("owg-page-hidden", p.getAttribute("data-page-id") !== pageKey);
+    });
+    // Pure client-side navigation — no action emitted, no agent round-trip.
+    // The agent can detect the active page via webview_read() if needed.
+    return true;
+  };
+
   // ─── Pages renderer ────────────────────────────────────────────────────────
   function renderPages(state) {
     var pages = state.pages;
     var pageKeys = Object.keys(pages);
     var active = state.activePage || pageKeys[0];
-    var html = '<nav class="owg-nav">';
-    pageKeys.forEach(function (pk) {
-      var page = pages[pk];
-      var cls = pk === active ? " owg-nav-active" : "";
-      html += '<button class="owg-nav-btn' + cls + '" data-page="' + U.escAttr(pk) + '">' +
-        U.esc(page.label || pk) + "</button>";
-    });
-    html += "</nav>";
+    var html = "";
+    if (state.showNav !== false) {
+      html += '<nav class="owg-nav">';
+      pageKeys.forEach(function (pk) {
+        var page = pages[pk];
+        if (page.hidden) return;
+        var cls = pk === active ? " owg-nav-active" : "";
+        html += '<button class="owg-nav-btn' + cls + '" data-page="' + U.escAttr(pk) + '">' +
+          U.esc(page.label || pk) + "</button>";
+      });
+      html += "</nav>";
+    }
 
     // Render all pages (hidden except active) for instant client-side switching
     pageKeys.forEach(function (pk) {
       var page = pages[pk];
-      var display = pk === active ? "" : ' style="display:none"';
-      html += '<div class="owg-page" data-page-id="' + U.escAttr(pk) + '"' + display + ">";
+      var hiddenCls = pk === active ? "" : " owg-page-hidden";
+      html += '<div class="owg-page' + hiddenCls + '" data-page-id="' + U.escAttr(pk) + '">';
       if (page.message) {
         if (page.message_format === "markdown") {
           html += '<div class="message-box">' + U.markdownBlock(page.message) + "</div>";

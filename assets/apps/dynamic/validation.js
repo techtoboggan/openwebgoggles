@@ -62,7 +62,7 @@
     var hasErrors = false;
 
     for (var key in validators) {
-      if (!validators.hasOwnProperty(key)) continue;
+      if (!Object.prototype.hasOwnProperty.call(validators, key)) continue;
       var error = OWG.validateField(key, OWG.formValues[key], validators[key]);
       if (error) {
         errors[key] = error;

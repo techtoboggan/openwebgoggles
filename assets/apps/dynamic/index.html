@@ -101,6 +101,10 @@
     #loading { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text2); }
     .hidden { display: none !important; }
 
+    /* Visibility (class-based instead of inline style, survives sanitizeHTML) */
+    .owg-page-hidden { display: none !important; }
+    .owg-tabs-hidden { display: none !important; }
+
     /* Confirmation / done state */
     .done-state { text-align: center; padding: 40px 20px; }
     .done-icon { font-size: 32px; margin-bottom: 12px; }
@@ -225,6 +229,8 @@
     /* ─── Clickable table rows ─── */
     .owg-table-clickable { cursor: pointer; }
     .owg-table-clickable:hover { background: var(--bg3); }
+    .owg-item-navigable { cursor: pointer; transition: background 0.15s; }
+    .owg-item-navigable:hover { background: var(--bg3); }
 
     /* ─── Metric cards ─── */
     .metric-grid { display: grid; gap: 12px; }

@@ -142,7 +142,9 @@
     var items = sec.items || [];
     var html = '<div class="items-list">';
     items.forEach(function (item, ii) {
-      html += '<div class="item-row' + safeClass(item.className) + '">';
+      var navAttr = item.navigateTo ? ' data-navigate-to="' + escAttr(item.navigateTo) + '"' : '';
+      var navClass = item.navigateTo ? " owg-item-navigable" : "";
+      html += '<div class="item-row' + navClass + safeClass(item.className) + '"' + navAttr + '>';
       html += '<div class="item-content">';
       if (item.title) {
         html += item.format === "markdown"
@@ -207,6 +209,11 @@
     var dataAttrs = ' data-action-id="' + escAttr(a.id) + '"' +
       ' data-action-type="' + escAttr(a.type || "action") + '"' +
       ' data-action-scope="' + escAttr(scope) + '"';
+
+    // Client-side page navigation
+    if (a.navigateTo) {
+      dataAttrs += ' data-navigate-to="' + escAttr(a.navigateTo) + '"';
+    }
 
     // Item context for per-item actions
     if (a._item_id !== undefined) {
@@ -320,9 +327,14 @@
     // Initialize selection in formValues
     if (selectable) OWG.formValues[tableKey] = [];
 
+    var navigateToField = sec.navigateToField || "";
+
     var tableAttrs = ' data-table-index="' + si + '"';
     if (clickable) {
       tableAttrs += ' data-clickable="true" data-click-action="' + escAttr(clickAction) + '"';
+      if (navigateToField) {
+        tableAttrs += ' data-navigate-to-field="' + escAttr(navigateToField) + '"';
+      }
     }
     var html = '<div class="table-container"><table class="owg-table"' + tableAttrs + '>';
 
@@ -432,8 +444,8 @@
 
     // Tab panels
     tabs.forEach(function (tab) {
-      var display = tab.id === activeId ? "" : ' style="display:none"';
-      html += '<div class="tabs-panel" data-tab-id="' + escAttr(tab.id) + '" data-tabs-parent="' + si + '"' + display + '>';
+      var hiddenCls = tab.id === activeId ? "" : " owg-tabs-hidden";
+      html += '<div class="tabs-panel' + hiddenCls + '" data-tab-id="' + escAttr(tab.id) + '" data-tabs-parent="' + si + '">';
       (tab.sections || []).forEach(function (nested, ni) {
         html += OWG.renderSection(nested, si + "-tab-" + tab.id + "-" + ni);
       });
@@ -474,10 +486,10 @@
             b.classList.toggle("tabs-active", b.getAttribute("data-tab-target") === target);
           }
         });
-        // Show/hide panels
+        // Show/hide panels (class-based — survives sanitizeHTML style stripping)
         root.querySelectorAll(".tabs-panel[data-tabs-parent]").forEach(function (p) {
           if (p.getAttribute("data-tabs-parent") === parent) {
-            p.style.display = p.getAttribute("data-tab-id") === target ? "" : "none";
+            p.classList.toggle("owg-tabs-hidden", p.getAttribute("data-tab-id") !== target);
           }
         });
       });
@@ -511,11 +523,24 @@
       });
     });
 
-    // Clickable table rows (drill-down)
+    // Navigable items (client-side page navigation on click)
+    root.querySelectorAll(".owg-item-navigable[data-navigate-to]").forEach(function (item) {
+      item.addEventListener("click", function (e) {
+        // Don't navigate if user clicked an action button within the item
+        if (e.target.closest("[data-action-id]")) return;
+        var target = item.getAttribute("data-navigate-to");
+        if (target && typeof OWG.navigateToPage === "function") {
+          OWG.navigateToPage(target);
+        }
+      });
+    });
+
+    // Clickable table rows (drill-down or client-side navigation)
     root.querySelectorAll('.owg-table[data-clickable="true"]').forEach(function (table) {
       var tbody = table.querySelector("tbody");
       if (!tbody) return;
       var actionId = table.getAttribute("data-click-action") || "_table_row_click";
+      var navField = table.getAttribute("data-navigate-to-field") || "";
       var ti = table.getAttribute("data-table-index");
       // Collect column keys from header for building row data
       var colKeys = [];
@@ -534,6 +559,12 @@
             var cell = cells[ci + offset];
             rowData[key] = cell ? cell.textContent : "";
           });
+          // Client-side navigation if navigateToField is set and row has the target page
+          if (navField && rowData[navField] && typeof OWG.navigateToPage === "function") {
+            OWG.navigateToPage(rowData[navField]);
+            return;
+          }
+          // Fall back to emitting action to agent
           if (typeof OWG.emitAction === "function") {
             OWG.emitAction(actionId, "action", rowData, {
               section_index: ti,

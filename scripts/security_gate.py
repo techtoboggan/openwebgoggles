@@ -237,7 +237,7 @@ class SecurityGate:
             return False
         return True
 
-    def validate_state(self, raw_json: str) -> tuple[bool, str, dict]:
+    def validate_state(self, raw_json: str) -> tuple[bool, str, dict]:  # noqa: C901 — TODO: extract step helpers
         """Validate a state.json payload.
 
         Returns:
@@ -278,6 +278,7 @@ class SecurityGate:
                 "panels",
                 "pages",
                 "activePage",
+                "showNav",
             }
         )
         unknown = set(state.keys()) - ALLOWED_TOP_KEYS
@@ -304,6 +305,11 @@ class SecurityGate:
         msg_fmt = state.get("message_format", "")
         if msg_fmt and msg_fmt not in self.ALLOWED_FORMATS:
             return False, f"Invalid message_format: {msg_fmt!r}", {}
+
+        # 4c. Validate showNav
+        show_nav = state.get("showNav")
+        if show_nav is not None and not isinstance(show_nav, bool):
+            return False, "showNav must be a boolean", {}
 
         # 5. Scan all strings for XSS patterns (including custom_css — CSS validation
         # catches CSS-specific attacks, but XSS patterns like <script> must also be caught)
@@ -369,6 +375,9 @@ class SecurityGate:
                     return False, f"pages.{pk}.label must be a string", {}
                 if isinstance(page_label, str) and len(page_label) > 500:
                     return False, f"pages.{pk}.label: too long (max 500)", {}
+                page_hidden = page.get("hidden")
+                if page_hidden is not None and not isinstance(page_hidden, bool):
+                    return False, f"pages.{pk}.hidden must be a boolean", {}
                 page_data = page.get("data", {})
                 if isinstance(page_data, dict):
                     page_ui = page_data.get("ui", page_data)
@@ -532,7 +541,7 @@ class SecurityGate:
 
     MAX_SECTION_DEPTH = 3  # Maximum nesting depth for tabs-within-tabs
 
-    def _validate_ui(self, ui: dict, _depth: int = 0) -> tuple[bool, str]:
+    def _validate_ui(self, ui: dict, _depth: int = 0) -> tuple[bool, str]:  # noqa: C901 — TODO: extract field/item validators
         """Validate the UI schema structure."""
         if _depth > self.MAX_SECTION_DEPTH:
             return False, f"Section nesting too deep (max {self.MAX_SECTION_DEPTH} levels)"
@@ -628,6 +637,15 @@ class SecurityGate:
                         if item_id:
                             if not isinstance(item_id, str) or len(item_id) > 500:
                                 return False, f"sections[{i}].items[{k}].id: invalid"
+                        # navigateTo — client-side page navigation on item click
+                        item_nav = item.get("navigateTo", "")
+                        if item_nav:
+                            if not isinstance(item_nav, str):
+                                return False, f"sections[{i}].items[{k}].navigateTo must be a string"
+                            if len(item_nav) > 200:
+                                return False, f"sections[{i}].items[{k}].navigateTo too long (max 200)"
+                            if not self.KEY_PATTERN.match(item_nav):
+                                return False, f"sections[{i}].items[{k}].navigateTo: invalid format"
 
             # Validate new section-type-specific schemas
             ok, err = self._validate_section_specific(sec, sec_type, i, _depth=_depth)
@@ -663,11 +681,20 @@ class SecurityGate:
             astyle = a.get("style", "")
             if astyle and astyle not in self.ALLOWED_ACTION_STYLES:
                 return False, f"{prefix}.actions[{i}].style: invalid {astyle!r}"
+            # navigateTo — client-side page navigation (no agent round-trip)
+            nav_to = a.get("navigateTo", "")
+            if nav_to:
+                if not isinstance(nav_to, str):
+                    return False, f"{prefix}.actions[{i}].navigateTo must be a string"
+                if len(nav_to) > 200:
+                    return False, f"{prefix}.actions[{i}].navigateTo too long (max 200)"
+                if not self.KEY_PATTERN.match(nav_to):
+                    return False, f"{prefix}.actions[{i}].navigateTo: invalid format"
         return True, ""
 
     # --- Field validation properties ---
 
-    def _validate_field_validation(self, field: dict, path: str) -> tuple[bool, str]:
+    def _validate_field_validation(self, field: dict, path: str) -> tuple[bool, str]:  # noqa: C901 — TODO: split per-property validators
         """Validate new field validation properties (required, pattern, etc.)."""
         required = field.get("required")
         if required is not None and not isinstance(required, bool):
@@ -731,7 +758,7 @@ class SecurityGate:
 
     # --- Section-type-specific validation ---
 
-    def _validate_section_specific(self, sec: dict, sec_type: str, idx: int, _depth: int = 0) -> tuple[bool, str]:
+    def _validate_section_specific(self, sec: dict, sec_type: str, idx: int, _depth: int = 0) -> tuple[bool, str]:  # noqa: C901 — TODO: dispatch to per-type validators
         """Validate section-type-specific properties."""
         prefix = f"sections[{idx}]"
 
@@ -809,6 +836,15 @@ class SecurityGate:
                     return False, f"{prefix}.clickActionId too long (max 200)"
                 if not self.KEY_PATTERN.match(click_action_id):
                     return False, f"{prefix}.clickActionId: invalid format"
+            # navigateToField — client-side page navigation from row data
+            nav_field = sec.get("navigateToField", "")
+            if nav_field:
+                if not isinstance(nav_field, str):
+                    return False, f"{prefix}.navigateToField must be a string"
+                if len(nav_field) > 200:
+                    return False, f"{prefix}.navigateToField too long (max 200)"
+                if not self.KEY_PATTERN.match(nav_field):
+                    return False, f"{prefix}.navigateToField: invalid format"
 
         elif sec_type == "metric":
             cards = sec.get("cards", [])
@@ -860,57 +896,93 @@ class SecurityGate:
             chart_type = sec.get("chartType", "")
             if not chart_type or chart_type not in self.ALLOWED_CHART_TYPES:
                 return False, f"{prefix}.chartType: invalid {chart_type!r}"
-            data = sec.get("data")
-            if not isinstance(data, dict):
-                return False, f"{prefix}.data must be an object"
-            labels = data.get("labels", [])
-            if not isinstance(labels, list):
-                return False, f"{prefix}.data.labels must be an array"
-            if len(labels) > self.MAX_CHART_LABELS:
-                return False, f"{prefix}.data.labels: too many ({len(labels)})"
-            for li, lbl in enumerate(labels):
-                if not isinstance(lbl, str):
-                    return False, f"{prefix}.data.labels[{li}]: must be string"
-                if len(lbl) > 500:
-                    return False, f"{prefix}.data.labels[{li}]: too long (max 500)"
-            datasets = data.get("datasets", [])
-            if not isinstance(datasets, list):
-                return False, f"{prefix}.data.datasets must be an array"
-            if len(datasets) > self.MAX_DATASETS:
-                return False, f"{prefix}.data.datasets: too many"
-            for di, ds in enumerate(datasets):
-                if not isinstance(ds, dict):
-                    return False, f"{prefix}.data.datasets[{di}] must be an object"
-                values = ds.get("values", [])
-                if not isinstance(values, list):
-                    return False, f"{prefix}.data.datasets[{di}].values must be an array"
-                if len(values) > self.MAX_DATA_POINTS:
-                    return False, f"{prefix}.data.datasets[{di}].values: too many points"
-                for vi, v in enumerate(values):
-                    if not isinstance(v, int | float):
-                        return False, f"{prefix}.data.datasets[{di}].values[{vi}]: must be number"
-                    if isinstance(v, float) and not math.isfinite(v):
-                        return False, f"{prefix}.data.datasets[{di}].values[{vi}]: must be finite"
-                color = ds.get("color", "")
-                if color:
-                    if not isinstance(color, str):
-                        return False, f"{prefix}.data.datasets[{di}].color: must be string"
-                    if color not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(color):
-                        return False, f"{prefix}.data.datasets[{di}].color: invalid"
-                colors = ds.get("colors", [])
-                if colors:
-                    if not isinstance(colors, list):
-                        return False, f"{prefix}.data.datasets[{di}].colors must be an array"
-                    for cci, c in enumerate(colors):
-                        if not isinstance(c, str):
-                            return False, f"{prefix}.data.datasets[{di}].colors[{cci}]: must be string"
-                        if c not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(c):
-                            return False, f"{prefix}.data.datasets[{di}].colors[{cci}]: invalid"
-                ds_label = ds.get("label", "")
-                if ds_label and not isinstance(ds_label, str):
-                    return False, f"{prefix}.data.datasets[{di}].label: must be string"
-                if isinstance(ds_label, str) and len(ds_label) > 500:
-                    return False, f"{prefix}.data.datasets[{di}].label: too long (max 500)"
+
+            # Charts accept two data formats:
+            #   1. Explicit: data.labels + data.datasets  (chart-native)
+            #   2. Tabular:  columns + rows               (same as table sections)
+            # The client-side renderer converts tabular → chart-native at render time.
+            has_data = isinstance(sec.get("data"), dict)
+            has_columns = isinstance(sec.get("columns"), list)
+
+            if has_columns:
+                # Tabular format — validate columns/rows like table sections
+                cols = sec["columns"]
+                if len(cols) < 1:
+                    return False, f"{prefix}.columns: need at least 1 column"
+                if len(cols) > self.MAX_TABLE_COLUMNS:
+                    return False, f"{prefix}.columns: too many ({len(cols)})"
+                for ci, col in enumerate(cols):
+                    if not isinstance(col, dict):
+                        return False, f"{prefix}.columns[{ci}] must be an object"
+                    key = col.get("key", "")
+                    if not key or not isinstance(key, str):
+                        return False, f"{prefix}.columns[{ci}].key must be a non-empty string"
+                    if not self.KEY_PATTERN.match(key):
+                        return False, f"{prefix}.columns[{ci}].key: invalid format"
+                rows = sec.get("rows", [])
+                if not isinstance(rows, list):
+                    return False, f"{prefix}.rows must be an array"
+                if len(rows) > self.MAX_ITEMS_PER_SECTION:
+                    return False, f"{prefix}.rows: too many ({len(rows)})"
+                for ri, row in enumerate(rows):
+                    if not isinstance(row, dict):
+                        return False, f"{prefix}.rows[{ri}] must be an object"
+
+            elif has_data:
+                # Chart-native format — validate labels + datasets
+                data = sec["data"]
+                labels = data.get("labels", [])
+                if not isinstance(labels, list):
+                    return False, f"{prefix}.data.labels must be an array"
+                if len(labels) > self.MAX_CHART_LABELS:
+                    return False, f"{prefix}.data.labels: too many ({len(labels)})"
+                for li, lbl in enumerate(labels):
+                    if not isinstance(lbl, str):
+                        return False, f"{prefix}.data.labels[{li}]: must be string"
+                    if len(lbl) > 500:
+                        return False, f"{prefix}.data.labels[{li}]: too long (max 500)"
+                datasets = data.get("datasets", [])
+                if not isinstance(datasets, list):
+                    return False, f"{prefix}.data.datasets must be an array"
+                if len(datasets) > self.MAX_DATASETS:
+                    return False, f"{prefix}.data.datasets: too many"
+                for di, ds in enumerate(datasets):
+                    if not isinstance(ds, dict):
+                        return False, f"{prefix}.data.datasets[{di}] must be an object"
+                    values = ds.get("values", [])
+                    if not isinstance(values, list):
+                        return False, f"{prefix}.data.datasets[{di}].values must be an array"
+                    if len(values) > self.MAX_DATA_POINTS:
+                        return False, f"{prefix}.data.datasets[{di}].values: too many points"
+                    for vi, v in enumerate(values):
+                        if not isinstance(v, int | float):
+                            return False, f"{prefix}.data.datasets[{di}].values[{vi}]: must be number"
+                        if isinstance(v, float) and not math.isfinite(v):
+                            return False, f"{prefix}.data.datasets[{di}].values[{vi}]: must be finite"
+                    color = ds.get("color", "")
+                    if color:
+                        if not isinstance(color, str):
+                            return False, f"{prefix}.data.datasets[{di}].color: must be string"
+                        if color not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(color):
+                            return False, f"{prefix}.data.datasets[{di}].color: invalid"
+                    colors = ds.get("colors", [])
+                    if colors:
+                        if not isinstance(colors, list):
+                            return False, f"{prefix}.data.datasets[{di}].colors must be an array"
+                        for cci, c in enumerate(colors):
+                            if not isinstance(c, str):
+                                return False, f"{prefix}.data.datasets[{di}].colors[{cci}]: must be string"
+                            if c not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(c):
+                                return False, f"{prefix}.data.datasets[{di}].colors[{cci}]: invalid"
+                    ds_label = ds.get("label", "")
+                    if ds_label and not isinstance(ds_label, str):
+                        return False, f"{prefix}.data.datasets[{di}].label: must be string"
+                    if isinstance(ds_label, str) and len(ds_label) > 500:
+                        return False, f"{prefix}.data.datasets[{di}].label: too long (max 500)"
+
+            else:
+                return False, f"{prefix}: chart requires either data or columns"
+
             options = sec.get("options", {})
             if not isinstance(options, dict):
                 return False, f"{prefix}.options must be an object"
@@ -948,7 +1020,7 @@ class SecurityGate:
 
     # --- Behaviors validation ---
 
-    def _validate_behaviors(self, behaviors: list) -> tuple[bool, str]:
+    def _validate_behaviors(self, behaviors: list) -> tuple[bool, str]:  # noqa: C901 — TODO: extract condition/effect validators
         """Validate client-side behavior rules."""
         if len(behaviors) > self.MAX_BEHAVIORS:
             return False, f"Too many behaviors: {len(behaviors)} (max {self.MAX_BEHAVIORS})"

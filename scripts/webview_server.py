@@ -340,7 +340,7 @@ class WebviewHTTPHandler:
         # Static files — no auth (the app itself, loaded in browser)
         await self._handle_static(path, writer)
 
-    async def _handle_api(self, method: str, path: str, query: dict, body: bytes, writer):
+    async def _handle_api(self, method: str, path: str, query: dict, body: bytes, writer):  # noqa: C901 — TODO: extract route handlers
         if path == "/_api/manifest":
             data = self.contract.get_manifest()
             if data:
@@ -707,7 +707,7 @@ class WebviewServer:
 
     MAX_WEBSOCKET_CLIENTS = 50  # Prevent connection exhaustion DoS
 
-    async def _handle_ws(self, websocket):  # pragma: no cover
+    async def _handle_ws(self, websocket):  # noqa: C901 — TODO: extract message handlers  # pragma: no cover
         # Reject if at capacity (defense against connection exhaustion)
         if len(self._ws_clients) >= self.MAX_WEBSOCKET_CLIENTS:
             await websocket.close(1008, "Server at capacity")

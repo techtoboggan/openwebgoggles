@@ -10,11 +10,12 @@ scripts/              Python source (NOT src/)
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (1429+ tests)
-    conftest.py       Shared fixtures: gate, session_keys, nonce_tracker, session_token
+  tests/              pytest suite (1627+ tests: 1577 unit + 50 E2E)
+    conftest.py       Shared fixtures: gate, session_keys, nonce_tracker, session_token, E2E Playwright fixtures
     test_security_gate.py
     test_client_escaping.py
     test_mcp_server.py
+    test_browser_e2e.py  Playwright E2E tests (headless Chromium, @pytest.mark.slow)
 assets/
   sdk/                Client JS SDK (openwebgoggles-sdk.js)
   apps/dynamic/       Built-in dynamic renderer
@@ -60,6 +61,7 @@ All script tags must have the CSP nonce: `<script nonce="{{NONCE}}" src="...">`.
 ### Prototype Pollution Prevention
 
 - `formValues` and `fieldValidators` use `Object.create(null)` — no prototype chain
+- When iterating `Object.create(null)` objects, use `Object.prototype.hasOwnProperty.call(obj, key)` — direct `.hasOwnProperty()` crashes because there is no prototype
 - `Object.freeze(window.OWG)` at the end of `app.js` — prevents post-init tampering
 
 ### DOM — No innerHTML
@@ -126,6 +128,15 @@ When `webview_update(merge=True)` is used, the **merged result** must be re-vali
 - CSS hex/unicode escapes (`\0062`, `\u0062`) — obfuscation of dangerous values
 - `expression()`, `-moz-binding`, `behavior:` — legacy browser code execution
 
+### Client-Side: No Inline Styles on Rendered HTML
+
+`sanitizeHTML()` in `utils.js` strips ALL inline `style` attributes from non-SVG elements (prevents UI overlay / position:fixed attacks). This means **you cannot use inline `style="display:none"` for visibility** — it will be stripped. Instead, use CSS classes:
+- `.owg-page-hidden` — hides SPA pages (used by `app.js`)
+- `.owg-tabs-hidden` — hides inactive tab panels (used by `sections.js`)
+- `.hidden` — general-purpose hide class
+
+Runtime `.style` manipulation via JavaScript (e.g., `el.style.display = "none"` after DOM creation) is safe — it bypasses `sanitizeHTML`. But initial HTML must use classes.
+
 ### Client-Side: CSS Scoping
 
 `_scopeCSS()` in `utils.js` prepends `#content` to all custom CSS selectors. This prevents agent-supplied CSS from defacing security-critical UI elements (header, session badge, connection indicator).
@@ -165,6 +176,29 @@ Tag security tests with framework markers for traceability:
 @pytest.mark.llm01      # Prompt injection
 @pytest.mark.mitre_t1059  # Command and scripting interpreter
 ```
+
+### E2E Browser Tests (Playwright)
+
+End-to-end tests in `test_browser_e2e.py` use headless Chromium via Playwright to validate every section type, SPA navigation, form submission round-trips, validation, behaviors, and layouts against a real browser.
+
+```bash
+# Install and run E2E tests
+pip install pytest-playwright && playwright install chromium
+python -m pytest scripts/tests/test_browser_e2e.py -v -m slow
+```
+
+Key design decisions:
+- **`@pytest.mark.slow`** — all E2E tests are marked `slow`; unit tests use `-m "not slow"` to skip them
+- **Shared `WebviewSession`** — avoids restarting the subprocess for every test (~3s savings each)
+- **Sync Playwright API** — uses `playwright.sync_api` to avoid async event loop conflicts with pytest-asyncio
+- **Title-based synchronization** — each test writes a unique `title`; `wait_for_title()` ensures the DOM reflects the new state before assertions run
+- **No hardcoded sleeps** — use `wait_for_function()`, `wait_for_selector()`, or locator `.wait_for()` instead of `wait_for_timeout()`
+- **Class-based visibility checks** — use `.owg-page-hidden` / `.owg-tabs-hidden` classes, not inline style selectors
+
+Fixtures (`conftest.py`):
+- `webview_session` — starts/reuses a WebviewSession subprocess
+- `playwright_browser` — starts/reuses headless Chromium
+- `e2e_page` — fresh browser context per test, navigated to webview URL
 
 ### Top-Level Key Allowlist Gotcha
 
