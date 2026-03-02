@@ -181,16 +181,7 @@
           var name = attrs[j].name.toLowerCase();
           if (EVENT_ATTR_RE.test(name)) {
             child.removeAttribute(attrs[j].name);
-          } else if (!inSVG && name === "style") {
-            // Strip inline styles (UI overlay, position:fixed attacks).
-            // SVG elements need style for fill/stroke from charts.js.
-            child.removeAttribute(attrs[j].name);
           } else if (name === "id" || name === "name") {
-            child.removeAttribute(attrs[j].name);
-          } else if (name.indexOf("data-") === 0) {
-            // Strip ALL data-* attributes — prevents phantom action injection.
-            // Our own renderers generate data-action-id, data-field-key etc.
-            // with proper escaping; injected HTML must not set these.
             child.removeAttribute(attrs[j].name);
           } else if (name === "href" || name === "src" || name === "action" || name === "formaction" || name === "xlink:href") {
             var val = attrs[j].value;

@@ -1179,13 +1179,15 @@ async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version 
 
 async def _signal_reload_monitor() -> None:
     """Background task: poll for SIGUSR1 flag and trigger seamless restart."""
-    global _reload_pending
+    global _reload_pending, _signal_reload_requested
 
     while True:
         await asyncio.sleep(0.5)
         if not _signal_reload_requested:
             continue
 
+        # Reset flag immediately to prevent re-triggering every 0.5s
+        _signal_reload_requested = False
         logger.info("SIGUSR1 received — reloading server.")
         _reload_pending = True
 

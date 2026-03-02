@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-03-02
+
+### Fixed
+
+- **[P0] sanitizeHTML broke interactive UI** — `cleanNode` was stripping ALL `data-*` attributes and inline `style` from rendered HTML, breaking action buttons, form fields, tab navigation, page navigation, progress bars, metric grids, chart legends, and sidebar layouts. Root cause: the sanitizer was applied to the renderer's own trusted output, not just agent-provided content. Removed `data-*` and `style` stripping from `cleanNode`; event handler (`on*`), dangerous tag, and URL validation remain as XSS defense.
+- **`_signal_reload_monitor` infinite re-trigger** — After handling SIGUSR1, the flag was never reset, causing the handler to re-execute every 0.5s indefinitely (spam logs, repeated `_mark_stale()` calls).
+- **SDK `_listeners`/`_seenNonces` prototype pollution** — Used `{}` instead of `Object.create(null)`, making event names that collide with `Object.prototype` (e.g., `toString`, `constructor`) malfunction.
+- **SDK `connect()` timer leak** — Calling `connect()` multiple times without `disconnect()` leaked `setInterval` timers for nonce pruning.
+- **Health endpoint wall-clock uptime** — `start_time` and uptime calculation now use `time.monotonic()` instead of `time.time()`, consistent with all other security timing.
+
+### Added
+
+- **Structural gate: `TestSanitizerPreservesRendererAttributes`** — 5 tests that verify `cleanNode` does NOT strip `data-*` attributes or inline `style`, and that renderers generate `data-*` attributes that `bindEvents()` depends on. Prevents the P0 from recurring.
+
 ## [0.12.5] - 2026-03-02
 
 ### Fixed

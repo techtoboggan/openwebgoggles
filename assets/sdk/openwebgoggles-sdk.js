@@ -56,11 +56,11 @@
     this._reconnectTimer = null;
     this._reconnectDelay = 1000;
     this._maxReconnectDelay = 30000;
-    this._listeners = {};
+    this._listeners = Object.create(null);
     this._actionQueue = [];
     this._publicKey = null;       // Ed25519 public key hex from bootstrap
     this._verifyKey = null;       // CryptoKey for Ed25519 verification (async import)
-    this._seenNonces = {};        // replay protection
+    this._seenNonces = Object.create(null); // replay protection — no prototype chain
     this._nonceWindowMs = 300000; // 5 minute nonce window
     this._cryptoReady = false;    // whether SubtleCrypto HMAC is available
     this._maxMessageSize = 1048576; // 1MB max WS message size
@@ -167,6 +167,7 @@
       self._connectWebSocket();
 
       // Periodic nonce prune to prevent unbounded memory growth in long sessions
+      if (self._noncePruneTimer) clearInterval(self._noncePruneTimer);
       self._noncePruneTimer = setInterval(function () {
         self._pruneNonces();
       }, 60000);

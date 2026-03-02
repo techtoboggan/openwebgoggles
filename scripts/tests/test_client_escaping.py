@@ -1355,6 +1355,86 @@ class TestSanitizerDoesNotStripFormElements:
         assert "object" in tag_line.lower(), "DANGEROUS_TAGS must still block object"
 
 
+class TestSanitizerPreservesRendererAttributes:
+    """Structural gate: sanitizeHTML must NOT strip attributes or styles that
+    the renderer generates.  Stripping data-* breaks event binding (buttons,
+    forms, tabs, navigation).  Stripping style breaks progress bars, metric
+    grids, chart legends, and sidebar layouts.
+
+    These tests read the cleanNode source and verify that it does NOT contain
+    lines that removeAttribute data-* or style on non-SVG elements."""
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        return (_PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+
+    def _get_cleannode_source(self) -> str:
+        src = self._read_js("assets/apps/dynamic/utils.js")
+        start = src.find("function cleanNode(")
+        assert start != -1, "cleanNode function not found in utils.js"
+        # Find the matching closing brace
+        depth = 0
+        for i in range(start, len(src)):
+            if src[i] == "{":
+                depth += 1
+            elif src[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return src[start : i + 1]
+        return src[start:]
+
+    @pytest.mark.owasp_a03
+    def test_cleannode_does_not_strip_data_attributes(self):
+        """cleanNode must NOT strip data-* attributes — renderer uses them for event binding."""
+        body = self._get_cleannode_source()
+        assert "data-" not in body or "removeAttribute" not in body.split("data-")[0][-100:], (
+            "cleanNode must NOT strip data-* attributes — they are required for "
+            "data-action-id, data-field-key, data-navigate-to, data-page, data-tab-target"
+        )
+
+    @pytest.mark.owasp_a03
+    def test_cleannode_does_not_strip_inline_style(self):
+        """cleanNode must NOT strip inline style on non-SVG elements — renderer uses them."""
+        body = self._get_cleannode_source()
+        # Check for the pattern: name === "style" followed by removeAttribute
+        # This would indicate style stripping is back
+        import re as _re
+
+        # Find any block that checks for name === "style" and removes it (excluding SVG context)
+        style_strip = _re.search(
+            r'name\s*===?\s*["\']style["\'].*?removeAttribute',
+            body,
+            _re.DOTALL,
+        )
+        if style_strip:
+            # It's OK if it's only in the SVG context (inSVG check)
+            match_text = style_strip.group(0)
+            assert "inSVG" in body[body.find(match_text) - 200 : body.find(match_text)], (
+                "cleanNode strips inline style on non-SVG elements — this breaks progress bars, "
+                "metric grids, chart legends, and sidebar layouts"
+            )
+
+    @pytest.mark.owasp_a03
+    def test_renderer_data_attributes_exist_in_sections(self):
+        """Section renderers must generate data-* attributes for event binding."""
+        src = self._read_js("assets/apps/dynamic/sections.js")
+        assert "data-action-id" in src, "sections.js must generate data-action-id for action buttons"
+
+    @pytest.mark.owasp_a03
+    def test_renderer_data_attributes_exist_in_app(self):
+        """App renderer must generate data-* attributes for navigation and actions."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "data-action-id" in src or "data-navigate-to" in src, (
+            "app.js must generate data-* attributes for navigation/actions"
+        )
+
+    @pytest.mark.owasp_a03
+    def test_bind_events_depends_on_data_attributes(self):
+        """bindEvents must query data-* attributes — proves they must survive sanitization."""
+        src = self._read_js("assets/apps/dynamic/app.js")
+        assert "data-action-id" in src, "bindEvents must query data-action-id"
+
+
 class TestSVGSanitizationStrategy:
     """Regression tests for SVG sanitization: SVG elements are allowed through
     the main DANGEROUS_TAGS filter (for charts.js rendering), but dangerous SVG

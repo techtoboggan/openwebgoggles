@@ -201,7 +201,7 @@ class WebviewHTTPHandler:
         self.http_port = http_port
         self.ws_port = ws_port
         self._security_gate = security_gate
-        self.start_time = time.time()
+        self.start_time = time.monotonic()
         self.ws_clients: set = set()
         self._public_key_hex: str = ""
         self._rate_limiter = RateLimiter(max_actions=30, window_seconds=60.0)
@@ -328,7 +328,7 @@ class WebviewHTTPHandler:
                 200,
                 {
                     "status": "ok",
-                    "uptime": int(time.time() - self.start_time),
+                    "uptime": int(time.monotonic() - self.start_time),
                     "ws_clients": len(self.ws_clients),
                 },
             )
