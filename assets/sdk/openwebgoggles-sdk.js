@@ -230,7 +230,7 @@
     var cutoff = Date.now() - this._nonceWindowMs;
     var nonces = this._seenNonces;
     for (var n in nonces) {
-      if (nonces.hasOwnProperty(n) && nonces[n] < cutoff) {
+      if (Object.prototype.hasOwnProperty.call(nonces, n) && nonces[n] < cutoff) {
         delete nonces[n];
       }
     }

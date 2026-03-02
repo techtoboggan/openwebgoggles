@@ -38,6 +38,7 @@ import hmac as hmac_module
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 from crypto_utils import (
@@ -224,11 +225,19 @@ class TestProcessImpersonation:
         """If a rogue process sends an unsigned WS message, the server
         should still handle it (for backwards compat) but the HMAC check
         would fail if envelope is expected."""
-        # This tests the protocol: signed messages have {nonce, sig, p} structure
-        unsigned_msg = {"type": "action", "data": {"action_id": "x", "type": "confirm"}}
-        # No nonce/sig — server should process but not through crypto path
-        assert "nonce" not in unsigned_msg
-        assert "sig" not in unsigned_msg
+        import inspect
+
+        import webview_server
+
+        # Verify the WS handler checks for signature fields before processing
+        ws_handler_src = inspect.getsource(webview_server.WebviewServer._handle_ws)
+        # Handler must check for "sig" and "nonce" fields in the message
+        assert '"sig"' in ws_handler_src or "'sig'" in ws_handler_src, (
+            "_handle_ws must check for 'sig' field in messages"
+        )
+        assert '"nonce"' in ws_handler_src or "'nonce'" in ws_handler_src, (
+            "_handle_ws must check for 'nonce' field in messages"
+        )
 
     @pytest.mark.secure_comms
     @pytest.mark.llm04
@@ -288,12 +297,20 @@ class TestNetworkIsolation:
     @pytest.mark.mitre_t1040
     def test_no_remote_connect_src_in_csp(self):
         """CSP connect-src must not allow remote WebSocket or HTTP connections."""
-        # Verify CSP pattern allows only self + localhost WS
-        csp_template = "default-src 'none'; script-src 'nonce-abc123'; connect-src 'self' ws://127.0.0.1:18421; "
-        # Should NOT contain external domains
-        assert "ws://*" not in csp_template
-        assert "wss://" not in csp_template
-        assert "http://" not in csp_template or "http://127.0.0.1" in csp_template
+        import inspect
+
+        import webview_server
+
+        # CSP is built in _send_raw, which generates all HTTP responses
+        csp_src = inspect.getsource(webview_server.WebviewHTTPHandler._send_raw)
+        # CSP must be present
+        assert "Content-Security-Policy" in csp_src, "CSP header must be set"
+        # connect-src must restrict to localhost only
+        assert "connect-src" in csp_src, "CSP must include connect-src directive"
+        # Must NOT allow wildcards or remote WS/HTTP
+        assert "ws://*" not in csp_src, "CSP must not allow wildcard WebSocket"
+        assert "wss://" not in csp_src, "CSP must not allow secure WebSocket (localhost only)"
+        assert "https://" not in csp_src, "CSP must not allow remote HTTPS connections"
 
     @pytest.mark.secure_comms
     @pytest.mark.mitre_t1040
@@ -529,30 +546,42 @@ class TestTokenExposure:
     @pytest.mark.llm02
     @pytest.mark.mitre_t1539
     def test_token_not_logged(self):
-        """Server print statements should not contain full tokens.
-        The server only logs pub key prefix, not the session token."""
+        """Server logging must not contain full session tokens.
+        The server only logs truncated token prefix, not the full value."""
         import inspect
 
         import webview_server
 
         source = inspect.getsource(webview_server.WebviewServer.__init__)
-        # Look for print statements — they should use [:16] truncation for key
-        # and should not print session_token directly
-        lines_with_print = [line.strip() for line in source.split("\n") if "print(" in line]
-        for line in lines_with_print:
-            # Token variable should not appear in prints
-            assert "self.session_token" not in line, f"Token leaked in log: {line}"
+        # Check both print() and logger calls — production uses logger, not print
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            # Full token reference in any output statement
+            if any(kw in stripped for kw in ("print(", "logger.", "logging.")):
+                # session_token without truncation slice is a leak
+                if "self.session_token" in stripped and "[:8]" not in stripped and "[:16]" not in stripped:
+                    # Allow comparisons and assignments, only flag output
+                    if "self.session_token" not in stripped.split("=")[0].strip():
+                        msg = f"Full token may leak in log/print: {stripped}"
+                        raise AssertionError(msg)
 
     @pytest.mark.secure_comms
     @pytest.mark.mitre_t1539
     def test_token_not_in_ws_url(self):
         """First-message auth should be preferred over query-param auth.
         Token in URL is visible in logs and referrer headers."""
-        # The SDK sends auth via first message, not URL
-        # This is a design verification — the URL should be plain ws://host:port
-        ws_url = "ws://127.0.0.1:18421"
-        assert "token" not in ws_url
-        assert "secret" not in ws_url
+        # Verify the SDK and server use first-message auth, not URL params
+        sdk_path = Path(__file__).resolve().parent.parent.parent / "assets" / "sdk" / "openwebgoggles-sdk.js"
+        sdk_src = sdk_path.read_text()
+        # SDK must use first-message auth pattern (sends JSON with type: "auth")
+        assert '"type":"auth"' in sdk_src or "'type':'auth'" in sdk_src or '"auth"' in sdk_src, (
+            "SDK must use first-message auth, not URL parameter auth"
+        )
+        # SDK WS URL construction must not include token as query parameter
+        assert "?token=" not in sdk_src, "Token must not be passed as URL query parameter"
+        assert "&token=" not in sdk_src, "Token must not be passed as URL query parameter"
 
     @pytest.mark.secure_comms
     @pytest.mark.llm02

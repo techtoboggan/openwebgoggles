@@ -221,7 +221,7 @@ class TestMessageSigning:
         sig = sign_message(priv, '{"type":"original"}', nonce)
 
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(pub))
-        tampered = (nonce + '{"type":"tampered"}').encode("utf-8")
+        tampered = (nonce + '{"type":"tampered"}').encode("utf-8")  # stale-ok: tamper test
         sig_bytes = bytes.fromhex(sig)
         with pytest.raises(Exception):  # nacl.exceptions.BadSignatureError
             verify_key.verify(tampered, sig_bytes)
@@ -240,7 +240,7 @@ class TestMessageSigning:
 
         verify_key2 = nacl.signing.VerifyKey(bytes.fromhex(pub2))
         with pytest.raises(Exception):
-            verify_key2.verify((nonce + "payload").encode(), bytes.fromhex(sig))
+            verify_key2.verify((nonce + "payload").encode(), bytes.fromhex(sig))  # stale-ok: wrong-key test
 
     @pytest.mark.owasp_a02
     def test_sign_empty_payload(self, session_keys):
@@ -1316,7 +1316,11 @@ class TestStaleCryptoPatternLint:
     _TEST_DIR = Path(__file__).resolve().parent
 
     def _scan_for_stale_hmac(self, filepath: Path) -> list[tuple[int, str]]:
-        """Find lines that construct HMAC without the \\x00 domain separator."""
+        r"""Find lines that construct HMAC without the \x00 domain separator.
+
+        Flags any ``(X + Y).encode(...)`` with crypto keywords missing \x00.
+        Lines with ``# stale-ok`` are intentional exceptions (tamper tests).
+        """
         import re as _re
 
         violations = []
@@ -1326,30 +1330,30 @@ class TestStaleCryptoPatternLint:
             # Skip comments
             if stripped.startswith("#"):
                 continue
-            # Look for manual nonce+payload concatenation without \x00
-            # Pattern: (nonce_var + payload_var).encode — missing \x00
-            if _re.search(r'\(\w+ \+ \w+\)\.encode\("utf-8"\)', stripped):
-                # Make sure it's not using the domain separator
-                if "\\x00" not in stripped and '"\\x00"' not in line and "'\\x00'" not in line:
+            # Broad match: any (X + Y).encode(...) — catches variables, literals, both quote styles
+            if _re.search(r"\(.+\+.+\)\.encode\(", stripped):
+                # Skip lines that already have the domain separator
+                if "\\x00" in stripped or '"\\x00"' in line or "'\\x00'" in line:
+                    continue
+                # Skip intentional exceptions (tamper detection tests)
+                if "stale-ok" in line:
+                    continue
+                # Only flag lines in crypto-relevant context (nonce, hmac, sign, payload, message)
+                lower = stripped.lower()
+                if any(kw in lower for kw in ("nonce", "hmac", "sign", "payload", "message", "tamper")):
                     violations.append((i, stripped))
         return violations
 
-    @pytest.mark.parametrize(
-        "test_file",
-        [
-            "test_crypto_utils.py",
-            "test_secure_comms.py",
-            "test_webview_server.py",
-            "test_security_gate.py",
-        ],
-    )
-    def test_no_stale_hmac_constructions(self, test_file):
-        """No test file should construct HMAC with nonce+payload without \\x00 separator."""
-        filepath = self._TEST_DIR / test_file
-        if not filepath.exists():
-            pytest.skip(f"{test_file} not found")
-        violations = self._scan_for_stale_hmac(filepath)
-        assert not violations, (
-            f"Stale HMAC construction in {test_file} (missing \\x00 domain separator):\n"
-            + "\n".join(f"  line {n}: {line}" for n, line in violations)
+    def test_no_stale_hmac_constructions(self):
+        """No test file should construct HMAC with nonce+payload without \\x00 separator.
+
+        Dynamically discovers all test_*.py files instead of hardcoding a list.
+        """
+        all_violations = []
+        for test_file in sorted(self._TEST_DIR.glob("test_*.py")):
+            violations = self._scan_for_stale_hmac(test_file)
+            for line_no, line_text in violations:
+                all_violations.append(f"  {test_file.name}:{line_no}: {line_text}")
+        assert not all_violations, "Stale HMAC constructions found (missing \\x00 domain separator):\n" + "\n".join(
+            all_violations
         )

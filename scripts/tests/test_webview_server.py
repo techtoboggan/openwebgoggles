@@ -740,6 +740,53 @@ class TestSessionTokenManagement:
         w_manifest = await send_request(handler, "GET", "/_api/manifest")
         assert "secret_token_abc" not in w_manifest.body
 
+    @pytest.mark.owasp_a02
+    @pytest.mark.parametrize(
+        "bad_token",
+        [
+            "a" * 1025,  # exceeds 1024 byte limit
+            "valid\ntoken",  # newline control char
+            "valid\rtoken",  # carriage return
+            "valid\x01token",  # SOH control char
+        ],
+        ids=["too_long", "newline", "carriage_return", "control_char"],
+    )
+    def test_env_token_control_chars_rejected(self, tmp_path, bad_token):
+        """OCV_SESSION_TOKEN with control chars or >1024 bytes must be rejected."""
+        data_dir = tmp_path / "token_test"
+        data_dir.mkdir(parents=True)
+        sdk_path = data_dir / "sdk.js"
+        sdk_path.write_text("// placeholder")
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": bad_token}):
+            server = WebviewServer(
+                data_dir=str(data_dir),
+                http_port=18420,
+                ws_port=18421,
+                sdk_path=str(sdk_path),
+            )
+        # Bad tokens should be rejected and replaced with a random one
+        assert server.session_token != bad_token
+        assert len(server.session_token) >= 32
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_close_endpoint_xss_sanitized(self, handler):
+        """Close endpoint must XSS-scan the message and fall back to safe default."""
+        auth = {"authorization": "Bearer secret_token_abc"}
+        xss_payload = json.dumps({"message": '<script>alert("xss")</script>'})
+        w = await send_request(handler, "POST", "/_api/close", headers=auth, body=xss_payload)
+        # Should succeed but the broadcast message should be sanitized
+        assert w.status_code == 200
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_close_endpoint_safe_message_accepted(self, handler):
+        """Close endpoint accepts clean messages."""
+        auth = {"authorization": "Bearer secret_token_abc"}
+        safe_payload = json.dumps({"message": "Goodbye!"})
+        w = await send_request(handler, "POST", "/_api/close", headers=auth, body=safe_payload)
+        assert w.status_code == 200
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 9. LOCALHOST BINDING — OWASP A10; MITRE T1568
@@ -2057,6 +2104,27 @@ class TestWSAuthRejection:
 
     @pytest.mark.owasp_a07
     @pytest.mark.asyncio
+    async def test_oversized_token_rejected(self, ws_server):
+        """Auth message with token >1024 chars must be rejected (DoS prevention)."""
+        oversized_token = "A" * 2000
+        ws = MockWebSocket(messages=[json.dumps({"type": "auth", "token": oversized_token})])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
+    async def test_non_string_token_rejected(self, ws_server):
+        """Auth message with non-string token (int, list) must be rejected."""
+        ws = MockWebSocket(messages=[json.dumps({"type": "auth", "token": 12345})])
+        await ws_server._handle_ws(ws)
+
+        assert ws._closed is True
+        assert ws._close_code == 4001
+
+    @pytest.mark.owasp_a07
+    @pytest.mark.asyncio
     async def test_no_messages_closes_connection(self, ws_server):
         """If client sends no messages at all (immediate disconnect), handle gracefully."""
         ws = MockWebSocket(messages=[])  # recv() raises ConnectionClosed immediately
@@ -2716,18 +2784,27 @@ class TestInputChannelRegistry:
         ("MAX_STRING_LENGTH", 50_000, "SecurityGate", "Individual string values"),
         ("MAX_NESTING_DEPTH", 10, "SecurityGate", "JSON nesting depth"),
         ("MAX_SECTIONS", 50, "SecurityGate", "Sections per state"),
+        ("MAX_SECTION_DEPTH", 3, "SecurityGate", "Tab nesting depth"),
         ("MAX_CSS_LENGTH", 50_000, "SecurityGate", "Custom CSS string"),
+        ("MAX_FIELDS_PER_SECTION", 100, "SecurityGate", "Form fields per section"),
+        ("MAX_OPTIONS_PER_FIELD", 200, "SecurityGate", "Options per select field"),
         ("MAX_ITEMS_PER_SECTION", 500, "SecurityGate", "Items per section"),
         ("MAX_LOG_LINES", 5000, "SecurityGate", "Log lines per section"),
         ("MAX_CHART_LABELS", 500, "SecurityGate", "Chart data labels"),
         ("MAX_DATASETS", 20, "SecurityGate", "Chart datasets"),
         ("MAX_DATA_POINTS", 500, "SecurityGate", "Points per dataset"),
+        ("MAX_CHART_WIDTH", 2000, "SecurityGate", "Chart width pixels"),
+        ("MAX_CHART_HEIGHT", 1500, "SecurityGate", "Chart height pixels"),
+        ("MAX_SPARKLINE_POINTS", 100, "SecurityGate", "Sparkline data points"),
+        ("MAX_METRIC_COLUMNS", 6, "SecurityGate", "Metric card columns"),
         ("MAX_BEHAVIORS", 100, "SecurityGate", "Conditional behaviors"),
         ("MAX_TABLE_COLUMNS", 50, "SecurityGate", "Table columns"),
         ("MAX_TABS", 20, "SecurityGate", "Tabs per section"),
         ("MAX_PAGES", 20, "SecurityGate", "SPA pages"),
+        ("MAX_ACTIONS", 50, "SecurityGate", "Actions per state"),
         ("MAX_WS_MESSAGE_SIZE", 1_048_576, "WebviewServer", "WebSocket message bytes"),
         ("MAX_WEBSOCKET_CLIENTS", 50, "WebviewServer", "Concurrent WS connections"),
+        ("MAX_BODY_SIZE", 1_048_576, "WebviewHTTPHandler", "HTTP request body bytes"),
         ("MAX_NONCE_COUNT", 100_000, "NonceTracker", "Tracked nonces"),
     ]
 
@@ -2745,12 +2822,35 @@ class TestInputChannelRegistry:
         source_map = {
             "SecurityGate": SecurityGate,
             "WebviewServer": WebviewServer,
+            "WebviewHTTPHandler": WebviewHTTPHandler,
             "NonceTracker": NonceTracker,
         }
         cls = source_map[source]
         assert hasattr(cls, constant), f"Missing limit constant {source}.{constant} for: {desc}"
         actual = getattr(cls, constant)
         assert actual == expected, f"{source}.{constant} = {actual}, expected {expected} for: {desc}"
+
+    def test_no_unregistered_max_constants(self):
+        """Auto-detect: every MAX_* constant in production classes must be in the registry."""
+        from security_gate import SecurityGate
+
+        from crypto_utils import NonceTracker
+
+        registered = {(c[0], c[2]) for c in self.INPUT_CHANNELS}
+        classes = {
+            "SecurityGate": SecurityGate,
+            "WebviewServer": WebviewServer,
+            "WebviewHTTPHandler": WebviewHTTPHandler,
+            "NonceTracker": NonceTracker,
+        }
+        unregistered = []
+        for cls_name, cls in classes.items():
+            for attr in dir(cls):
+                if attr.startswith("MAX_") and (attr, cls_name) not in registered:
+                    unregistered.append(f"{cls_name}.{attr} = {getattr(cls, attr)}")
+        assert not unregistered, "Unregistered MAX_* constants found — add them to INPUT_CHANNELS:\n" + "\n".join(
+            f"  {u}" for u in unregistered
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

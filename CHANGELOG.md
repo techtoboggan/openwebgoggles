@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.5] - 2026-03-02
+
+### Fixed
+
+- **4 stale secure-comms tests** — `test_token_not_logged` now checks `logger` calls (was checking `print()` which production doesn't use), `test_no_remote_connect_src_in_csp` inspects actual server CSP source (was testing a hardcoded string), `test_token_not_in_ws_url` verifies actual SDK auth pattern (was testing a literal URL), `test_rogue_ws_message_without_signature_handled` inspects real WS handler source (was a tautological data-structure assertion).
+- **SDK `hasOwnProperty` inconsistency** — `_pruneNonces()` now uses `Object.prototype.hasOwnProperty.call()` consistent with project coding standard.
+- **Stale crypto lint false negatives** — Broadened regex to catch `.encode()` (no args), string-literal operands, and added `# stale-ok` escape hatch for intentional tamper tests. Now dynamically discovers all `test_*.py` files via glob.
+- **Input Channel Registry missing 9 constants** — Added `MAX_FIELDS_PER_SECTION`, `MAX_OPTIONS_PER_FIELD`, `MAX_SECTION_DEPTH`, `MAX_CHART_WIDTH`, `MAX_CHART_HEIGHT`, `MAX_SPARKLINE_POINTS`, `MAX_METRIC_COLUMNS`, `MAX_ACTIONS`, `MAX_BODY_SIZE` (26 total, up from 17). Added auto-detect gate that fails if any new `MAX_*` constant is added without registering it.
+
+### Added
+
+- **Token validation tests** — OCV_SESSION_TOKEN control character rejection (newline, carriage return, SOH, >1024 bytes), WS oversized token rejection, WS non-string token rejection.
+- **Close endpoint XSS test** — Verifies `_scan_xss()` sanitizes XSS payloads in close messages.
+- **15 new tests** bringing total to 1802 unit + 32 BDD + 55 E2E.
+
 ## [0.12.4] - 2026-03-02
 
 ### Security

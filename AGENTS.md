@@ -10,7 +10,7 @@ scripts/              Python source (NOT src/)
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (1800+ tests: 1787 unit + 32 BDD + 55 E2E)
+  tests/              pytest suite (1800+ tests: 1802 unit + 32 BDD + 55 E2E)
     conftest.py       Shared fixtures (gate, session_keys, nonce_tracker, E2E Playwright)
     features/         BDD feature files (Gherkin scenarios)
     steps/            BDD step definitions (pytest-bdd)
@@ -151,7 +151,7 @@ Six automated gate test classes prevent regression categories, not just individu
 | Client-Server Sync | `TestClientServerPatternSync` | `test_security_gate.py` | Pattern count mismatch between `DANGEROUS_CSS_PATTERNS` (Python) and `DANGEROUS_CSS_RE` (JS) |
 | Crypto Invariants | `TestCryptoSecurityInvariants` | `test_crypto_utils.py` | Domain separation, token rejection, HMAC round-trip, tamper detection |
 | Stale Crypto Lint | `TestStaleCryptoPatternLint` | `test_crypto_utils.py` | Test files with `(var + var).encode("utf-8")` missing `\x00` delimiter |
-| Input Channel Registry | `TestInputChannelRegistry` | `test_webview_server.py` | Missing or changed limit constants across all 17 input channels |
+| Input Channel Registry | `TestInputChannelRegistry` | `test_webview_server.py` | Missing or changed limit constants across all 26 input channels + auto-detect new ones |
 | Deployment Security | `TestDeploymentSecurity` | `test_webview_server.py` | Umask patterns, trivial token guard, wall-clock usage in security code |
 
 When adding new CSS patterns, crypto constructs, or input limits, the corresponding gate test will fail if the change isn't propagated everywhere.
