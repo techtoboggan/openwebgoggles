@@ -17,3 +17,29 @@ repos:
     hooks:
       - id: detect-secrets
         args: [--baseline, .secrets.baseline]
+
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest (unit tests)
+        entry: python -m pytest scripts/tests/ -m "not slow and not bdd" -x -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: pytest-bdd
+        name: pytest (BDD scenarios)
+        entry: python -m pytest scripts/tests/steps/ -m bdd -x -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: pytest-e2e
+        name: pytest (E2E browser tests — Playwright)
+        entry: python -m pytest scripts/tests/test_browser_e2e.py -m slow -x -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
