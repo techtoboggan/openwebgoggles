@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import hmac
 import json
 import logging
@@ -162,7 +163,7 @@ class DataContract:
             ("manifest", self.manifest_path),
         ]:
             try:
-                mtime = path.stat().st_mtime
+                mtime = path.stat().st_mtime_ns
             except FileNotFoundError:
                 continue
             if name in self._mtimes and self._mtimes[name] != mtime:
@@ -173,7 +174,7 @@ class DataContract:
 
 def _strip_token(data: dict) -> dict:
     """Remove session token from a manifest dict (deep copy). Consistent across HTTP/WS paths."""
-    safe = json.loads(json.dumps(data))
+    safe = copy.deepcopy(data)
     if "session" in safe and "token" in safe["session"]:
         del safe["session"]["token"]
     return safe
@@ -364,14 +365,7 @@ class WebviewHTTPHandler:
         await self._handle_static(path, writer)
 
     async def _handle_api(self, method: str, path: str, query: dict, body: bytes, writer):  # noqa: C901 — TODO: extract route handlers
-        if path == "/_api/manifest":
-            data = self.contract.get_manifest()
-            if data:
-                await self._send_response(writer, 200, data)
-            else:
-                await self._send_response(writer, 404, {"error": "manifest.json not found"})
-
-        elif path == "/_api/state":
+        if path == "/_api/state":
             data = self.contract.get_state()
             if data:
                 since_raw = query.get("since_version", [None])[0]
@@ -892,7 +886,7 @@ class WebviewServer:
             await asyncio.sleep(0.5)
             changed = self.contract.check_changes()
             # Debounce: skip files that were broadcast too recently
-            now = time.time()
+            now = time.monotonic()
             changed = [c for c in changed if (now - last_broadcast.get(c, 0)) * 1000 >= debounce_ms]
             for name in changed:
                 if name == "state":
@@ -906,21 +900,22 @@ class WebviewServer:
                                 await self._broadcast(
                                     {"type": "error", "data": {"message": "State update rejected by security gate"}}
                                 )
+                                last_broadcast["state"] = now
                                 continue
                         await self._broadcast({"type": "state_updated", "data": data})
-                        last_broadcast["state"] = time.time()
+                        last_broadcast["state"] = time.monotonic()
                 elif name == "manifest":
                     data = self.contract.get_manifest()
                     if data:
                         # Strip session token before broadcasting (same as HTTP endpoint)
                         safe_data = _strip_token(data)
                         await self._broadcast({"type": "manifest_updated", "data": safe_data})
-                        last_broadcast["manifest"] = time.time()
+                        last_broadcast["manifest"] = time.monotonic()
                 elif name == "actions":
                     data = self.contract.get_actions()
                     if data:
                         await self._broadcast({"type": "actions_updated", "data": data})
-                        last_broadcast["actions"] = time.time()
+                        last_broadcast["actions"] = time.monotonic()
 
 
 def main():  # pragma: no cover

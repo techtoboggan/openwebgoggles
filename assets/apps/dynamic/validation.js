@@ -3,7 +3,7 @@
 // Validates required fields, patterns, min/max, lengths.
 
 (function (OWG) {
-  var validationErrors = {};
+  var validationErrors = Object.create(null);
 
   // ─── Validate a single field value against its config ───────────────────────
   OWG.validateField = function (key, value, config) {

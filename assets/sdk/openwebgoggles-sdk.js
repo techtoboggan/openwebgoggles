@@ -64,6 +64,7 @@
     this._nonceWindowMs = 300000; // 5 minute nonce window
     this._cryptoReady = false;    // whether SubtleCrypto HMAC is available
     this._maxMessageSize = 1048576; // 1MB max WS message size
+    this._authenticated = false;  // set true after WS auth handshake succeeds
   }
 
   // --- Event system ---
@@ -251,7 +252,7 @@
   };
 
   OpenWebGoggles.prototype._sendWsSigned = function (message) {
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
+    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error("WebSocket not open"));
     var self = this;
     var payload = JSON.stringify(message);
     var nonce = this._generateNonce();
@@ -259,13 +260,14 @@
     // Sign with HMAC-SHA256 using session token if SubtleCrypto available
     if (typeof crypto !== "undefined" && crypto.subtle && this._token) {
       var encoder = new TextEncoder();
-      crypto.subtle.importKey(
+      return crypto.subtle.importKey(
         "raw", encoder.encode(this._token),
         { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
       ).then(function (key) {
         // Null-byte delimiter between nonce and payload for domain separation
         return crypto.subtle.sign("HMAC", key, encoder.encode(nonce + "\0" + payload));
       }).then(function (sigBuf) {
+        if (!self._ws || self._ws.readyState !== WebSocket.OPEN) return;
         var sigArr = new Uint8Array(sigBuf);
         var sigHex = "";
         for (var i = 0; i < sigArr.length; i++) {
@@ -278,6 +280,7 @@
     } else {
       // Fail-closed: refuse to send unsigned messages (security downgrade prevention)
       console.error("OpenWebGoggles: SubtleCrypto unavailable — message dropped (HMAC required for WS messages)");
+      return Promise.reject(new Error("SubtleCrypto unavailable"));
     }
   };
 
@@ -289,10 +292,15 @@
     };
     if (metadata) action.metadata = metadata;
 
+    // Queue action if WS is still connecting (flushed when auth completes)
+    if (this._ws && this._ws.readyState === WebSocket.CONNECTING) {
+      this._actionQueue.push(action);
+      return Promise.resolve({ queued: true });
+    }
+
     // Send via WebSocket if connected (signed), otherwise via HTTP
     if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-      this._sendWsSigned({ type: "action", data: action });
-      return Promise.resolve();
+      return this._sendWsSigned({ type: "action", data: action });
     } else {
       return this._postAction(action);
     }
@@ -414,11 +422,6 @@
       self._reconnectDelay = 1000;
       // Authenticate with first message (token never in URL)
       self._ws.send(JSON.stringify({ type: "auth", token: self._token }));
-      // Flush queued actions (signed)
-      while (self._actionQueue.length > 0) {
-        var action = self._actionQueue.shift();
-        self._sendWsSigned({ type: "action", data: action });
-      }
       // Stop polling if it was active
       if (self._pollTimer) {
         clearInterval(self._pollTimer);
@@ -434,6 +437,11 @@
           return;
         }
         var raw = JSON.parse(event.data);
+        // Reject unsigned messages after auth handshake (defense-in-depth)
+        if (self._authenticated && !raw.p && !raw.nonce && !raw.sig) {
+          console.warn("OpenWebGoggles: Unsigned WS message after auth — skipping");
+          return;
+        }
         // Unwrap signed envelope if present
         var msg;
         if (raw.p && raw.nonce && raw.sig) {
@@ -495,6 +503,12 @@
   OpenWebGoggles.prototype._handleWsMessage = function (msg) {
     switch (msg.type) {
       case "connected":
+        this._authenticated = true;
+        // Flush queued actions now that auth is acknowledged (signed)
+        while (this._actionQueue.length > 0) {
+          var action = this._actionQueue.shift();
+          this._sendWsSigned({ type: "action", data: action });
+        }
         if (msg.state) {
           this._state = msg.state;
           this._emit("state_updated", msg.state);

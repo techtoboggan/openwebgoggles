@@ -235,7 +235,8 @@
         if (type === "checkbox") {
           U.formValues[key] = el.checked;
         } else if (type === "number") {
-          U.formValues[key] = parseFloat(el.value) || 0;
+          var parsed = parseFloat(el.value);
+          U.formValues[key] = el.value === "" ? "" : (isNaN(parsed) ? 0 : parsed);
         } else {
           U.formValues[key] = el.value;
         }
@@ -272,14 +273,15 @@
     }
 
     // Build action payload with optional context
-    var context = {};
+    var context = Object.create(null);
     if (btn && btn.dataset) {
       if (btn.dataset.itemIndex !== undefined) {
         context.item_index = parseInt(btn.dataset.itemIndex, 10);
         if (btn.dataset.item) context.item_id = btn.dataset.item;
       }
       if (btn.dataset.sectionIndex !== undefined) {
-        context.section_index = parseInt(btn.dataset.sectionIndex, 10) || btn.dataset.sectionIndex;
+        var parsedIdx = parseInt(btn.dataset.sectionIndex, 10);
+        context.section_index = isNaN(parsedIdx) ? btn.dataset.sectionIndex : parsedIdx;
       }
       if (btn.dataset.sectionId) context.section_id = btn.dataset.sectionId;
     }

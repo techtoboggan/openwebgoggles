@@ -195,6 +195,7 @@ class SecurityGate:
         re.compile(r"url\s*\(", re.IGNORECASE),  # Block ALL url() — prevents data exfiltration via http(s)
         re.compile(r"\\"),  # Block ALL backslash escapes — non-hex escapes like \m bypass keyword patterns
         re.compile(r"/\*"),  # CSS comments can split keywords to bypass patterns (e.g. ur/**/l())
+        re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]"),  # zero-width / bidi chars
     ]
 
     # --- Metric section ---
@@ -745,7 +746,7 @@ class SecurityGate:
         for prop in ("min", "max"):
             val = field.get(prop)
             if val is not None:
-                if not isinstance(val, int | float):
+                if isinstance(val, bool) or not isinstance(val, int | float):
                     return False, f"{path}.{prop} must be a number"
                 if isinstance(val, float) and not math.isfinite(val):
                     return False, f"{path}.{prop} must be a finite number"
@@ -796,7 +797,7 @@ class SecurityGate:
                     return False, f"{prefix}.tasks[{ti}].status: invalid {ts!r}"
             pct = sec.get("percentage")
             if pct is not None:
-                if not isinstance(pct, int | float):
+                if isinstance(pct, bool) or not isinstance(pct, int | float):
                     return False, f"{prefix}.percentage must be a number"
                 if isinstance(pct, float) and not math.isfinite(pct):
                     return False, f"{prefix}.percentage must be a finite number"

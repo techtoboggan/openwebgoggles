@@ -7,7 +7,7 @@
 
   // ─── Initialize behaviors from state ────────────────────────────────────────
   OWG.initBehaviors = function (state) {
-    rules = (state && state.behaviors) || [];
+    rules = Array.isArray(state && state.behaviors) ? state.behaviors : [];
     if (rules.length) OWG.evaluateBehaviors();
   };
 

@@ -87,6 +87,7 @@ except Exception:
 
 
 MAX_MERGE_DEPTH = 20
+_DANGEROUS_KEYS = frozenset({"__proto__", "constructor", "prototype"})
 
 
 def _deep_merge(base: dict, override: dict, _depth: int = 0) -> None:
@@ -103,7 +104,6 @@ def _deep_merge(base: dict, override: dict, _depth: int = 0) -> None:
     if _depth > MAX_MERGE_DEPTH:
         raise ValueError(f"Merge depth exceeds maximum ({MAX_MERGE_DEPTH})")
     # Block prototype-pollution keys that could be dangerous when serialized to JS
-    _DANGEROUS_KEYS = frozenset({"__proto__", "constructor", "prototype"})
     for key, value in override.items():
         if key in _DANGEROUS_KEYS:
             raise ValueError(f"Merge rejected: dangerous key {key!r}")
@@ -125,14 +125,15 @@ def _expand_preset(preset: str, state: dict[str, Any]) -> dict[str, Any]:
     if preset == "progress":
         tasks = s.pop("tasks", [])
         pct = s.pop("percentage", None)
+        title = s.pop("title", "Progress")
         base: dict[str, Any] = {
-            "title": s.get("title", "Progress"),
+            "title": title,
             "status": "processing",
             "data": {
                 "sections": [
                     {
                         "type": "progress",
-                        "title": s.get("title", ""),
+                        "title": title if title != "Progress" else "",
                         "tasks": tasks,
                     }
                 ]
@@ -145,9 +146,11 @@ def _expand_preset(preset: str, state: dict[str, Any]) -> dict[str, Any]:
 
     if preset == "confirm":
         details = s.pop("details", None)
+        title = s.pop("title", "Confirm")
+        message = s.pop("message", "")
         base = {
-            "title": s.get("title", "Confirm"),
-            "message": s.get("message", ""),
+            "title": title,
+            "message": message,
             "status": "pending_review",
             "data": {"sections": []},
             "actions_requested": [
@@ -163,14 +166,15 @@ def _expand_preset(preset: str, state: dict[str, Any]) -> dict[str, Any]:
     if preset == "log":
         lines = s.pop("lines", [])
         max_lines = s.pop("maxLines", 500)
+        title = s.pop("title", "Log")
         base = {
-            "title": s.get("title", "Log"),
+            "title": title,
             "status": "processing",
             "data": {
                 "sections": [
                     {
                         "type": "log",
-                        "title": s.get("title", ""),
+                        "title": title if title != "Log" else "",
                         "lines": lines,
                         "autoScroll": True,
                         "maxLines": max_lines,
@@ -417,14 +421,19 @@ class WebviewSession:
             self._open_browser()
             self._open_browser_on_start = False
 
-    def write_state(self, state: dict[str, Any]) -> None:
-        """Atomic write to state.json with auto-incrementing version."""
+    def _write_state_locked(self, state: dict[str, Any]) -> None:
+        """Internal: write state while lock is already held."""
         self._state_version += 1
         state.setdefault("version", self._state_version)
         state["version"] = self._state_version
         state.setdefault("updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         state.setdefault("status", "waiting_input")
         self._write_json(self.data_dir / "state.json", state)
+
+    def write_state(self, state: dict[str, Any]) -> None:
+        """Atomic write to state.json with auto-incrementing version."""
+        with self._state_lock:
+            self._write_state_locked(state)
 
     def read_state(self) -> dict[str, Any]:
         """Read current state.json."""
@@ -450,7 +459,7 @@ class WebviewSession:
             _deep_merge(current, partial)
             if validator:
                 validator(current)  # raises on failure — write is skipped
-            self.write_state(current)
+            self._write_state_locked(current)
             return current
 
     def read_actions(self) -> dict[str, Any]:
@@ -902,13 +911,20 @@ class WebviewSession:
 # ---------------------------------------------------------------------------
 
 _session: WebviewSession | None = None
-_session_lock = asyncio.Lock()
+_session_lock: asyncio.Lock | None = None
+
+
+def _get_session_lock() -> asyncio.Lock:
+    global _session_lock
+    if _session_lock is None:
+        _session_lock = asyncio.Lock()
+    return _session_lock
 
 
 async def _get_session() -> WebviewSession:
     """Get or create the global WebviewSession."""
     global _session
-    async with _session_lock:
+    async with _get_session_lock():
         if _session is None:
             _session = WebviewSession(open_browser=True)
         return _session
@@ -919,7 +935,16 @@ async def _get_session() -> WebviewSession:
 # ---------------------------------------------------------------------------
 
 _active_tool_calls: int = 0
-_active_tool_calls_lock = asyncio.Lock()
+_active_tool_calls_lock: asyncio.Lock | None = None
+
+
+def _get_tool_calls_lock() -> asyncio.Lock:
+    global _active_tool_calls_lock
+    if _active_tool_calls_lock is None:
+        _active_tool_calls_lock = asyncio.Lock()
+    return _active_tool_calls_lock
+
+
 _reload_pending: bool = False
 _reload_task: asyncio.Task | None = None
 _RELOAD_CHECK_INTERVAL = 30  # seconds
@@ -1147,12 +1172,13 @@ async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version 
 
             # Close webview session gracefully so a restart gets a clean slate
             global _session
-            if _session is not None:
-                try:
-                    await _session.close(message="Server needs restart (package updated).")
-                except Exception:
-                    pass
-                _session = None
+            async with _get_session_lock():
+                if _session is not None:
+                    try:
+                        await _session.close(message="Server needs restart (package updated).")
+                    except Exception:
+                        pass
+                    _session = None
 
             # Stop monitoring — we've already flagged the staleness
             return
@@ -1194,19 +1220,20 @@ async def _signal_reload_monitor() -> None:
         # Wait for in-flight tool calls to drain (up to 60s)
         drain_deadline = time.monotonic() + 60
         while time.monotonic() < drain_deadline:
-            async with _active_tool_calls_lock:
+            async with _get_tool_calls_lock():
                 if _active_tool_calls == 0:
                     break
             await asyncio.sleep(1)
 
         # Close webview session gracefully
         global _session
-        if _session is not None:
-            try:
-                await _session.close(message="Server reloading (restart requested).")
-            except Exception:
-                pass
-            _session = None
+        async with _get_session_lock():
+            if _session is not None:
+                try:
+                    await _session.close(message="Server reloading (restart requested).")
+                except Exception:
+                    pass
+                _session = None
 
         _mark_stale("current", "reload-requested")
 
@@ -1219,12 +1246,12 @@ def _track_tool_call(fn):  # type: ignore[no-untyped-def]
         global _active_tool_calls
         if _reload_pending:
             return {"error": _stale_version_msg or "Server needs restart after a package update."}
-        async with _active_tool_calls_lock:
+        async with _get_tool_calls_lock():
             _active_tool_calls += 1
         try:
             return await fn(*args, **kwargs)
         finally:
-            async with _active_tool_calls_lock:
+            async with _get_tool_calls_lock():
                 _active_tool_calls -= 1
 
     return wrapper
@@ -1241,7 +1268,11 @@ def _write_mcp_pid() -> None:
     data_dir = Path.cwd() / ".opencode" / "webview"
     data_dir.mkdir(parents=True, exist_ok=True)
     pid_file = data_dir / ".mcp.pid"
-    pid_file.write_text(str(os.getpid()))
+    old_umask = os.umask(0o077)
+    try:
+        pid_file.write_text(str(os.getpid()))
+    finally:
+        os.umask(old_umask)
     _MCP_PID_DIR = data_dir
 
 
@@ -1778,6 +1809,11 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
     no session is active. Always call this when done with the webview.
     """
     global _session
+    # Validate close message for XSS before passing to browser
+    if _security_gate and message:
+        xss_warnings = _security_gate._scan_xss(message, "webview_close.message")
+        if xss_warnings:
+            return {"error": f"Close message rejected by security gate: {xss_warnings[0]}"}
     if _session is None or not _session._started:
         return {"status": "ok", "message": "No active session."}
 
@@ -2292,25 +2328,28 @@ def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic 
     lock_file = data_dir / ".server.lock"
     if lock_file.exists():
         # Check if it's held by a live process
-        import fcntl
-
         try:
-            fd = os.open(str(lock_file), os.O_RDONLY)
+            import fcntl
+        except ImportError:
+            warn("Cannot check lock file (fcntl unavailable on this platform)")
+        else:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(fd, fcntl.LOCK_UN)
-                # Lock was free — if no server is running, it's stale
-                webview_pid = _read_pid_file(data_dir / ".server.pid")
-                if webview_pid is None:
-                    ok("Lock file present but not held (no conflict)")
-                else:
-                    ok("Lock file OK")
+                fd = os.open(str(lock_file), os.O_RDONLY)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    # Lock was free — if no server is running, it's stale
+                    webview_pid = _read_pid_file(data_dir / ".server.pid")
+                    if webview_pid is None:
+                        ok("Lock file present but not held (no conflict)")
+                    else:
+                        ok("Lock file OK")
+                except OSError:
+                    ok("Lock file held by running server")
+                finally:
+                    os.close(fd)
             except OSError:
-                ok("Lock file held by running server")
-            finally:
-                os.close(fd)
-        except OSError:
-            ok("No lock conflicts")
+                ok("No lock conflicts")
     else:
         ok("No lock file (clean state)")
 

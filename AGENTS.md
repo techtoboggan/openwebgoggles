@@ -10,7 +10,7 @@ scripts/              Python source (NOT src/)
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (1800+ tests: 1807 unit + 32 BDD + 54 E2E)
+  tests/              pytest suite (1800+ tests: unit + 32 BDD + 54 E2E)
     conftest.py       Shared fixtures (gate, session_keys, nonce_tracker, E2E Playwright)
     features/         BDD feature files (Gherkin scenarios)
     steps/            BDD step definitions (pytest-bdd)
@@ -37,7 +37,7 @@ All JS uses vanilla IIFE modules sharing `window.OWG`. **Load order matters** in
 - **No innerHTML** — use `document.createTextNode()`, `OWG.sanitizeHTML()`, or DOM API
 - **Prototype-safe iteration** — `formValues`/`fieldValidators` use `Object.create(null)`; always use `Object.prototype.hasOwnProperty.call(obj, key)` instead of `obj.hasOwnProperty(key)`
 - **Namespace frozen** — `Object.freeze(window.OWG)` at end of `app.js` prevents post-init tampering
-- **`sanitizeHTML()` strips** — inline `style` attrs (use CSS classes instead) and all `data-*` attrs (prevents phantom action injection)
+- **`sanitizeHTML()` strips** — event handler attrs (`on*`), `id`/`name` attrs, and dangerous URLs; preserves `data-*` and `style` (needed by renderer)
 - **CSS classes for visibility** — `.owg-page-hidden`, `.owg-tabs-hidden`, `.hidden` (not inline styles)
 
 ## Python Architecture
@@ -102,7 +102,7 @@ SecurityGate **rejects** invalid payloads entirely — it never sanitizes or mod
 
 ### Client-Side Hardening
 
-- `sanitizeHTML()` strips `data-*` attrs and inline `style` attrs
+- `sanitizeHTML()` strips event handlers, `id`/`name` attrs, and dangerous URLs; preserves `data-*` and `style`
 - `escAnsi()` caps nesting at 20 (`MAX_ANSI_NESTING`) — prevents DoS via crafted ANSI sequences
 - `safeCopy()` uses `Object.create(null)` — no prototype chain pollution
 - SDK caps listeners at 100/event (`MAX_LISTENERS_PER_EVENT`) with deduplication
@@ -143,7 +143,7 @@ Feature files in `scripts/tests/features/`, step definitions in `scripts/tests/s
 
 ### Structural Testing Gates
 
-Six automated gate test classes prevent regression categories, not just individual bugs:
+Seven automated gate test classes prevent regression categories, not just individual bugs:
 
 | Gate | Class | File | What It Catches |
 |------|-------|------|-----------------|

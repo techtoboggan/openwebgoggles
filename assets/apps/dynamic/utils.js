@@ -46,6 +46,7 @@
     /url\s*\(/i,                     // Block ALL url() — prevents data exfiltration
     /\\/,                            // Block ALL backslash escapes — non-hex escapes bypass keyword patterns
     /\/\*/,                          // CSS comments can split keywords (e.g. ur/**/l())
+    /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/,  // zero-width / bidi chars
   ];
 
   OWG.isCSSSafe = function (css) {

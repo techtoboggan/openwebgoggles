@@ -9,7 +9,7 @@
   var markdownBlock = OWG.markdownBlock;
 
   // Module-scope state for tabs — preserved across render() calls
-  var activeTabs = {};
+  var activeTabs = Object.create(null);
 
   // ─── Section dispatcher ─────────────────────────────────────────────────────
   OWG.renderSection = function (sec, si) {
@@ -499,12 +499,13 @@
     root.querySelectorAll("[data-table-select-all]").forEach(function (chk) {
       chk.addEventListener("change", function () {
         var ti = chk.getAttribute("data-table-select-all");
-        var rows = root.querySelectorAll("[data-table-row]");
         var selected = [];
-        rows.forEach(function (r, i) {
+        var rowIdx = 0;
+        root.querySelectorAll("[data-table-row]").forEach(function (r) {
           if (r.getAttribute("data-table-row") !== ti) return;
           r.checked = chk.checked;
-          if (chk.checked) selected.push(i);
+          if (chk.checked) selected.push(rowIdx);
+          rowIdx++;
         });
         OWG.formValues["_table_" + ti + "_selected"] = selected;
       });
@@ -515,9 +516,11 @@
       chk.addEventListener("change", function () {
         var ti = chk.getAttribute("data-table-row");
         var selected = [];
-        root.querySelectorAll("[data-table-row]").forEach(function (r, i) {
+        var rowIdx = 0;
+        root.querySelectorAll("[data-table-row]").forEach(function (r) {
           if (r.getAttribute("data-table-row") !== ti) return;
-          if (r.checked) selected.push(i);
+          if (r.checked) selected.push(rowIdx);
+          rowIdx++;
         });
         OWG.formValues["_table_" + ti + "_selected"] = selected;
       });
@@ -604,6 +607,18 @@
         });
 
         rows.forEach(function (row) { tbody.appendChild(row); });
+
+        // Rebuild selected indices after sort
+        var newSelected = [];
+        var sortRowIdx = 0;
+        tbody.querySelectorAll("[data-table-row]").forEach(function (r) {
+          if (r.getAttribute("data-table-row") !== ti) return;
+          if (r.checked) newSelected.push(sortRowIdx);
+          sortRowIdx++;
+        });
+        if (OWG.formValues["_table_" + ti + "_selected"]) {
+          OWG.formValues["_table_" + ti + "_selected"] = newSelected;
+        }
       });
     });
   };

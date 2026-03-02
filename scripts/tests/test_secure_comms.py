@@ -535,12 +535,19 @@ class TestTokenExposure:
     @pytest.mark.secure_comms
     @pytest.mark.llm02
     @pytest.mark.mitre_t1539
-    def test_token_not_in_state_json(self):
+    def test_token_not_in_state_json(self, tmp_path):
         """state.json should never contain the session token."""
-        token = os.urandom(32).hex()
-        state = {"version": 1, "status": "ready", "message": "hello"}
-        state_str = json.dumps(state)
-        assert token not in state_str
+        from mcp_server import WebviewSession
+
+        session = WebviewSession(work_dir=tmp_path, open_browser=False)
+        session.session_token = os.urandom(32).hex()
+        # Ensure the data directory exists (normally created by ensure_started)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
+        state = {"title": "Test", "status": "ready", "message": "hello"}
+        session.write_state(state)
+
+        state_json_contents = (session.data_dir / "state.json").read_text()
+        assert session.session_token not in state_json_contents, "Session token must not appear in state.json"
 
     @pytest.mark.secure_comms
     @pytest.mark.llm02
@@ -587,17 +594,16 @@ class TestTokenExposure:
     @pytest.mark.llm02
     def test_manifest_api_strips_token(self):
         """The public /_api/manifest endpoint strips the token before responding."""
+        from webview_server import _strip_token
+
         manifest = {
             "session": {"id": "test-123", "token": "secret_abc"},
             "server": {"host": "127.0.0.1"},
         }
-        # Simulate stripping
-        import copy
-
-        safe = copy.deepcopy(manifest)
-        del safe["session"]["token"]
-        assert "token" not in safe["session"]
-        assert "token" in manifest["session"]  # Original unchanged
+        safe = _strip_token(manifest)
+        assert "token" not in safe["session"], "Token should be removed from stripped manifest"
+        assert "token" in manifest["session"], "Original manifest should not be mutated"
+        assert manifest["session"]["token"] == "secret_abc", "Original token value should be unchanged"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

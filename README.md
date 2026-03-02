@@ -567,10 +567,10 @@ Nine defense layers enforce this, all enabled by default:
 - **HMAC-SHA256** — browser signs every action (tamper detection)
 - **Nonce replay prevention** — each action can only be submitted once
 - **Content Security Policy** — per-request nonce blocks inline script injection
-- **SecurityGate** — 22 XSS patterns, zero-width character detection, schema validation
+- **SecurityGate** — 30 XSS patterns, zero-width character detection, schema validation
 - **Rate limiting** — 30 actions per minute per session
 
-All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 1025+ tests.
+All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 1800+ tests (unit, BDD, and E2E).
 
 The tradeoff is real, though. This level of defense adds complexity to the codebase. If you're running in a fully trusted local environment and want to understand what each layer does, the [security tests](scripts/tests/) are the best documentation.
 
