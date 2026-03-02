@@ -47,14 +47,24 @@ except ImportError:
 
 # Cryptographic utilities (Ed25519 signing, HMAC verification, nonce tracking)
 try:
-    from crypto_utils import (
-        NonceTracker,
-        generate_nonce,
-        generate_session_keys,
-        sign_message,
-        verify_hmac,
-        zero_key,
-    )
+    try:
+        from .crypto_utils import (
+            NonceTracker,
+            generate_nonce,
+            generate_session_keys,
+            sign_message,
+            verify_hmac,
+            zero_key,
+        )
+    except ImportError:
+        from crypto_utils import (  # noqa: I001
+            NonceTracker,
+            generate_nonce,
+            generate_session_keys,
+            sign_message,
+            verify_hmac,
+            zero_key,
+        )
 
     HAS_CRYPTO = True
 except ImportError:
@@ -62,7 +72,10 @@ except ImportError:
 
 # Security gate for validating agent-generated content
 try:
-    from security_gate import SecurityGate
+    try:
+        from .security_gate import SecurityGate
+    except ImportError:
+        from security_gate import SecurityGate  # noqa: I001
 
     HAS_GATE = True
 except ImportError:

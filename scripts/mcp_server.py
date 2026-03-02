@@ -69,7 +69,10 @@ logger = logging.getLogger("openwebgoggles")
 # SecurityGate — imported eagerly for validation in MCP tools
 _security_gate = None
 try:
-    from security_gate import SecurityGate
+    try:
+        from .security_gate import SecurityGate
+    except ImportError:
+        from security_gate import SecurityGate  # noqa: I001
 
     _security_gate = SecurityGate()
 except ImportError:
