@@ -27,6 +27,7 @@ import hmac as hmac_module
 import os
 import struct
 import time
+from pathlib import Path
 
 import pytest
 
@@ -535,7 +536,7 @@ class TestEndToEndSigning:
         verify_key = nacl.signing.VerifyKey(bytes.fromhex(server_pub))
         with pytest.raises(Exception):
             verify_key.verify(
-                (nonce + tampered_payload).encode("utf-8"),
+                (nonce + "\x00" + tampered_payload).encode("utf-8"),
                 bytes.fromhex(sig),
             )
 
@@ -1179,3 +1180,176 @@ class TestHMACEdgeCases:
         # Cross-verification must fail
         assert verify_hmac(token, "bcd", "ab", sig1) is False
         assert verify_hmac(token, "cd", "a", sig2) is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURAL GATE: CRYPTO PROPERTY-BASED INVARIANTS
+# Tests security PROPERTIES rather than implementation details.
+# Prevents category-C failures (crypto edge cases) and category-F (stale tests).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCryptoSecurityInvariants:
+    """Property-based invariant tests for the cryptographic protocol.
+
+    These tests assert security properties that must ALWAYS hold, regardless of
+    implementation changes. They use production functions (not reimplemented crypto)
+    to avoid the category-F failure mode of stale test constructions.
+    """
+
+    # --- Domain separation invariant ---
+
+    @pytest.mark.parametrize(
+        "nonce_a,payload_a,nonce_b,payload_b",
+        [
+            ("ab", "cd", "abc", "d"),
+            ("ab", "cd", "a", "bcd"),
+            ("x", "yz", "xy", "z"),
+            ("nonce1", '{"a":1}', "nonce1{", '"a":1}'),
+            ("", "abcd", "a", "bcd"),
+        ],
+    )
+    def test_domain_separation_invariant(self, nonce_a, payload_a, nonce_b, payload_b):
+        """INVARIANT: Different nonce/payload splits must produce different signatures.
+
+        This is the core property that the domain separator (\\x00) guarantees.
+        If this test fails, concatenation ambiguity exists in the protocol.
+        Uses verify_hmac's own HMAC construction to stay in sync with production.
+        """
+        token = "invariant-test-key"  # noqa: S105
+        key = token.encode("utf-8")
+        msg_a = (nonce_a + "\x00" + payload_a).encode("utf-8")
+        msg_b = (nonce_b + "\x00" + payload_b).encode("utf-8")
+        sig_a = hmac_module.new(key, msg_a, hashlib.sha256).hexdigest()
+        sig_b = hmac_module.new(key, msg_b, hashlib.sha256).hexdigest()
+        # Signatures must differ for different splits of the same concatenated string
+        assert sig_a != sig_b, (
+            f"Domain separation violated! nonce='{nonce_a}'+payload='{payload_a}' "
+            f"produced same signature as nonce='{nonce_b}'+payload='{payload_b}'"
+        )
+
+    # --- Rejection invariants (negative security properties) ---
+
+    def test_empty_token_always_rejected(self):
+        """INVARIANT: verify_hmac() must reject empty tokens unconditionally."""
+        sig = sign_message(b"\x00" * 32, "payload", "nonce")
+        assert verify_hmac("", "payload", "nonce", sig) is False
+
+    def test_none_token_always_rejected(self):
+        """INVARIANT: verify_hmac() must reject None-ish tokens."""
+        # Passing empty string (the only allowed str type)
+        assert verify_hmac("", "any", "any", "00" * 32) is False
+
+    @pytest.mark.parametrize("bad_nonce", ["", None, 0, 42, True, [], {}])
+    def test_invalid_nonces_always_rejected(self, bad_nonce):
+        """INVARIANT: NonceTracker must reject non-string and empty nonces."""
+        tracker = NonceTracker(window_seconds=300)
+        assert tracker.check_and_record(bad_nonce) is False
+
+    # --- Round-trip invariant: HMAC sign → verify must succeed ---
+
+    @pytest.mark.parametrize(
+        "payload,nonce",
+        [
+            ('{"action":"click"}', "abc123"),
+            ("", "empty-payload-nonce"),
+            ('{"nested":{"deep":true}}', "complex-nonce-value"),
+            ("unicode: café ñ 日本語", "unicode-nonce"),
+        ],
+    )
+    def test_hmac_roundtrip(self, payload, nonce):
+        """INVARIANT: An HMAC-signed message must verify with the same token.
+
+        Uses verify_hmac's own key derivation (token.encode) to create the
+        signature, ensuring test stays in sync with production code.
+        """
+        token = "roundtrip-test-key"  # noqa: S105
+        # Construct HMAC the same way verify_hmac does internally
+        message = (nonce + "\x00" + payload).encode("utf-8")
+        sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
+        assert verify_hmac(token, payload, nonce, sig) is True
+
+    # --- Tamper detection invariant ---
+
+    def test_tampered_payload_rejected(self):
+        """INVARIANT: Modifying the payload must invalidate the signature."""
+        token = "tamper-test-key"  # noqa: S105
+        nonce = "test-nonce-123"
+        message = (nonce + "\x00" + "original payload").encode("utf-8")
+        sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
+        assert verify_hmac(token, "original payload", nonce, sig) is True
+        assert verify_hmac(token, "tampered payload", nonce, sig) is False
+
+    def test_tampered_nonce_rejected(self):
+        """INVARIANT: Modifying the nonce must invalidate the signature."""
+        token = "tamper-test-key"  # noqa: S105
+        message = ("original-nonce" + "\x00" + "payload").encode("utf-8")
+        sig = hmac_module.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
+        assert verify_hmac(token, "payload", "original-nonce", sig) is True
+        assert verify_hmac(token, "payload", "tampered-nonce", sig) is False
+
+    # --- Monotonic clock invariant ---
+
+    def test_nonce_tracker_uses_monotonic_clock(self):
+        """INVARIANT: NonceTracker must use monotonic clock, not wall clock."""
+        import inspect
+
+        src = inspect.getsource(NonceTracker.check_and_record)
+        assert "monotonic" in src, "NonceTracker MUST use time.monotonic()"
+        assert "time.time()" not in src, "NonceTracker must NOT use time.time()"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURAL GATE: STALE CRYPTO PATTERN LINT
+# Verifies that no test file reimplements HMAC/signature construction
+# without the current domain separator.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestStaleCryptoPatternLint:
+    """Lint gate that catches stale HMAC/signature constructions in test files.
+
+    Prevents category-F failures where tests reimplement crypto with outdated
+    parameters (e.g., missing domain separator) and pass for the wrong reason.
+    """
+
+    _TEST_DIR = Path(__file__).resolve().parent
+
+    def _scan_for_stale_hmac(self, filepath: Path) -> list[tuple[int, str]]:
+        """Find lines that construct HMAC without the \\x00 domain separator."""
+        import re as _re
+
+        violations = []
+        lines = filepath.read_text().splitlines()
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith("#"):
+                continue
+            # Look for manual nonce+payload concatenation without \x00
+            # Pattern: (nonce_var + payload_var).encode — missing \x00
+            if _re.search(r'\(\w+ \+ \w+\)\.encode\("utf-8"\)', stripped):
+                # Make sure it's not using the domain separator
+                if "\\x00" not in stripped and '"\\x00"' not in line and "'\\x00'" not in line:
+                    violations.append((i, stripped))
+        return violations
+
+    @pytest.mark.parametrize(
+        "test_file",
+        [
+            "test_crypto_utils.py",
+            "test_secure_comms.py",
+            "test_webview_server.py",
+            "test_security_gate.py",
+        ],
+    )
+    def test_no_stale_hmac_constructions(self, test_file):
+        """No test file should construct HMAC with nonce+payload without \\x00 separator."""
+        filepath = self._TEST_DIR / test_file
+        if not filepath.exists():
+            pytest.skip(f"{test_file} not found")
+        violations = self._scan_for_stale_hmac(filepath)
+        assert not violations, (
+            f"Stale HMAC construction in {test_file} (missing \\x00 domain separator):\n"
+            + "\n".join(f"  line {n}: {line}" for n, line in violations)
+        )

@@ -337,7 +337,7 @@ class TestMITMPrevention:
         tampered = payload[:20] + "X" + payload[21:]
         with pytest.raises(Exception):
             verify_key.verify(
-                (nonce + tampered).encode("utf-8"),
+                (nonce + "\x00" + tampered).encode("utf-8"),
                 bytes.fromhex(sig),
             )
 

@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **56 new security tests** covering: CSS backslash bypass (7), bidi Unicode bypass (6), CSS comment splitting (4), action depth DoS (1), ReDoS inner-quantifier (3), null byte XSS (2), @media blocking (2), proto pollution (4), domain separator (2), nonce tracker (3), Transfer-Encoding rejection (2), WS raw frame size (3), trivial token guard (5), temp file umask (2), rate limiter clock (1), ANSI nesting cap (3), SDK listener cap (3), CSS client-server sync (3).
+- **6 structural testing gates** — automated regression prevention at the category level:
+  - CSS Bypass Fuzzer (41 parametrized obfuscation variants)
+  - Client-Server Pattern Sync (verifies `DANGEROUS_CSS_PATTERNS` ↔ `DANGEROUS_CSS_RE` parity)
+  - Crypto Security Invariants (property-based domain separation, rejection, round-trip tests)
+  - Stale Crypto Pattern Lint (scans test files for HMAC constructions missing `\x00` delimiter)
+  - Input Channel Registry (17 limit constants verified across SecurityGate, WebviewServer, NonceTracker)
+  - Deployment Security (umask patterns, trivial token guard, monotonic clock enforcement)
 
 ### Changed
 

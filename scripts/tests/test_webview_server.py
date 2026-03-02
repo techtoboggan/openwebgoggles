@@ -2693,3 +2693,146 @@ class TestRateLimiterClock:
         src = inspect.getsource(RateLimiter.check)
         assert "monotonic" in src, "RateLimiter must use time.monotonic()"
         assert "time.time()" not in src, "RateLimiter must NOT use time.time()"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURAL GATE: INPUT CHANNEL REGISTRY
+# Verifies that every external input channel has an enforced size/count limit
+# and corresponding constant. Prevents category-D failures (resource exhaustion).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestInputChannelRegistry:
+    """Structural gate verifying all input channels have size/count limits.
+
+    This is a living registry of every external input the server accepts.
+    If you add a new input channel, add an entry here. The test WILL fail
+    if the limit constant is missing from the source code.
+    """
+
+    # Registry: (constant_name, expected_value, source_class_or_module, description)
+    INPUT_CHANNELS = [
+        ("MAX_PAYLOAD_SIZE", 512_000, "SecurityGate", "State JSON payload"),
+        ("MAX_STRING_LENGTH", 50_000, "SecurityGate", "Individual string values"),
+        ("MAX_NESTING_DEPTH", 10, "SecurityGate", "JSON nesting depth"),
+        ("MAX_SECTIONS", 50, "SecurityGate", "Sections per state"),
+        ("MAX_CSS_LENGTH", 50_000, "SecurityGate", "Custom CSS string"),
+        ("MAX_ITEMS_PER_SECTION", 500, "SecurityGate", "Items per section"),
+        ("MAX_LOG_LINES", 5000, "SecurityGate", "Log lines per section"),
+        ("MAX_CHART_LABELS", 500, "SecurityGate", "Chart data labels"),
+        ("MAX_DATASETS", 20, "SecurityGate", "Chart datasets"),
+        ("MAX_DATA_POINTS", 500, "SecurityGate", "Points per dataset"),
+        ("MAX_BEHAVIORS", 100, "SecurityGate", "Conditional behaviors"),
+        ("MAX_TABLE_COLUMNS", 50, "SecurityGate", "Table columns"),
+        ("MAX_TABS", 20, "SecurityGate", "Tabs per section"),
+        ("MAX_PAGES", 20, "SecurityGate", "SPA pages"),
+        ("MAX_WS_MESSAGE_SIZE", 1_048_576, "WebviewServer", "WebSocket message bytes"),
+        ("MAX_WEBSOCKET_CLIENTS", 50, "WebviewServer", "Concurrent WS connections"),
+        ("MAX_NONCE_COUNT", 100_000, "NonceTracker", "Tracked nonces"),
+    ]
+
+    @pytest.mark.parametrize(
+        "constant,expected,source,desc",
+        INPUT_CHANNELS,
+        ids=[c[0] for c in INPUT_CHANNELS],
+    )
+    def test_limit_constant_exists_with_correct_value(self, constant, expected, source, desc):
+        """Every input channel limit must exist as a class constant with the expected value."""
+        from security_gate import SecurityGate
+
+        from crypto_utils import NonceTracker
+
+        source_map = {
+            "SecurityGate": SecurityGate,
+            "WebviewServer": WebviewServer,
+            "NonceTracker": NonceTracker,
+        }
+        cls = source_map[source]
+        assert hasattr(cls, constant), f"Missing limit constant {source}.{constant} for: {desc}"
+        actual = getattr(cls, constant)
+        assert actual == expected, f"{source}.{constant} = {actual}, expected {expected} for: {desc}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURAL GATE: DEPLOYMENT SECURITY
+# Tests operational security properties that are invisible in dev/CI.
+# Prevents category-E failures (permission/isolation issues).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDeploymentSecurity:
+    """Structural gate for operational security properties.
+
+    These tests verify that file permissions, token guards, and clock sources
+    are correctly implemented — things that are invisible in development but
+    critical in production deployments.
+    """
+
+    def test_write_json_umask_pattern(self):
+        """DataContract.write_json must set umask(0o077) in a try/finally block."""
+        import inspect
+
+        src = inspect.getsource(DataContract.write_json)
+        assert "os.umask(0o077)" in src, "write_json must set umask(0o077)"
+        assert src.index("os.umask(0o077)") < src.index("finally"), "umask must be set BEFORE the finally block"
+        # Count umask calls — should have set + restore
+        assert src.count("os.umask") >= 2, "Must both set and restore umask"
+
+    def test_pid_write_umask_pattern(self):
+        """PID file write must use umask(0o077)."""
+        import inspect
+
+        src = inspect.getsource(WebviewServer.start)
+        assert "os.umask(0o077)" in src, "PID write must use umask(0o077)"
+        # Verify the umask is near the PID write
+        umask_pos = src.index("os.umask(0o077)")
+        pid_pos = src.index("pid_path")
+        assert abs(umask_pos - pid_pos) < 200, "umask and PID write should be in the same block"
+
+    def test_write_json_creates_restricted_file(self, contract, tmp_data_dir):
+        """Files written by DataContract.write_json must not be world-readable."""
+        # Set a permissive umask to verify the code overrides it
+        old_umask = os.umask(0o000)
+        try:
+            contract.write_json(contract.state_path, {"title": "test"})
+        finally:
+            os.umask(old_umask)
+
+        # Check the file's actual permissions
+        mode = oct(os.stat(contract.state_path).st_mode & 0o777)
+        # With umask(0o077), typical result is 0o600 (rw-------)
+        # The file should NOT be world-readable (no 'other' read bit)
+        assert not (os.stat(contract.state_path).st_mode & 0o004), f"State file is world-readable! Permissions: {mode}"
+
+    @pytest.mark.parametrize("trivial", ["", "REDACTED", "test", "token", "secret"])
+    def test_trivial_token_replaced_in_init(self, tmp_path, trivial):
+        """Server must auto-replace trivial tokens at init time."""
+        # Use a clean data dir with NO manifest (so no fallback token)
+        data_dir = tmp_path / "clean_data"
+        data_dir.mkdir(parents=True)
+        (data_dir / "apps").mkdir()
+        sdk_path = data_dir / "sdk.js"
+        sdk_path.write_text("// placeholder")
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": trivial}):
+            server = WebviewServer(
+                data_dir=str(data_dir),
+                http_port=18420,
+                ws_port=18421,
+                sdk_path=str(sdk_path),
+            )
+        assert server.session_token != trivial, f"Trivial token '{trivial}' was not replaced"
+        assert len(server.session_token) >= 32, "Replacement token must be at least 32 chars"
+
+    def test_no_wall_clock_in_security_code(self):
+        """Security-sensitive timing must use monotonic clock, not wall clock."""
+        import inspect
+
+        # Check RateLimiter
+        rl_src = inspect.getsource(RateLimiter.check)
+        assert "time.time()" not in rl_src, "RateLimiter must not use time.time()"
+
+        # Check NonceTracker
+        from crypto_utils import NonceTracker
+
+        nt_src = inspect.getsource(NonceTracker.check_and_record)
+        assert "time.time()" not in nt_src, "NonceTracker must not use time.time()"

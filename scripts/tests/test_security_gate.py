@@ -23,6 +23,7 @@ Coverage mapping:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from helpers import make_state
@@ -7615,3 +7616,253 @@ class TestBidiUnicodeBypass:
         state = {"data": {"sections": [{"type": "text", "content": "Hello world, this is safe."}]}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert ok
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURAL GATE: CSS BYPASS FUZZER
+# Generates encoded/obfuscated variants of every blocked keyword and asserts
+# all are rejected. Prevents category-A failures (pattern bypass via encoding).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCSSBypassFuzzer:
+    """Systematic CSS bypass fuzzer — tests encoding variants of all blocked constructs.
+
+    This is a structural gate that ensures SecurityGate rejects not just literal
+    keywords but all representational equivalences that browsers would interpret
+    identically. Each test generates multiple obfuscated forms of a dangerous
+    CSS construct and asserts ALL are blocked.
+    """
+
+    # --- Backslash escape variants ---
+
+    @pytest.mark.parametrize(
+        "obfuscated_css,description",
+        [
+            ("@\\media screen { body { color: red } }", "non-hex backslash in @media"),
+            ("@\\69mport 'x.css';", "hex backslash in @import (\\69 = 'i')"),
+            ("ur\\6c(https://evil.com)", "hex backslash in url() (\\6c = 'l')"),
+            ("e\\78pression(alert(1))", "hex backslash in expression() (\\78 = 'x')"),
+            ("@\\66ont-face { }", "hex backslash in @font-face (\\66 = 'f')"),
+            ("@\\6b eyframes spin { }", "hex backslash in @keyframes (\\6b = 'k')"),
+            ("@\\73upports (display: grid) { }", "hex backslash in @supports (\\73 = 's')"),
+            ("@\\6c ayer base { }", "hex backslash in @layer (\\6c = 'l')"),
+            ("-mo\\7a-binding: url(x)", "hex backslash in -moz-binding (\\7a = 'z')"),
+            ("behavi\\6fr: url(x)", "hex backslash in behavior (\\6f = 'o')"),
+        ],
+    )
+    def test_backslash_variants_blocked(self, gate, obfuscated_css, description):
+        """All backslash-obfuscated variants of dangerous keywords must be blocked."""
+        ok, err = gate.validate_css(obfuscated_css)
+        assert not ok, f"CSS bypass via {description}: '{obfuscated_css}' was not blocked"
+
+    # --- CSS comment splitting variants ---
+
+    @pytest.mark.parametrize(
+        "obfuscated_css,description",
+        [
+            ("ur/**/l(https://evil.com)", "comment-split url()"),
+            ("ex/**/pression(alert(1))", "comment-split expression()"),
+            ("@im/**/port 'x.css';", "comment-split @import"),
+            ("@me/**/dia screen { }", "comment-split @media"),
+            ("be/**/havior: url(x)", "comment-split behavior"),
+            ("-moz-/**/binding: url(x)", "comment-split -moz-binding"),
+        ],
+    )
+    def test_comment_split_variants_blocked(self, gate, obfuscated_css, description):
+        """All comment-split variants of dangerous keywords must be blocked."""
+        ok, err = gate.validate_css(obfuscated_css)
+        assert not ok, f"CSS bypass via {description}: '{obfuscated_css}' was not blocked"
+
+    # --- Zero-width/bidi char variants in XSS strings ---
+
+    @pytest.mark.parametrize(
+        "invisible_char,char_name",
+        [
+            ("\u200b", "ZWSP"),
+            ("\u200c", "ZWNJ"),
+            ("\u200d", "ZWJ"),
+            ("\u200e", "LRM"),
+            ("\u200f", "RLM"),
+            ("\ufeff", "BOM"),
+            ("\u00ad", "Soft Hyphen"),
+            ("\u2060", "Word Joiner"),
+            ("\u180e", "MVS"),
+            ("\u202a", "LRE"),
+            ("\u202b", "RLE"),
+            ("\u202c", "PDF"),
+            ("\u202d", "LRO"),
+            ("\u202e", "RLO"),
+            ("\u2066", "LRI"),
+            ("\u2067", "RLI"),
+            ("\u2068", "FSI"),
+            ("\u2069", "PDI"),
+            ("\u206a", "ISS"),
+            ("\u206b", "ASS"),
+            ("\u206c", "IAFS"),
+            ("\u206d", "AAFS"),
+            ("\u206e", "NADS"),
+            ("\u206f", "NODS"),
+            ("\x00", "NULL"),
+        ],
+    )
+    def test_invisible_char_in_xss_keyword_blocked(self, gate, invisible_char, char_name):
+        """Every zero-width/bidi/invisible char inserted in 'javascript:' must be caught."""
+        # Insert the invisible char in the middle of 'javascript:'
+        payload = f"java{invisible_char}script:alert(1)"
+        state = {"data": {"sections": [{"type": "text", "content": payload}]}}
+        ok, err, _ = gate.validate_state(json.dumps(state))
+        assert not ok, f"Zero-width char {char_name} (U+{ord(invisible_char):04X}) in 'javascript:' was not detected"
+
+    # --- Mixed-case + encoding combinations ---
+
+    def test_clean_css_passes_fuzzer(self, gate):
+        """Verify the fuzzer doesn't have false positives on safe CSS."""
+        safe_samples = [
+            "div { color: red; }",
+            ".btn { padding: 8px 16px; border-radius: 4px; }",
+            "#content .card { margin: 1rem; }",
+            "h1, h2, h3 { font-weight: bold; }",
+            "div > p + span { opacity: 0.5; }",
+        ]
+        for css in safe_samples:
+            ok, err = gate.validate_css(css)
+            assert ok, f"Safe CSS was falsely rejected: '{css}' — {err}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURAL GATE: CLIENT-SERVER PATTERN SYNC
+# Programmatically verifies that DANGEROUS_CSS_PATTERNS (Python) and
+# DANGEROUS_CSS_RE (JavaScript) block the same constructs.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestClientServerPatternSync:
+    """Structural gate ensuring server and client CSS pattern lists stay in sync.
+
+    This prevents category-B failures (client-server desync) by extracting both
+    pattern lists from source and asserting semantic equivalence. If you add a
+    pattern server-side, this test WILL fail until you add it client-side too.
+    """
+
+    _GATE_PATH = Path(__file__).resolve().parent.parent / "security_gate.py"
+    _UTILS_PATH = Path(__file__).resolve().parent.parent.parent / "assets" / "apps" / "dynamic" / "utils.js"
+
+    def _count_server_patterns(self) -> int:
+        """Count entries in DANGEROUS_CSS_PATTERNS by finding the list bounds."""
+        src = self._GATE_PATH.read_text()
+        # Find the list between 'DANGEROUS_CSS_PATTERNS = [' and ']'
+        import re as _re
+
+        match = _re.search(r"DANGEROUS_CSS_PATTERNS\s*=\s*\[(.+?)\]", src, _re.DOTALL)
+        assert match, "Could not find DANGEROUS_CSS_PATTERNS in security_gate.py"
+        block = match.group(1)
+        return block.count("re.compile(")
+
+    def _count_client_patterns(self) -> int:
+        """Count entries in DANGEROUS_CSS_RE array."""
+        src = self._UTILS_PATH.read_text()
+        import re as _re
+
+        match = _re.search(r"DANGEROUS_CSS_RE\s*=\s*\[(.+?)\];", src, _re.DOTALL)
+        assert match, "Could not find DANGEROUS_CSS_RE in utils.js"
+        block = match.group(1)
+        # Count array entries by counting lines that start with a / regex literal
+        # (strip comments first by removing everything after //)
+        count = 0
+        for line in block.split("\n"):
+            stripped = line.strip()
+            # Skip empty lines and pure comment lines
+            if not stripped or stripped.startswith("//"):
+                continue
+            # A regex literal entry starts with /
+            if stripped.startswith("/"):
+                count += 1
+        return count
+
+    def test_pattern_count_matches(self):
+        """Server and client must have the same number of CSS patterns."""
+        server_count = self._count_server_patterns()
+        client_count = self._count_client_patterns()
+        assert server_count == client_count, (
+            f"CSS pattern desync! Server has {server_count} patterns, "
+            f"client has {client_count}. Add missing patterns to the other side."
+        )
+
+    @pytest.mark.parametrize(
+        "test_css",
+        [
+            "expression(alert(1))",
+            "-moz-binding: url(x)",
+            "behavior: url(x)",
+            "@import 'x.css'",
+            "@charset 'utf-8'",
+            "@namespace svg url(x)",
+            "@font-face { }",
+            "@keyframes spin { }",
+            "@supports (display: grid) { }",
+            "@layer base { }",
+            "@media screen { }",
+            "url(https://evil.com)",
+            "div { content: '\\6a'; }",
+            "/* comment */",
+        ],
+    )
+    def test_server_blocks_canonical_construct(self, gate, test_css):
+        """Every canonical dangerous CSS construct must be blocked server-side."""
+        ok, err = gate.validate_css(test_css)
+        assert not ok, f"Server FAILED to block: '{test_css}'"
+
+    @pytest.mark.parametrize(
+        "test_css",
+        [
+            "expression(alert(1))",
+            "-moz-binding: url(x)",
+            "behavior: url(x)",
+            "@import 'x.css'",
+            "@charset 'utf-8'",
+            "@namespace svg url(x)",
+            "@font-face { }",
+            "@keyframes spin { }",
+            "@supports (display: grid) { }",
+            "@layer base { }",
+            "@media screen { }",
+            "url(https://evil.com)",
+            "div { content: '\\6a'; }",
+            "/* comment */",
+        ],
+    )
+    def test_client_blocks_canonical_construct(self, test_css):
+        """Every canonical dangerous CSS construct must also be blocked client-side."""
+        import re as _re
+
+        src = self._UTILS_PATH.read_text()
+        match = _re.search(r"DANGEROUS_CSS_RE\s*=\s*\[(.+?)\];", src, _re.DOTALL)
+        assert match
+        block = match.group(1)
+        # Strip JS line comments before extracting regex patterns —
+        # '//' in comments creates false regex delimiter matches.
+        cleaned_lines = []
+        for line in block.split("\n"):
+            # Remove trailing // comments (but not inside regex like /\/\*/)
+            stripped = _re.sub(r"\s*//[^/].*$", "", line)
+            cleaned_lines.append(stripped)
+        cleaned_block = "\n".join(cleaned_lines)
+        # Handle backslash escapes inside JS regexes (e.g. /\/\*/ has escaped /)
+        patterns = _re.findall(r"/((?:\\.|[^/\\])+)/([igm]*)", cleaned_block)
+
+        blocked = False
+        for pat_str, flags in patterns:
+            re_flags = 0
+            if "i" in flags:
+                re_flags |= _re.IGNORECASE
+            # JS regex → Python regex: minimal conversion
+            py_pattern = pat_str.replace("\\/", "/")
+            try:
+                if _re.search(py_pattern, test_css, re_flags):
+                    blocked = True
+                    break
+            except _re.error:
+                continue
+
+        assert blocked, f"Client FAILED to block: '{test_css}'"

@@ -10,7 +10,7 @@ scripts/              Python source (NOT src/)
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (1700+ tests: 1665 unit + 32 BDD + 55 E2E)
+  tests/              pytest suite (1800+ tests: 1787 unit + 32 BDD + 55 E2E)
     conftest.py       Shared fixtures (gate, session_keys, nonce_tracker, E2E Playwright)
     features/         BDD feature files (Gherkin scenarios)
     steps/            BDD step definitions (pytest-bdd)
@@ -140,6 +140,21 @@ Feature files in `scripts/tests/features/`, step definitions in `scripts/tests/s
 - `stale_server.feature` (5) — tool rejection, host notification
 - `cli_lifecycle.feature` (4) — SIGUSR1, status, PID files
 - `installation.feature` (4) — version detection, METADATA reading
+
+### Structural Testing Gates
+
+Six automated gate test classes prevent regression categories, not just individual bugs:
+
+| Gate | Class | File | What It Catches |
+|------|-------|------|-----------------|
+| CSS Bypass Fuzzer | `TestCSSBypassFuzzer` | `test_security_gate.py` | Obfuscated CSS variants (backslash, comment-split, invisible chars) |
+| Client-Server Sync | `TestClientServerPatternSync` | `test_security_gate.py` | Pattern count mismatch between `DANGEROUS_CSS_PATTERNS` (Python) and `DANGEROUS_CSS_RE` (JS) |
+| Crypto Invariants | `TestCryptoSecurityInvariants` | `test_crypto_utils.py` | Domain separation, token rejection, HMAC round-trip, tamper detection |
+| Stale Crypto Lint | `TestStaleCryptoPatternLint` | `test_crypto_utils.py` | Test files with `(var + var).encode("utf-8")` missing `\x00` delimiter |
+| Input Channel Registry | `TestInputChannelRegistry` | `test_webview_server.py` | Missing or changed limit constants across all 17 input channels |
+| Deployment Security | `TestDeploymentSecurity` | `test_webview_server.py` | Umask patterns, trivial token guard, wall-clock usage in security code |
+
+When adding new CSS patterns, crypto constructs, or input limits, the corresponding gate test will fail if the change isn't propagated everywhere.
 
 ### Hot-Reload Architecture
 
