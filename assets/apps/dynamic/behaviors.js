@@ -54,7 +54,7 @@
   // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
   function safeQuery(attr, value) {
     // Use CSS.escape() when available to prevent selector injection via crafted keys
-    var escaped = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
+    var escaped = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/([\\"'\[\](){}|^$+*.?:#>~!])/g, "\\$&");
     return document.querySelector("[" + attr + '="' + escaped + '"]');
   }
 

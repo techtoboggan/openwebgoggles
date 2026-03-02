@@ -182,6 +182,9 @@ class SecurityGate:
         re.compile(r"@charset", re.IGNORECASE),  # Encoding tricks
         re.compile(r"@namespace", re.IGNORECASE),  # Parsing context override
         re.compile(r"@font-face", re.IGNORECASE),  # Font exfiltration via unicode-range
+        re.compile(r"@keyframes", re.IGNORECASE),  # Global animation names bypass CSS scoping
+        re.compile(r"@supports", re.IGNORECASE),  # Feature queries can probe browser state
+        re.compile(r"@layer", re.IGNORECASE),  # Cascade layer manipulation
         re.compile(r"url\s*\(", re.IGNORECASE),  # Block ALL url() — prevents data exfiltration via http(s)
         re.compile(r"\\u00[0-9a-fA-F]{2}"),  # Unicode escape obfuscation
         re.compile(r"\\[0-9a-fA-F]{1,6}"),  # CSS hex escape obfuscation
@@ -302,9 +305,9 @@ class SecurityGate:
         if msg_fmt and msg_fmt not in self.ALLOWED_FORMATS:
             return False, f"Invalid message_format: {msg_fmt!r}", {}
 
-        # 5. Scan all strings for XSS patterns (skip custom_css — validated separately)
-        state_for_xss = {k: v for k, v in state.items() if k != "custom_css"}
-        xss_warnings = self._scan_xss(state_for_xss)
+        # 5. Scan all strings for XSS patterns (including custom_css — CSS validation
+        # catches CSS-specific attacks, but XSS patterns like <script> must also be caught)
+        xss_warnings = self._scan_xss(state)
         if xss_warnings:
             return False, f"XSS pattern detected: {xss_warnings[0]}", {}
 
@@ -514,10 +517,10 @@ class SecurityGate:
                     return warnings  # one warning per value is enough
         elif isinstance(obj, dict):
             for k, v in obj.items():
-                warnings.extend(self._scan_xss(k, f"{path}.<key:{k[:20]}>"))
+                warnings.extend(self._scan_xss(k, f"{path}.<key:{k[:50]}>"))
                 if warnings:
                     return warnings
-                warnings.extend(self._scan_xss(v, f"{path}.{k}"))
+                warnings.extend(self._scan_xss(v, f"{path}.{k[:50]}"))
                 if warnings:
                     return warnings
         elif isinstance(obj, list):
@@ -684,12 +687,12 @@ class SecurityGate:
 
         min_len = field.get("minLength")
         if min_len is not None:
-            if not isinstance(min_len, int) or min_len < 0:
+            if isinstance(min_len, bool) or not isinstance(min_len, int) or min_len < 0:
                 return False, f"{path}.minLength must be a non-negative integer"
 
         max_len = field.get("maxLength")
         if max_len is not None:
-            if not isinstance(max_len, int) or max_len < 0:
+            if isinstance(max_len, bool) or not isinstance(max_len, int) or max_len < 0:
                 return False, f"{path}.maxLength must be a non-negative integer"
 
         for prop in ("min", "max"):
@@ -713,7 +716,7 @@ class SecurityGate:
         # Validate textarea rows
         rows = field.get("rows")
         if rows is not None:
-            if not isinstance(rows, int) or rows < 1 or rows > 50:
+            if isinstance(rows, bool) or not isinstance(rows, int) or rows < 1 or rows > 50:
                 return False, f"{path}.rows must be an integer 1-50"
 
         # Validate placeholder length
@@ -763,7 +766,7 @@ class SecurityGate:
                 if not isinstance(line, str):
                     return False, f"{prefix}.lines[{li}] must be a string"
             max_lines = sec.get("maxLines", 500)
-            if not isinstance(max_lines, int) or max_lines < 1 or max_lines > 10000:
+            if isinstance(max_lines, bool) or not isinstance(max_lines, int) or max_lines < 1 or max_lines > 10000:
                 return False, f"{prefix}.maxLines must be 1-10000"
 
         elif sec_type == "diff":
@@ -850,7 +853,7 @@ class SecurityGate:
                 if icon and (not isinstance(icon, str) or not self.KEY_PATTERN.match(icon)):
                     return False, f"{prefix}.cards[{ci}].icon: invalid"
             cols = sec.get("columns", 4)
-            if not isinstance(cols, int) or cols < 1 or cols > self.MAX_METRIC_COLUMNS:
+            if isinstance(cols, bool) or not isinstance(cols, int) or cols < 1 or cols > self.MAX_METRIC_COLUMNS:
                 return False, f"{prefix}.columns must be 1-{self.MAX_METRIC_COLUMNS}"
 
         elif sec_type == "chart":
@@ -912,10 +915,10 @@ class SecurityGate:
             if not isinstance(options, dict):
                 return False, f"{prefix}.options must be an object"
             w = options.get("width")
-            if w is not None and (not isinstance(w, int) or w < 50 or w > self.MAX_CHART_WIDTH):
+            if w is not None and (isinstance(w, bool) or not isinstance(w, int) or w < 50 or w > self.MAX_CHART_WIDTH):
                 return False, f"{prefix}.options.width: must be 50-{self.MAX_CHART_WIDTH}"
             h = options.get("height")
-            if h is not None and (not isinstance(h, int) or h < 50 or h > self.MAX_CHART_HEIGHT):
+            if h is not None and (isinstance(h, bool) or not isinstance(h, int) or h < 50 or h > self.MAX_CHART_HEIGHT):
                 return False, f"{prefix}.options.height: must be 50-{self.MAX_CHART_HEIGHT}"
             for bool_opt in ("showLegend", "showGrid", "showValues", "stacked"):
                 val = options.get(bool_opt)

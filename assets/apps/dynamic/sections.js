@@ -456,7 +456,7 @@
 
   // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
   function _esc(value) {
-    return (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
+    return (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/([\\"'\[\](){}|^$+*.?:#>~!])/g, "\\$&");
   }
 
   // ─── Tab/table event binding (called from app.js bindEvents) ────────────────

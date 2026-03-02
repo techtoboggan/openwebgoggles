@@ -1401,3 +1401,55 @@ class TestSVGSanitizationStrategy:
         assert "cleanNode(child, inSVG || " in src or "cleanNode(child, inSVG ||" in src, (
             "cleanNode must propagate SVG context to children"
         )
+
+
+class TestCSSEscapeFallbackRegex:
+    """Regression test: CSS.escape fallback regex must be valid JavaScript.
+
+    CS-4 introduced an expanded regex for CSS selector escaping in browsers
+    without CSS.escape(). A malformed regex (e.g. \\\\] prematurely closing
+    the char class) causes a SyntaxError that breaks the entire renderer.
+    """
+
+    JS_FILES_WITH_CSS_ESCAPE_FALLBACK = [
+        "assets/apps/dynamic/sections.js",
+        "assets/apps/dynamic/validation.js",
+        "assets/apps/dynamic/behaviors.js",
+    ]
+
+    @staticmethod
+    def _read_js(rel_path: str) -> str:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent.parent
+        return (root / rel_path).read_text()
+
+    @pytest.mark.parametrize("js_file", JS_FILES_WITH_CSS_ESCAPE_FALLBACK)
+    def test_fallback_regex_is_valid_js(self, js_file):
+        """The CSS.escape fallback regex must parse without SyntaxError."""
+        import subprocess
+
+        root = Path(__file__).resolve().parent.parent.parent
+        result = subprocess.run(
+            ["node", "--check", str(root / js_file)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"{js_file} has a JS syntax error:\n{result.stderr}"
+
+    @pytest.mark.parametrize("js_file", JS_FILES_WITH_CSS_ESCAPE_FALLBACK)
+    def test_fallback_regex_escapes_css_special_chars(self, js_file):
+        """The regex char class must include key CSS selector special characters."""
+        src = self._read_js(js_file)
+        # Find the fallback regex (after CSS.escape check)
+        import re as _re
+
+        match = _re.search(r"replace\(/(.+?)/g", src)
+        assert match, f"No fallback regex found in {js_file}"
+        regex_str = match.group(1)
+        # Must include brackets, backslash, quotes (critical for selector injection)
+        for char_desc, char in [("backslash", "\\\\"), ("open-bracket", "\\["), ("close-bracket", "\\]")]:
+            assert char in regex_str or char.replace("\\\\", "\\") in regex_str, (
+                f"Fallback regex in {js_file} missing {char_desc} escape"
+            )

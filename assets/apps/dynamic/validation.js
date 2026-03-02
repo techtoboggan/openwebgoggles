@@ -22,7 +22,9 @@
     // Pattern (regex) — only for string values
     // Defense-in-depth: skip regex on oversized patterns/values to prevent ReDoS
     if (config.pattern && typeof value === "string") {
-      if (config.pattern.length <= 500 && value.length <= 10000) {
+      // Defense-in-depth: skip ReDoS-prone patterns (mirrors behaviors.js guard)
+      var NESTED_QUANTIFIER = /(\+|\*|\{)\s*\)\s*(\+|\*|\{)/;
+      if (config.pattern.length <= 500 && value.length <= 10000 && !NESTED_QUANTIFIER.test(config.pattern)) {
         try {
           var re = new RegExp(config.pattern);
           if (!re.test(value)) {
@@ -74,7 +76,7 @@
 
   // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
   function _safeQuery(attr, value) {
-    var escaped = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
+    var escaped = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/([\\"'\[\](){}|^$+*.?:#>~!])/g, "\\$&");
     return document.querySelector("[" + attr + '="' + escaped + '"]');
   }
 

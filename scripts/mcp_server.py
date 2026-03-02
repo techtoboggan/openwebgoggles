@@ -553,8 +553,10 @@ class WebviewSession:
         # Pathlib resolves `Path(base) / "/abs"` to `/abs` on Unix, so an absolute
         # app_name would silently escape the assets directory.
         _app_path = Path(app_name)
-        if _app_path.is_absolute() or ".." in _app_path.parts:
-            raise FileNotFoundError(f"App '{app_name}' not found. App names must be simple names (no '/' or '..').")
+        if _app_path.is_absolute() or ".." in _app_path.parts or app_name.startswith("."):
+            raise FileNotFoundError(
+                f"App '{app_name}' not found. App names must be simple names (no '/', '..', or leading '.')."
+            )
 
         assets_dir = self._find_assets_dir()
         repo_root = Path(__file__).resolve().parent.parent

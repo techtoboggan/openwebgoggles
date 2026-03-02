@@ -1633,9 +1633,10 @@ class TestValidateCSS:
         ok, err = gate.validate_css("@media (max-width: 600px) { .item { padding: 4px; } }")
         assert ok, f"@media should pass: {err}"
 
-    def test_allows_keyframes(self, gate):
+    def test_blocks_keyframes(self, gate):
         ok, err = gate.validate_css("@keyframes fade { from { opacity: 0; } to { opacity: 1; } }")
-        assert ok, f"@keyframes should pass: {err}"
+        assert not ok, "@keyframes should be blocked (global animation names bypass CSS scoping)"
+        assert "keyframes" in err.lower()
 
     def test_allows_multiple_selectors(self, gate):
         css = ".a { color: red; } .b { padding: 10px; } .c > .d { margin: 0; }"
@@ -1868,14 +1869,12 @@ class TestCustomCSSInState:
         assert not ok
         assert "className" in err
 
-    def test_custom_css_not_scanned_by_xss(self, gate):
-        """custom_css is validated by validate_css(), not by XSS scanner.
-        This ensures CSS containing e.g. angle-bracket-like patterns in comments
-        doesn't trigger the HTML XSS scanner."""
-        # This CSS is safe but would trigger XSS scanner if scanned as HTML
+    def test_custom_css_scanned_by_xss_and_css_validator(self, gate):
+        """custom_css is validated by both validate_css() AND XSS scanner.
+        Safe CSS that contains no XSS patterns should pass both checks."""
         raw = make_state({"custom_css": ".my-class { color: red; } /* valid css */"})
         ok, err, _ = gate.validate_state(raw)
-        assert ok, f"Safe custom_css should not be blocked by XSS scanner: {err}"
+        assert ok, f"Safe custom_css should pass both CSS and XSS validation: {err}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

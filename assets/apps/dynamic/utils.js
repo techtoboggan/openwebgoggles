@@ -39,6 +39,9 @@
     /@charset/i,
     /@namespace/i,
     /@font-face/i,                   // Font exfiltration via unicode-range
+    /@keyframes/i,                   // Global animation names bypass CSS scoping
+    /@supports/i,                    // Feature queries can probe browser state
+    /@layer/i,                       // Cascade layer manipulation
     /url\s*\(/i,                     // Block ALL url() — prevents data exfiltration
     /\\u00[0-9a-fA-F]{2}/,          // Unicode escape obfuscation
     /\\[0-9a-fA-F]{1,6}/,           // CSS hex escape obfuscation
@@ -177,7 +180,11 @@
           var name = attrs[j].name.toLowerCase();
           if (EVENT_ATTR_RE.test(name)) {
             child.removeAttribute(attrs[j].name);
-          } else if (!inSVG && (name === "id" || name === "name")) {
+          } else if (!inSVG && name === "style") {
+            // Strip inline styles (UI overlay, position:fixed attacks).
+            // SVG elements need style for fill/stroke from charts.js.
+            child.removeAttribute(attrs[j].name);
+          } else if (name === "id" || name === "name") {
             child.removeAttribute(attrs[j].name);
           } else if (name === "href" || name === "src" || name === "action" || name === "formaction" || name === "xlink:href") {
             var val = attrs[j].value;

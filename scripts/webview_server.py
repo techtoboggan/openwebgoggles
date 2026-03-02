@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import copy
 import hmac
 import json
 import logging
@@ -152,6 +151,14 @@ class DataContract:
                 changed.append(name)
             self._mtimes[name] = mtime
         return changed
+
+
+def _strip_token(data: dict) -> dict:
+    """Remove session token from a manifest dict (deep copy). Consistent across HTTP/WS paths."""
+    safe = json.loads(json.dumps(data))
+    if "session" in safe and "token" in safe["session"]:
+        del safe["session"]["token"]
+    return safe
 
 
 class WebviewHTTPHandler:
@@ -316,9 +323,7 @@ class WebviewHTTPHandler:
                 return
             data = self.contract.get_manifest()
             if data:
-                safe_data = json.loads(json.dumps(data))  # deep copy
-                if "session" in safe_data and "token" in safe_data["session"]:
-                    del safe_data["session"]["token"]
+                safe_data = _strip_token(data)
                 await self._send_response(writer, 200, safe_data)
             else:
                 await self._send_response(writer, 404, {"error": "manifest.json not found"})
@@ -860,9 +865,7 @@ class WebviewServer:
                     data = self.contract.get_manifest()
                     if data:
                         # Strip session token before broadcasting (same as HTTP endpoint)
-                        safe_data = copy.deepcopy(data)
-                        if "session" in safe_data and "token" in safe_data["session"]:
-                            safe_data["session"]["token"] = "REDACTED"  # noqa: S105 — redacting, not setting a password
+                        safe_data = _strip_token(data)
                         await self._broadcast({"type": "manifest_updated", "data": safe_data})
                         last_broadcast["manifest"] = time.time()
                 elif name == "actions":
