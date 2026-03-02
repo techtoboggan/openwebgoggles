@@ -7860,3 +7860,139 @@ class TestClientServerPatternSync:
                 continue
 
         assert blocked, f"Client FAILED to block: '{test_css}'"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M11: SecurityGate — uncovered validation branches in _validate_section_specific
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSectionSpecificBranches:
+    """Exercise uncovered branches in _validate_section_specific."""
+
+    @staticmethod
+    def _make_section_state(sections):
+        """Build a minimal valid state with the given sections (no 'ui' wrapper)."""
+        return json.dumps(
+            {
+                "version": 1,
+                "status": "ready",
+                "title": "Test",
+                "data": {"sections": sections},
+            }
+        )
+
+    def test_diff_with_non_string_content(self, gate):
+        """Diff section with non-string content should be rejected."""
+        state = self._make_section_state([{"type": "diff", "content": 12345}])
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "content must be a string" in err
+
+    def test_diff_with_invalid_language(self, gate):
+        """Diff section with invalid language (special chars) should be rejected."""
+        state = self._make_section_state(
+            [
+                {
+                    "type": "diff",
+                    "content": "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new",
+                    "language": "python;alert(1)",
+                }
+            ]
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "language" in err
+
+    def test_diff_with_valid_language(self, gate):
+        """Diff section with valid language should pass."""
+        state = self._make_section_state(
+            [
+                {
+                    "type": "diff",
+                    "content": "--- a/file\n+++ b/file",
+                    "language": "python",
+                }
+            ]
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Valid diff should pass: {err}"
+
+    def test_chart_missing_both_data_and_columns(self, gate):
+        """Chart section with neither data nor columns should be rejected."""
+        state = self._make_section_state([{"type": "chart", "chartType": "bar"}])
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "requires either data or columns" in err
+
+    def test_chart_tabular_with_zero_columns(self, gate):
+        """Chart section with empty columns list should be rejected."""
+        state = self._make_section_state([{"type": "chart", "chartType": "bar", "columns": [], "rows": [{"x": 1}]}])
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "at least 1 column" in err
+
+    def test_tabs_with_invalid_nested_tab_id(self, gate):
+        """Tabs section with invalid tab ID should be rejected."""
+        state = self._make_section_state(
+            [
+                {
+                    "type": "tabs",
+                    "tabs": [
+                        {
+                            "id": "invalid id with spaces",
+                            "label": "Tab 1",
+                            "sections": [{"type": "text", "content": "Hello"}],
+                        }
+                    ],
+                }
+            ]
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "id" in err.lower()
+
+    def test_tabs_with_valid_structure(self, gate):
+        """Tabs section with valid tab ID and nested sections should pass."""
+        state = self._make_section_state(
+            [
+                {
+                    "type": "tabs",
+                    "tabs": [
+                        {
+                            "id": "tab-1",
+                            "label": "Tab 1",
+                            "sections": [{"type": "text", "content": "Hello from tab 1"}],
+                        },
+                        {
+                            "id": "tab-2",
+                            "label": "Tab 2",
+                            "sections": [{"type": "text", "content": "Hello from tab 2"}],
+                        },
+                    ],
+                }
+            ]
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert ok, f"Valid tabs should pass: {err}"
+
+    def test_metric_card_sparkline_non_number(self, gate):
+        """Metric card with non-number sparkline values should be rejected."""
+        state = self._make_section_state(
+            [
+                {
+                    "type": "metric",
+                    "cards": [
+                        {
+                            "label": "Revenue",
+                            "value": 1000,
+                            "sparkline": [1, 2, "bad", 4],
+                        }
+                    ],
+                }
+            ]
+        )
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "sparkline" in err
+        assert "number" in err

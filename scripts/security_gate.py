@@ -602,6 +602,7 @@ class SecurityGate:
             if isinstance(fields, list):
                 if len(fields) > self.MAX_FIELDS_PER_SECTION:
                     return False, f"sections[{i}]: too many fields ({len(fields)})"
+                seen_keys: set[str] = set()
                 for j, f in enumerate(fields):
                     if not isinstance(f, dict):
                         continue
@@ -614,6 +615,14 @@ class SecurityGate:
                             False,
                             f"sections[{i}].fields[{j}].key: invalid key {key!r} (must match {self.KEY_PATTERN.pattern})",
                         )
+                    # Reject duplicate field keys within the same form section
+                    if key:
+                        if key in seen_keys:
+                            return (
+                                False,
+                                f"sections[{i}].fields[{j}].key: duplicate key {key!r}",
+                            )
+                        seen_keys.add(key)
                     # Check field format
                     field_fmt = f.get("format", "")
                     if field_fmt and field_fmt not in self.ALLOWED_FORMATS:

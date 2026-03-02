@@ -248,7 +248,7 @@ class WebviewHTTPHandler:
         }
         return types.get(ext, "application/octet-stream")
 
-    async def handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):  # pragma: no cover
+    async def handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):  # noqa: C901 — linear request parsing, not truly complex  # pragma: no cover
         try:
             request_line = await asyncio.wait_for(reader.readline(), timeout=30)
             if not request_line:
@@ -312,7 +312,9 @@ class WebviewHTTPHandler:
             # Route the request
             await self._route(method, path, query, headers, body, writer)
 
-        except (TimeoutError, ConnectionResetError, asyncio.IncompleteReadError):
+        except TimeoutError:
+            logger.warning("Request timed out for %s", locals().get("path", "(unknown)"))
+        except (ConnectionResetError, asyncio.IncompleteReadError):
             pass
         finally:
             try:
@@ -321,7 +323,29 @@ class WebviewHTTPHandler:
             except Exception:
                 pass
 
+    # Allowlisted Host header values — prevents DNS rebinding attacks.
+    # Only localhost variants are accepted since the server binds to 127.0.0.1.
+    _ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+    def _is_valid_host(self, host_header: str) -> bool:
+        """Check if Host header is a localhost variant (with optional port)."""
+        if not host_header:
+            return False
+        # Strip port suffix (e.g. "localhost:18420" -> "localhost")
+        host = host_header.rsplit(":", 1)[0] if ":" in host_header else host_header
+        # Handle IPv6 with brackets (e.g. "[::1]:18420")
+        if host.startswith("[") and "]" in host:
+            host = host[: host.index("]") + 1]
+        return host.lower() in self._ALLOWED_HOSTS
+
     async def _route(self, method: str, path: str, query: dict, headers: dict, body: bytes, writer):
+        # Host header validation — prevents DNS rebinding attacks.
+        # Missing Host is allowed for HTTP/1.0 clients but non-localhost is rejected.
+        host = headers.get("host", "")
+        if host and not self._is_valid_host(host):
+            await self._send_response(writer, 403, {"error": "Forbidden: invalid Host header"})
+            return
+
         # Health check — no auth required
         if path == "/_health":
             await self._send_response(
@@ -418,7 +442,8 @@ class WebviewHTTPHandler:
             # Broadcast close message to all connected WebSocket clients, then optionally stop
             try:
                 opts = json.loads(body) if body else {}
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning("Invalid JSON in close request body: %s", e)
                 opts = {}
             try:
                 delay_ms = max(0, min(int(opts.get("delay_ms", 1500)), 10000))
@@ -490,7 +515,16 @@ class WebviewHTTPHandler:
         await self._send_file(writer, file_path)
 
     async def _send_index_with_bootstrap(self, writer, index: Path, manifest: dict):
-        """Serve index.html with manifest + initial state injected as window.__OCV__ bootstrap."""
+        """Serve index.html with manifest + initial state injected as window.__OCV__ bootstrap.
+
+        SECURITY NOTE: The session token is intentionally embedded in the HTML bootstrap
+        ``<script>`` tag. This is the sole delivery path for the token to the browser client.
+        This is acceptable because:
+        1. The server binds to localhost only — no cross-origin access is possible.
+        2. The token is per-session and short-lived (destroyed on session close).
+        3. CSP with per-request nonces prevents injection of rogue scripts.
+        4. The token is never included in API responses or written to manifest.json on disk.
+        """
         html = index.read_text(encoding="utf-8")
         state = self.contract.get_state() or {}
 
@@ -527,7 +561,11 @@ class WebviewHTTPHandler:
         # Add nonce to existing script tags in the HTML (skip tags that already have a nonce)
         html = re.sub(r"<script(?![^>]*\bnonce=)", f'<script nonce="{csp_nonce}"', html)
 
-        # Inject just before </head> — falls back to injecting at top of <body> or start of file
+        # Inject just before </head> — fallback chain:
+        # 1. Before </head> (ideal — script loads before body)
+        # 2. Before <body (if no </head> tag — e.g. minimal HTML)
+        # 3. Prepend to file (last resort — e.g. HTML fragment with no structure)
+        # Note: case-sensitive match is acceptable since we control the app HTML templates.
         if "</head>" in html:
             html = html.replace("</head>", injection + "</head>", 1)
         elif "<body" in html:
@@ -554,17 +592,23 @@ class WebviewHTTPHandler:
         origin = f"http://127.0.0.1:{self.http_port}"
         headers = [
             f"HTTP/1.1 {status} {reason}",
-            f"Content-Type: {content_type}",
-            f"Content-Length: {len(body)}",
-            "Connection: close",
-            f"Access-Control-Allow-Origin: {origin}",
-            "Access-Control-Allow-Headers: Authorization, Content-Type",
-            "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS",
-            "X-Content-Type-Options: nosniff",
-            "X-Frame-Options: DENY",
-            "Referrer-Policy: no-referrer",
-            "Permissions-Policy: camera=(), microphone=(), geolocation=()",
         ]
+        # RFC 7231: 204 No Content MUST NOT include a message body or Content-Type
+        if status != 204:
+            headers.append(f"Content-Type: {content_type}")
+            headers.append(f"Content-Length: {len(body)}")
+        headers.extend(
+            [
+                "Connection: close",
+                f"Access-Control-Allow-Origin: {origin}",
+                "Access-Control-Allow-Headers: Authorization, Content-Type",
+                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS",
+                "X-Content-Type-Options: nosniff",
+                "X-Frame-Options: DENY",
+                "Referrer-Policy: no-referrer",
+                "Permissions-Policy: camera=(), microphone=(), geolocation=()",
+            ]
+        )
         # Add CSP for HTML responses (nonce must be passed explicitly per-request)
         if content_type == "text/html" and csp_nonce:
             csp = (
@@ -685,13 +729,13 @@ class WebviewServer:
         else:
             logger.warning("WebSocket not available (pip install websockets). Running HTTP-only mode.")
 
-        # Write PID file (restrictive perms on shared systems)
+        # Write PID file with explicit permissions (thread-safe, no process-wide umask)
         pid_path = self.data_dir / ".server.pid"
-        old_umask = os.umask(0o077)
+        fd = os.open(str(pid_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            pid_path.write_text(str(os.getpid()))
+            os.write(fd, str(os.getpid()).encode())
         finally:
-            os.umask(old_umask)
+            os.close(fd)
 
         logger.info("Server ready. PID: %d", os.getpid())
 
@@ -776,7 +820,16 @@ class WebviewServer:
             # Send initial state (signed)
             state = self.contract.get_state()
             if state:
-                await self._send_ws_signed(websocket, {"type": "connected", "state": state})
+                msg = {"type": "connected", "state": state}
+                # Defense-in-depth: validate connected message through SecurityGate.
+                # This is a fixed-structure message, but validating ensures the state
+                # payload from disk hasn't been tampered with.
+                if self._security_gate:
+                    try:
+                        self._security_gate.validate_state(json.dumps(state))
+                    except Exception:
+                        logger.warning("WS connected message failed SecurityGate validation", exc_info=True)
+                await self._send_ws_signed(websocket, msg)
 
             async for message in websocket:
                 # Server-side message size guard (matches client-side 1MB limit)

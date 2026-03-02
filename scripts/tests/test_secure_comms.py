@@ -858,3 +858,108 @@ class TestCrossCuttingSecurity:
 
         start_source = inspect.getsource(webview_server.WebviewServer.start)
         assert "zero_key" in start_source
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# H12: NaCl fallback paths — when PyNaCl is unavailable
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNaClFallback:
+    """Test the HMAC-only fallback paths when PyNaCl is not installed."""
+
+    @pytest.mark.secure_comms
+    @pytest.mark.owasp_a02
+    def test_lazy_nacl_returns_none_when_unavailable(self):
+        """_lazy_nacl should return None when PyNaCl can't be imported."""
+        from unittest import mock
+
+        with mock.patch.dict("sys.modules", {"nacl": None, "nacl.signing": None, "nacl.encoding": None}):
+            # Force re-import path by patching the builtins import
+
+            import crypto_utils
+
+            original = crypto_utils._lazy_nacl
+
+            def _mocked_lazy_nacl():
+                try:
+                    import nacl.encoding  # noqa: F811
+                    import nacl.signing  # noqa: F811
+
+                    return nacl
+                except (ImportError, ModuleNotFoundError):
+                    return None
+
+            crypto_utils._lazy_nacl = _mocked_lazy_nacl
+            try:
+                result = crypto_utils._lazy_nacl()
+                assert result is None
+            finally:
+                crypto_utils._lazy_nacl = original
+
+    @pytest.mark.secure_comms
+    @pytest.mark.owasp_a02
+    def test_generate_keys_without_nacl(self):
+        """generate_session_keys should return HMAC-only keys when NaCl unavailable."""
+        from unittest import mock
+
+        with mock.patch("crypto_utils._lazy_nacl", return_value=None):
+            seed, pub_hex, verify_hex = generate_session_keys()
+
+        # In fallback mode, public/verify keys are empty strings
+        assert pub_hex == ""
+        assert verify_hex == ""
+        # Seed should be 32 bytes (SHA-256 of "hmac-signing-key:" + random)
+        assert len(seed) == 32
+        assert isinstance(seed, bytes)
+
+    @pytest.mark.secure_comms
+    @pytest.mark.owasp_a02
+    def test_sign_message_falls_back_to_hmac(self):
+        """sign_message should use HMAC-SHA256 when NaCl is unavailable."""
+        from unittest import mock
+
+        with mock.patch("crypto_utils._lazy_nacl", return_value=None):
+            seed, _, _ = generate_session_keys()
+            nonce = generate_nonce()
+            payload = '{"test": "data"}'
+            sig = sign_message(seed, payload, nonce)
+
+        # The signature should be a valid hex string
+        assert len(sig) == 64  # SHA-256 produces 32 bytes = 64 hex chars
+        # Verify it matches expected HMAC
+        import hmac as hmac_stdlib
+
+        message = (nonce + "\x00" + payload).encode("utf-8")
+        expected = hmac_stdlib.new(seed, message, hashlib.sha256).digest().hex()
+        assert sig == expected
+
+    @pytest.mark.secure_comms
+    @pytest.mark.owasp_a02
+    def test_fallback_keys_are_unique_per_session(self):
+        """Even in HMAC-only mode, each session must get unique keys."""
+        from unittest import mock
+
+        keys = set()
+        with mock.patch("crypto_utils._lazy_nacl", return_value=None):
+            for _ in range(50):
+                seed, _, _ = generate_session_keys()
+                keys.add(seed)
+        assert len(keys) == 50, "Each HMAC-only session key must be unique"
+
+    @pytest.mark.secure_comms
+    @pytest.mark.owasp_a02
+    def test_fallback_sign_and_verify_roundtrip(self):
+        """In HMAC-only mode, sign+verify should still work for browser→server."""
+        from unittest import mock
+
+        with mock.patch("crypto_utils._lazy_nacl", return_value=None):
+            seed, _, _ = generate_session_keys()
+            nonce = generate_nonce()
+            payload = '{"action":"approve"}'
+            sig = sign_message(seed, payload, nonce)
+
+        # Verify using the same key and HMAC logic
+        message = (nonce + "\x00" + payload).encode("utf-8")
+        expected = hmac_module.new(seed, message, hashlib.sha256).digest()
+        assert hmac_module.compare_digest(bytes.fromhex(sig), expected)

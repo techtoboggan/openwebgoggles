@@ -12,6 +12,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -942,3 +943,157 @@ class TestMergeStateValidator:
 
         result = session.merge_state({"title": "New"})
         assert result["title"] == "New"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# H3: wait_for_action internal (_-prefixed) action filtering
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWaitForActionInternalFilter:
+    """Verify wait_for_action filters out internal _-prefixed actions."""
+
+    def test_internal_action_filtered(self, tmp_path):
+        """_page_switch actions must not break the wait loop."""
+        data_dir = tmp_path / ".opencode" / "webview"
+        data_dir.mkdir(parents=True)
+
+        session = WebviewSession.__new__(WebviewSession)
+        session.data_dir = data_dir
+        session.POLL_INTERVAL = 0.02
+        session.PROGRESS_INTERVAL = 5.0
+        session.process = None
+
+        actions_path = data_dir / "actions.json"
+
+        # Write only an internal action — wait_for_action should skip it
+        internal_actions = {"actions": [{"action_id": "_page_switch", "type": "navigate", "value": "page2"}]}
+        actions_path.write_text(json.dumps(internal_actions))
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                # Short timeout so it returns None quickly
+                result = await session.wait_for_action(timeout=0.1)
+                return result
+
+            result = loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+        assert result is None, "Internal _page_switch action should not break the wait"
+
+    def test_real_action_returned(self, tmp_path):
+        """A real user action should be returned by wait_for_action."""
+        data_dir = tmp_path / ".opencode" / "webview"
+        data_dir.mkdir(parents=True)
+
+        session = WebviewSession.__new__(WebviewSession)
+        session.data_dir = data_dir
+        session.POLL_INTERVAL = 0.02
+        session.PROGRESS_INTERVAL = 5.0
+        session.process = None
+
+        actions_path = data_dir / "actions.json"
+
+        # Write a real user action
+        user_actions = {"actions": [{"action_id": "approve", "type": "approve", "value": True}]}
+        actions_path.write_text(json.dumps(user_actions))
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                return await session.wait_for_action(timeout=1.0)
+
+            result = loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+        assert result is not None
+        assert result["actions"][0]["action_id"] == "approve"
+
+    def test_mixed_internal_and_real_returns(self, tmp_path):
+        """When both internal and real actions exist, the real one is returned."""
+        data_dir = tmp_path / ".opencode" / "webview"
+        data_dir.mkdir(parents=True)
+
+        session = WebviewSession.__new__(WebviewSession)
+        session.data_dir = data_dir
+        session.POLL_INTERVAL = 0.02
+        session.PROGRESS_INTERVAL = 5.0
+        session.process = None
+
+        actions_path = data_dir / "actions.json"
+
+        mixed_actions = {
+            "actions": [
+                {"action_id": "_page_switch", "type": "navigate", "value": "page3"},
+                {"action_id": "submit", "type": "submit", "value": {"name": "test"}},
+            ]
+        }
+        actions_path.write_text(json.dumps(mixed_actions))
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                return await session.wait_for_action(timeout=1.0)
+
+            result = loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+        assert result is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M10: _acquire_lock retry exhaustion raises RuntimeError
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fcntl unavailable on Windows")
+class TestAcquireLockRetryExhaustion:
+    """Verify _acquire_lock raises RuntimeError after exhausting retries."""
+
+    def test_lock_retry_raises_runtime_error(self, tmp_path):
+        """When flock always fails, _acquire_lock should raise RuntimeError."""
+        data_dir = tmp_path / ".opencode" / "webview"
+        data_dir.mkdir(parents=True)
+
+        session = WebviewSession.__new__(WebviewSession)
+        session.data_dir = data_dir
+        session._lock_fd = None
+
+        with mock.patch.object(session, "_kill_stale_server"):
+            with mock.patch("fcntl.flock", side_effect=OSError("mock lock failure")):
+                with pytest.raises(RuntimeError, match="Cannot acquire webview lock"):
+                    session._acquire_lock()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M13: _expand_preset("log") preserves custom maxLines
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestExpandPresetMaxLines:
+    """Verify _expand_preset('log', ...) preserves custom maxLines."""
+
+    def test_custom_max_lines_preserved(self):
+        """maxLines=100 should appear in the expanded log preset."""
+        result = _expand_preset("log", {"lines": ["line1", "line2"], "maxLines": 100})
+        log_section = result["data"]["sections"][0]
+        assert log_section["maxLines"] == 100
+
+    def test_default_max_lines(self):
+        """Without maxLines, the default (500) should be used."""
+        result = _expand_preset("log", {"lines": ["a"]})
+        log_section = result["data"]["sections"][0]
+        assert log_section["maxLines"] == 500
+
+    def test_log_lines_passed_through(self):
+        """Lines should be passed through to the log section."""
+        lines = ["alpha", "beta", "gamma"]
+        result = _expand_preset("log", {"lines": lines})
+        assert result["data"]["sections"][0]["lines"] == lines

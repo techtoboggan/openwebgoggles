@@ -112,7 +112,7 @@ class TestNonceGeneration:
 
     @pytest.mark.owasp_a02
     def test_nonce_length(self):
-        """Nonce = 8 (timestamp) + 8 (random) + 8 (counter) = 24 bytes = 48 hex chars."""
+        """Nonce = 16 (random) + 8 (counter) = 24 bytes = 48 hex chars."""
         nonce = generate_nonce()
         assert len(nonce) == 48
 
@@ -124,20 +124,21 @@ class TestNonceGeneration:
         assert len(set(nonces)) == 10_000
 
     @pytest.mark.owasp_a02
-    def test_nonce_contains_timestamp(self):
-        """First 8 bytes encode the current time in ms."""
-        before = int(time.time() * 1000)
-        nonce = generate_nonce()
-        after = int(time.time() * 1000)
-        ts_bytes = bytes.fromhex(nonce[:16])
-        ts_ms = struct.unpack(">Q", ts_bytes)[0]
-        assert before <= ts_ms <= after + 1
+    def test_nonce_is_random_prefix(self):
+        """First 16 bytes are random (no wall-clock time leakage)."""
+        n1 = generate_nonce()
+        n2 = generate_nonce()
+        # Nonce format: random_16_bytes || counter_8_bytes = 48 hex chars
+        assert len(n1) == 48
+        # Random prefix (first 32 hex chars = 16 bytes) should differ between calls
+        assert n1[:32] != n2[:32]
 
     @pytest.mark.owasp_a02
     def test_nonce_counter_increments(self):
-        """Counter portion should increment monotonically."""
+        """Counter portion (last 8 bytes) should increment monotonically."""
         n1 = generate_nonce()
         n2 = generate_nonce()
+        # Counter is the last 16 hex chars (8 bytes) of the 48-char nonce
         c1 = struct.unpack(">Q", bytes.fromhex(n1[32:48]))[0]
         c2 = struct.unpack(">Q", bytes.fromhex(n2[32:48]))[0]
         assert c2 > c1

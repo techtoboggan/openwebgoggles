@@ -119,7 +119,12 @@ def _deep_merge(base: dict, override: dict, _depth: int = 0) -> None:
 
 
 def _expand_preset(preset: str, state: dict[str, Any]) -> dict[str, Any]:
-    """Expand a preset name into a full state schema, merging user overrides."""
+    """Expand a preset name into a full state schema, merging user overrides.
+
+    Template dicts (``base``) are dict literals constructed fresh on each call,
+    so ``_deep_merge()`` mutating them in place is safe — no shared state between
+    invocations.
+    """
     s = dict(state)  # shallow copy so we can pop
 
     if preset == "progress":
@@ -407,6 +412,12 @@ class WebviewSession:
                         stderr = self.process.stderr.read(500).decode(errors="replace")
                 except Exception:
                     pass
+                finally:
+                    # M3: Ensure stderr pipe is closed on failure to prevent fd leak
+                    try:
+                        self.process.stderr.close()
+                    except Exception:
+                        pass
             self.process.kill()
             self.process = None
             raise RuntimeError(f"Webview server failed to start: {stderr}")
@@ -415,7 +426,10 @@ class WebviewSession:
         # Close stderr pipe to prevent buffer deadlock (errors already reported via health check)
         if self.process and self.process.stderr:
             self.process.stderr.close()
-        atexit.register(self._atexit_cleanup)
+        global _atexit_registered
+        if not _atexit_registered:
+            atexit.register(self._atexit_cleanup)
+            _atexit_registered = True
 
         if self._open_browser_on_start:
             self._open_browser()
@@ -691,7 +705,12 @@ class WebviewSession:
 
     @staticmethod
     def _port_available(port: int) -> bool:
-        """Check if a TCP port is available to bind."""
+        """Check if a TCP port is available to bind.
+
+        TOCTOU note: The port may be claimed between this check and the
+        subprocess bind. The health check in ensure_started() catches this
+        case and raises RuntimeError, which the caller retries.
+        """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind(("127.0.0.1", port))
@@ -749,6 +768,9 @@ class WebviewSession:
                 opened = True
             except Exception:
                 self._chrome_process = None
+                # Clean up the temp directory created for Chrome's user data
+                if self._chrome_profile is not None:
+                    shutil.rmtree(self._chrome_profile, ignore_errors=True)
                 self._chrome_profile = None
 
         if not opened:
@@ -912,6 +934,7 @@ class WebviewSession:
 
 _session: WebviewSession | None = None
 _session_lock: asyncio.Lock | None = None
+_atexit_registered: bool = False
 
 
 def _get_session_lock() -> asyncio.Lock:
@@ -945,6 +968,12 @@ def _get_tool_calls_lock() -> asyncio.Lock:
     return _active_tool_calls_lock
 
 
+# Note: _reload_pending and _signal_reload_requested are plain bools written from
+# a signal handler thread and read from the asyncio loop. This relies on CPython's
+# GIL making bool assignment atomic (a single STORE_NAME bytecode). This is safe in
+# practice on CPython but technically implementation-defined. The proper fix would be
+# a self-pipe (os.write + asyncio.add_reader), but the GIL guarantee is sufficient
+# for this use case and avoids unnecessary complexity.
 _reload_pending: bool = False
 _reload_task: asyncio.Task | None = None
 _RELOAD_CHECK_INTERVAL = 30  # seconds
@@ -955,7 +984,12 @@ _signal_reload_requested: bool = False
 
 
 def _sigusr1_handler(signum: int, frame: Any) -> None:  # noqa: ARG001
-    """Handle SIGUSR1 by setting a flag for the event loop to pick up."""
+    """Handle SIGUSR1 by setting a flag for the event loop to pick up.
+
+    Async-signal-safe: this handler only sets a plain bool flag. No logging,
+    no I/O, no lock acquisition, no memory allocation. The asyncio loop polls
+    the flag via _signal_reload_monitor() and handles the actual reload logic.
+    """
     global _signal_reload_requested
     _signal_reload_requested = True
 
@@ -1185,7 +1219,7 @@ async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version 
 
         except asyncio.CancelledError:
             return
-        except Exception:
+        except (OSError, ValueError, RuntimeError, ImportError, StopIteration):
             consecutive_errors += 1
             if consecutive_errors >= _MAX_MONITOR_ERRORS:
                 logger.error(
@@ -1268,11 +1302,12 @@ def _write_mcp_pid() -> None:
     data_dir = Path.cwd() / ".opencode" / "webview"
     data_dir.mkdir(parents=True, exist_ok=True)
     pid_file = data_dir / ".mcp.pid"
-    old_umask = os.umask(0o077)
+    # Use os.open() with explicit mode instead of process-wide umask (thread-safe)
+    fd = os.open(str(pid_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        pid_file.write_text(str(os.getpid()))
+        os.write(fd, str(os.getpid()).encode())
     finally:
-        os.umask(old_umask)
+        os.close(fd)
     _MCP_PID_DIR = data_dir
 
 
@@ -1788,15 +1823,15 @@ async def webview_status() -> dict[str, Any]:
 
     Returns the session state without modifying anything.
     """
-    global _session
-    if _session is None or not _session._started:
-        return {"active": False}
-    return {
-        "active": True,
-        "alive": _session.is_alive(),
-        "url": _session.url,
-        "session_id": _session.session_id,
-    }
+    async with _get_session_lock():
+        if _session is None or not _session._started:
+            return {"active": False}
+        return {
+            "active": True,
+            "alive": _session.is_alive(),
+            "url": _session.url,
+            "session_id": _session.session_id,
+        }
 
 
 @mcp.tool()
@@ -1814,17 +1849,18 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
         xss_warnings = _security_gate._scan_xss(message, "webview_close.message")
         if xss_warnings:
             return {"error": f"Close message rejected by security gate: {xss_warnings[0]}"}
-    if _session is None or not _session._started:
-        return {"status": "ok", "message": "No active session."}
+    async with _get_session_lock():
+        if _session is None or not _session._started:
+            return {"status": "ok", "message": "No active session."}
 
-    try:
-        await _session.close(message=message)
-    except Exception:
-        logger.warning("Error closing session", exc_info=True)
-        return {"error": "Failed to close session"}
+        try:
+            await _session.close(message=message)
+        except Exception:
+            logger.warning("Error closing session", exc_info=True)
+            return {"error": "Failed to close session"}
 
-    _session = None
-    return {"status": "ok", "message": "Webview closed."}
+        _session = None
+        return {"status": "ok", "message": "Webview closed."}
 
 
 # ---------------------------------------------------------------------------

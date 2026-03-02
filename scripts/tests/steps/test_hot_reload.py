@@ -205,8 +205,43 @@ def assert_monitor_running(ctx):
 
 
 @then("errors should be logged with backoff")
-def assert_errors_logged(ctx):
-    pass  # Logging verified by caplog in the async runner
+def assert_errors_logged(ctx, caplog):
+    # Run a brief monitor with errors under caplog to verify logging
+    mock_dist_path = mock.MagicMock(spec=Path)
+    mock_dist_path.is_dir.return_value = True
+    mock_stat_ok = mock.MagicMock()
+    mock_stat_ok.st_mtime = 100.0
+    mock_dist_path.stat.side_effect = [mock_stat_ok] + [OSError("disk error")] * 15
+
+    loop = asyncio.new_event_loop()
+    try:
+        with caplog.at_level(logging.WARNING):
+
+            async def _test():
+                with mock.patch("mcp_server._RELOAD_CHECK_INTERVAL", 0.01):
+                    with mock.patch("mcp_server._MAX_MONITOR_ERRORS", 10):
+                        with mock.patch(
+                            "mcp_server._get_installed_version_info",
+                            return_value=("1.0.0", mock_dist_path),
+                        ):
+                            with mock.patch(
+                                "mcp_server._read_version_fresh",
+                                side_effect=OSError("disk error"),
+                            ):
+                                task = asyncio.create_task(mcp_server._version_monitor())
+                                await asyncio.sleep(0.3)
+                                if not task.done():
+                                    task.cancel()
+                                    try:
+                                        await task
+                                    except asyncio.CancelledError:
+                                        pass
+
+            loop.run_until_complete(_test())
+    finally:
+        loop.close()
+
+    assert any("error" in rec.message.lower() or "disk" in rec.message.lower() for rec in caplog.records)
 
 
 @then("the monitor should stop")
@@ -215,8 +250,14 @@ def assert_monitor_stopped(ctx):
 
 
 @then("a fatal error should be logged")
-def assert_fatal_logged(ctx):
-    pass  # Verified by monitor stopping
+def assert_fatal_logged(ctx, caplog):
+    # _run_monitor_with_errors was already called in assert_monitor_stopped;
+    # just verify error/fatal was logged
+    assert any(
+        rec.levelno >= logging.ERROR
+        for rec in caplog.records
+        if "monitor" in rec.message.lower() or "error" in rec.message.lower()
+    ) or any("error" in rec.message.lower() for rec in caplog.records)
 
 
 @then("the exception should be logged via done-callback")

@@ -450,7 +450,8 @@ class TestVersionMonitorLoop:
                 side_effect=[
                     ("1.0.0", mock_dist_path),
                     ("1.0.0", new_dist_path),
-                ],
+                ]
+                + [("1.0.0", new_dist_path)] * 20,
             ):
                 with mock.patch("mcp_server._read_version_fresh", return_value="1.0.0"):
                     with mock.patch("mcp_server._mark_stale") as mock_stale:
@@ -1436,3 +1437,124 @@ class TestDeepMergePrototypePollution:
         base = {"data": {"inner": {}}}
         with pytest.raises(ValueError, match="dangerous key"):
             _deep_merge(base, {"data": {"inner": {"__proto__": {"bad": True}}}})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# H8: _notify_host_stale real-path coverage
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNotifyHostStaleReal:
+    """Exercise the real _notify_host_stale coroutine."""
+
+    def test_sends_log_when_server_available(self):
+        """When the MCP server exposes send_log_message, it should be called."""
+        mock_server = mock.MagicMock()
+        mock_server.send_log_message = mock.AsyncMock()
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                with mock.patch.object(mcp_server, "mcp") as mock_mcp:
+                    mock_mcp._mcp_server = mock_server
+                    await mcp_server._notify_host_stale("Server is stale")
+                    mock_server.send_log_message.assert_called_once_with(level="error", data="Server is stale")
+
+            loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+    def test_no_server_available(self):
+        """When no MCP server is available, _notify_host_stale should not crash."""
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                with mock.patch.object(mcp_server, "mcp") as mock_mcp:
+                    mock_mcp._mcp_server = None
+                    mock_mcp.server = None
+                    await mcp_server._notify_host_stale("No server")
+
+            loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+    def test_exception_suppressed(self):
+        """If send_log_message raises, the exception should be suppressed."""
+        mock_server = mock.MagicMock()
+        mock_server.send_log_message = mock.AsyncMock(side_effect=RuntimeError("network down"))
+
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                with mock.patch.object(mcp_server, "mcp") as mock_mcp:
+                    mock_mcp._mcp_server = mock_server
+                    # Should NOT raise
+                    await mcp_server._notify_host_stale("Stale with error")
+
+            loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M15: webview_close XSS rejection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWebviewCloseXSS:
+    """Verify webview_close rejects XSS payloads in the close message."""
+
+    def test_script_tag_rejected(self):
+        """A <script> tag in close message should be rejected."""
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                result = await webview_close(message="<script>alert(1)</script>")
+                return result
+
+            result = loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+        assert "error" in result
+        assert "security gate" in result["error"].lower() or "rejected" in result["error"].lower()
+
+    def test_event_handler_rejected(self):
+        """An event handler in the close message should be rejected."""
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                result = await webview_close(message='<img onerror="alert(1)" src=x>')
+                return result
+
+            result = loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+        assert "error" in result
+
+    def test_clean_message_accepted(self):
+        """A clean message should be accepted (no error)."""
+        loop = asyncio.new_event_loop()
+        try:
+
+            async def _test():
+                # Reset session to None so it's a no-op close
+                original = mcp_server._session
+                mcp_server._session = None
+                try:
+                    result = await webview_close(message="Goodbye!")
+                finally:
+                    mcp_server._session = original
+                return result
+
+            result = loop.run_until_complete(_test())
+        finally:
+            loop.close()
+
+        assert result.get("status") == "ok"

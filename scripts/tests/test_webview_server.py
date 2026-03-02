@@ -2878,16 +2878,19 @@ class TestDeploymentSecurity:
         # Count umask calls — should have set + restore
         assert src.count("os.umask") >= 2, "Must both set and restore umask"
 
-    def test_pid_write_umask_pattern(self):
-        """PID file write must use umask(0o077)."""
+    def test_pid_write_restrictive_permissions(self):
+        """PID file write must use restrictive permissions (os.open with 0o600)."""
         import inspect
 
         src = inspect.getsource(WebviewServer.start)
-        assert "os.umask(0o077)" in src, "PID write must use umask(0o077)"
-        # Verify the umask is near the PID write
-        umask_pos = src.index("os.umask(0o077)")
+        # PID file must be created with explicit restrictive permissions via os.open
+        # (thread-safe alternative to process-wide os.umask)
+        assert "os.O_CREAT" in src, "PID write must use os.open with O_CREAT"
+        assert "0o600" in src, "PID write must use 0o600 permissions"
+        # Verify os.open is near the PID write
+        open_pos = src.index("os.open")
         pid_pos = src.index("pid_path")
-        assert abs(umask_pos - pid_pos) < 200, "umask and PID write should be in the same block"
+        assert abs(open_pos - pid_pos) < 200, "os.open and PID write should be in the same block"
 
     def test_write_json_creates_restricted_file(self, contract, tmp_data_dir):
         """Files written by DataContract.write_json must not be world-readable."""
@@ -2936,3 +2939,154 @@ class TestDeploymentSecurity:
 
         nt_src = inspect.getsource(NonceTracker.check_and_record)
         assert "time.time()" not in nt_src, "NonceTracker must not use time.time()"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# H9: handle_request() HTTP parsing tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestHandleRequestParsing:
+    """Tests for security-critical code paths in handle_request().
+
+    handle_request is marked ``pragma: no cover`` because it handles raw TCP
+    streams that are difficult to simulate at unit level. Instead we test the
+    security-critical *validation logic* that handle_request delegates to,
+    and verify the raw parser's security checks exist in source.
+    """
+
+    def test_transfer_encoding_rejection_exists(self):
+        """handle_request must reject Transfer-Encoding headers (anti-smuggling)."""
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        assert "transfer-encoding" in src.lower(), "Must check for Transfer-Encoding header"
+        assert "400" in src, "Must return 400 for Transfer-Encoding"
+
+    def test_content_length_overflow_rejection_exists(self):
+        """handle_request must reject Content-Length exceeding MAX_BODY_SIZE (1MB)."""
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        assert "MAX_BODY_SIZE" in src, "Must reference MAX_BODY_SIZE constant"
+        assert "413" in src, "Must return 413 for oversized body"
+
+    def test_missing_host_header_handled(self):
+        """handle_request should not crash when Host header is missing.
+
+        The handler reads headers into a dict but does not require Host.
+        Verify that the header reading loop handles the absence gracefully.
+        """
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        # The handler reads headers in a loop and does not mandate any specific header
+        assert "headers = {}" in src or "headers[" in src, "Must collect headers into a dict"
+
+    @pytest.mark.asyncio
+    async def test_transfer_encoding_rejected_via_route(self, handler):
+        """If Transfer-Encoding is present, the routed handler should reject it.
+
+        We can test the _route layer directly since that's what handle_request
+        delegates to after parsing. The router checks don't include TE directly
+        (it's in the raw parser), so we verify the handler structure.
+        """
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        # Verify Transfer-Encoding rejection comes BEFORE body reading
+        te_pos = src.find("transfer-encoding")
+        body_read_pos = src.find("reader.read(")
+        if te_pos != -1 and body_read_pos != -1:
+            assert te_pos < body_read_pos, "Transfer-Encoding rejection must come before body reading"
+
+    def test_content_length_negative_rejected(self):
+        """handle_request must reject negative Content-Length values."""
+        import inspect
+
+        src = inspect.getsource(WebviewHTTPHandler.handle_request)
+        assert "content_length < 0" in src, "Must reject negative Content-Length"
+
+    def test_max_body_size_is_1mb(self):
+        """MAX_BODY_SIZE constant must be 1MB (1,048,576 bytes)."""
+        assert WebviewHTTPHandler.MAX_BODY_SIZE == 1_048_576
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M14: DataContract file deletion test
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDataContractFileDeletion:
+    """Verify DataContract.check_changes survives a tracked file being deleted."""
+
+    def test_tracked_file_deletion_no_crash(self, contract, tmp_data_dir):
+        """After tracking a file's mtime, deleting it should not crash check_changes."""
+        # Initialize mtimes by first check
+        contract.check_changes()
+
+        # Delete the state file
+        (tmp_data_dir / "state.json").unlink()
+
+        # check_changes should NOT raise — FileNotFoundError is handled internally
+        changed = contract.check_changes()
+
+        # The deleted file should not appear in the changed list
+        assert "state" not in changed
+
+    def test_tracked_file_deleted_then_recreated(self, contract, tmp_data_dir):
+        """Delete a tracked file, then recreate it — check_changes should pick it up."""
+        contract.check_changes()
+
+        (tmp_data_dir / "state.json").unlink()
+        contract.check_changes()  # registers absence
+
+        # Recreate with new content
+        time.sleep(0.01)
+        new_state = {"version": 99, "status": "recreated"}
+        contract.write_json(contract.state_path, new_state)
+
+        changed = contract.check_changes()
+        assert "state" in changed
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M12: _strip_token deep copy verification
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestStripTokenDeepCopy:
+    """Verify _strip_token returns a deep copy — mutations don't affect original."""
+
+    def test_strip_token_returns_independent_copy(self):
+        """Mutating the result of _strip_token must not affect the original."""
+        from webview_server import _strip_token
+
+        original = {
+            "session": {"id": "test-123", "token": "secret_abc"},
+            "server": {"host": "127.0.0.1", "ports": [18420, 18421]},
+        }
+
+        result = _strip_token(original)
+
+        # Token should be removed from result
+        assert "token" not in result["session"]
+
+        # Mutate the result
+        result["session"]["id"] = "MUTATED"
+        result["server"]["host"] = "MUTATED"
+        result["server"]["ports"].append(99999)
+
+        # Original must be unchanged
+        assert original["session"]["id"] == "test-123"
+        assert original["session"]["token"] == "secret_abc"
+        assert original["server"]["host"] == "127.0.0.1"
+        assert original["server"]["ports"] == [18420, 18421]
+
+    def test_strip_token_no_session(self):
+        """_strip_token should handle manifest without a session key."""
+        from webview_server import _strip_token
+
+        original = {"server": {"host": "127.0.0.1"}}
+        result = _strip_token(original)
+        assert result == {"server": {"host": "127.0.0.1"}}

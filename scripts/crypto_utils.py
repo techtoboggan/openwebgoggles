@@ -67,19 +67,20 @@ _NONCE_COUNTER = 0
 
 
 def generate_nonce() -> str:
-    """Generate a unique nonce combining timestamp + random + counter.
+    """Generate a unique nonce combining random bytes + counter.
 
-    Format: hex(timestamp_ms || random_8_bytes || counter_8_bytes)
-    This ensures uniqueness even under high-frequency calls.
+    Format: hex(random_16_bytes || counter_8_bytes)
+    Uses purely random prefix (no wall-clock time) to avoid leaking timing
+    information. The counter ensures uniqueness even if os.urandom returns
+    duplicate output under high-frequency calls.
     """
     global _NONCE_COUNTER
     with _NONCE_LOCK:
         _NONCE_COUNTER += 1
         ctr_val = _NONCE_COUNTER
-    ts = struct.pack(">Q", int(time.time() * 1000))
-    rand = os.urandom(8)
+    rand = os.urandom(16)
     ctr = struct.pack(">Q", ctr_val & 0xFFFFFFFFFFFFFFFF)
-    return (ts + rand + ctr).hex()
+    return (rand + ctr).hex()
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +213,16 @@ class NonceTracker:
 
 
 def zero_key(key_bytes: bytes | bytearray) -> None:
-    """Best-effort zeroing of key material in memory."""
+    """Best-effort zeroing of key material in memory.
+
+    WARNING: This is unreliable for immutable ``bytes`` objects on CPython.
+    Python's string interning, small-object allocator, and garbage collector
+    may keep copies of the original bytes in memory. The ctypes approach
+    below mutates the backing buffer directly, but the GC may have already
+    copied the data elsewhere. This is a best-effort defense-in-depth measure;
+    the real protection is process isolation (ephemeral subprocess, no disk I/O).
+    For ``bytearray`` objects, zeroing is reliable since they are mutable.
+    """
     if isinstance(key_bytes, bytearray):
         for i in range(len(key_bytes)):
             key_bytes[i] = 0

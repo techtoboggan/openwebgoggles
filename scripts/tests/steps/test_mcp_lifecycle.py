@@ -74,6 +74,15 @@ def lifespan_starts(ctx, version_monitor_env, tmp_path):
                                     # Check tasks were created
                                     ctx.reload_task = mcp_server._reload_task
                                     ctx.tasks_created = mcp_server._reload_task is not None
+                                    # Capture callback info while task reference is available.
+                                    # Note: In Python 3.12+, _callbacks may be None if the
+                                    # task already completed and callbacks fired. A done task
+                                    # with _callbacks=None means they successfully ran.
+                                    if ctx.reload_task is not None:
+                                        cbs = getattr(ctx.reload_task, "_callbacks", None)
+                                        ctx.callback_count = len(cbs) if cbs else (1 if ctx.reload_task.done() else 0)
+                                    else:
+                                        ctx.callback_count = 0
                                     # Capture mocks for PID assertions
                                     ctx.mock_write_pid = mock_write_pid
                                 # After lifespan exit, capture cleanup mock
@@ -91,14 +100,16 @@ def assert_version_task_created(ctx):
 
 @then("the signal monitor task should be created")
 def assert_signal_task_created(ctx):
-    # Both created in lifespan
     assert ctx.tasks_created
+    # Verify the reload task is an actual asyncio.Task, not just truthy
+    assert isinstance(ctx.reload_task, asyncio.Task)
 
 
 @then("both tasks should have done-callbacks attached")
 def assert_done_callbacks(ctx):
-    # Verified by code review — callbacks attached in lifespan
     assert ctx.tasks_created
+    # Callback count was captured while the task was still alive inside lifespan
+    assert ctx.callback_count > 0, "reload_task should have done-callbacks"
 
 
 @then("the lifespan should yield within 1 second")
@@ -172,9 +183,9 @@ def assert_version_cancelled(ctx):
 @then("the signal monitor task should be cancelled")
 def assert_signal_cancelled(ctx):
     # Signal task is local to lifespan and cancelled on exit.
-    # If we reached here without error, the cancellation succeeded
-    # (CancelledError was caught in lifespan cleanup).
+    # Verify _reload_task was set to None after cleanup (same as version task).
     assert hasattr(ctx, "reload_task"), "Context should have reload_task from lifespan run"
+    assert ctx.reload_task_after is None, "reload_task should be None after shutdown (signal task also cleaned)"
 
 
 @then("the webview session should be closed")
@@ -213,8 +224,9 @@ def session_close_raises(ctx, version_monitor_env):
 
 @then("the exception should be suppressed")
 def assert_exception_suppressed(ctx):
-    # If we got here, the exception was suppressed
-    pass
+    # The lifespan completed without raising, AND session.close() was called
+    # despite raising RuntimeError("close failed")
+    ctx.mock_session.close.assert_called_once()
 
 
 @then("the session reference should be cleared")
