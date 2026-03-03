@@ -87,7 +87,7 @@ def _make_session(tmp_path):
     """Create a WebviewSession pointing at tmp_path without spawning a subprocess."""
     session = WebviewSession.__new__(WebviewSession)
     session.work_dir = tmp_path
-    session.data_dir = tmp_path / ".opencode" / "webview"
+    session.data_dir = tmp_path
     session.data_dir.mkdir(parents=True, exist_ok=True)
     session.process = None
     session.session_token = "test-token"

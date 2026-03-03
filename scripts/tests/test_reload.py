@@ -126,28 +126,28 @@ class TestSigusr1Handler:
 
 class TestMcpPidFile:
     def test_write_creates_pid_file(self, tmp_path):
-        with mock.patch("mcp_server.Path.cwd", return_value=tmp_path):
+        with mock.patch("mcp_server._get_data_dir", return_value=tmp_path):
             _write_mcp_pid()
 
-        pid_file = tmp_path / ".opencode" / "webview" / ".mcp.pid"
+        pid_file = tmp_path / ".mcp.pid"
         assert pid_file.exists()
         assert pid_file.read_text() == str(os.getpid())
 
     def test_cleanup_removes_own_pid(self, tmp_path):
-        with mock.patch("mcp_server.Path.cwd", return_value=tmp_path):
+        with mock.patch("mcp_server._get_data_dir", return_value=tmp_path):
             _write_mcp_pid()
 
-        pid_file = tmp_path / ".opencode" / "webview" / ".mcp.pid"
+        pid_file = tmp_path / ".mcp.pid"
         assert pid_file.exists()
 
         _cleanup_mcp_pid()
         assert not pid_file.exists()
 
     def test_cleanup_preserves_other_pid(self, tmp_path):
-        with mock.patch("mcp_server.Path.cwd", return_value=tmp_path):
+        with mock.patch("mcp_server._get_data_dir", return_value=tmp_path):
             _write_mcp_pid()
 
-        pid_file = tmp_path / ".opencode" / "webview" / ".mcp.pid"
+        pid_file = tmp_path / ".mcp.pid"
         # Overwrite with a different PID
         pid_file.write_text("99999999")
 

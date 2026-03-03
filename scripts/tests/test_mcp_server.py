@@ -66,7 +66,7 @@ def inject_action(data_dir: Path, action_id: str = "approve", action_type: str =
 
 class TestSessionPaths:
     def test_data_dir_under_work_dir(self, session, work_dir):
-        assert session.data_dir == work_dir / ".opencode" / "webview"
+        assert session.data_dir == work_dir
 
     def test_default_ports(self, session):
         assert session.http_port == 18420
@@ -955,8 +955,8 @@ class TestWaitForActionInternalFilter:
 
     def test_internal_action_filtered(self, tmp_path):
         """_page_switch actions must not break the wait loop."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         session = WebviewSession.__new__(WebviewSession)
         session.data_dir = data_dir
@@ -986,8 +986,8 @@ class TestWaitForActionInternalFilter:
 
     def test_real_action_returned(self, tmp_path):
         """A real user action should be returned by wait_for_action."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         session = WebviewSession.__new__(WebviewSession)
         session.data_dir = data_dir
@@ -1016,8 +1016,8 @@ class TestWaitForActionInternalFilter:
 
     def test_mixed_internal_and_real_returns(self, tmp_path):
         """When both internal and real actions exist, the real one is returned."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         session = WebviewSession.__new__(WebviewSession)
         session.data_dir = data_dir
@@ -1059,8 +1059,8 @@ class TestAcquireLockRetryExhaustion:
 
     def test_lock_retry_raises_runtime_error(self, tmp_path):
         """When flock always fails, _acquire_lock should raise RuntimeError."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         session = WebviewSession.__new__(WebviewSession)
         session.data_dir = data_dir

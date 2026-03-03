@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import mcp_server
-from mcp_server import WebviewSession, _get_session
+from mcp_server import WebviewSession, _get_data_dir, _get_session
 
 
 # ---------------------------------------------------------------------------
@@ -33,12 +33,12 @@ class TestWebviewSessionInit:
     def test_default_work_dir(self):
         session = WebviewSession(open_browser=False)
         assert session.work_dir == Path.cwd()
-        assert session.data_dir == Path.cwd() / ".opencode" / "webview"
+        assert session.data_dir == _get_data_dir()
 
     def test_custom_work_dir(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
         assert session.work_dir == tmp_path
-        assert session.data_dir == tmp_path / ".opencode" / "webview"
+        assert session.data_dir == tmp_path
 
     def test_initial_state(self):
         session = WebviewSession(open_browser=False)
@@ -56,13 +56,13 @@ class TestWebviewSessionInit:
 class TestKillStaleServer:
     def test_no_pid_file(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         # Should not raise
         session._kill_stale_server()
 
     def test_non_numeric_pid_file(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
         pid_file.write_text("not-a-number")
         session._kill_stale_server()
@@ -71,7 +71,7 @@ class TestKillStaleServer:
 
     def test_stale_pid_removed(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
         pid_file.write_text("99999999")  # Almost certainly dead
 
@@ -82,7 +82,7 @@ class TestKillStaleServer:
 
     def test_live_pid_killed(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
         pid_file.write_text("12345")
 
@@ -103,7 +103,7 @@ class TestKillStaleServer:
 
     def test_own_subprocess_not_killed(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
 
         mock_proc = mock.MagicMock()
@@ -116,7 +116,7 @@ class TestKillStaleServer:
 
     def test_oserror_on_read(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
         pid_file.write_text("123")
 
@@ -127,7 +127,7 @@ class TestKillStaleServer:
     def test_force_kill_after_timeout(self, tmp_path):
         """When process doesn't die after SIGTERM, should SIGKILL."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
         pid_file.write_text("12345")
 
@@ -150,7 +150,7 @@ class TestKillStaleServer:
 class TestAcquireLock:
     def test_acquires_lock(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session._acquire_lock()
         assert session._lock_fd is not None
         session._release_lock()
@@ -166,7 +166,7 @@ class TestAcquireLock:
         import fcntl
 
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         call_count = [0]
         original_flock = fcntl.flock
@@ -190,7 +190,7 @@ class TestAcquireLock:
         """After exhausting retries, should raise RuntimeError."""
 
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         def mock_flock(fd, operation):
             raise OSError("Resource temporarily unavailable")
@@ -210,12 +210,12 @@ class TestAcquireLock:
 class TestCleanupProcess:
     def test_cleanup_no_process(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session._cleanup_process()  # Should not raise
 
     def test_cleanup_terminates_process(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         mock_proc = mock.MagicMock()
         mock_proc.terminate = mock.MagicMock()
@@ -229,7 +229,7 @@ class TestCleanupProcess:
 
     def test_cleanup_force_kills_on_timeout(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         mock_proc = mock.MagicMock()
         mock_proc.terminate = mock.MagicMock()
@@ -244,7 +244,7 @@ class TestCleanupProcess:
 
     def test_cleanup_exception_suppressed(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         mock_proc = mock.MagicMock()
         mock_proc.terminate = mock.MagicMock(side_effect=Exception("fail"))
@@ -255,7 +255,7 @@ class TestCleanupProcess:
 
     def test_cleanup_removes_pid_file(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
         pid_file.write_text("12345")
 
@@ -264,7 +264,7 @@ class TestCleanupProcess:
 
     def test_cleanup_pid_file_oserror(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = session.data_dir / ".server.pid"
         pid_file.write_text("12345")
 
@@ -355,7 +355,7 @@ class TestFindFreePorts:
 class TestSetPermissions:
     def test_sets_permissions(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         (session.data_dir / "manifest.json").write_text("{}")
 
         session._set_permissions()
@@ -363,7 +363,7 @@ class TestSetPermissions:
 
     def test_oserror_suppressed(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         with mock.patch("os.chmod", side_effect=OSError("fail")):
             session._set_permissions()  # Should not raise
@@ -497,7 +497,7 @@ class TestEnsureStarted:
 class TestClose:
     async def test_close_running_session(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session._started = True
         session.http_port = 18420
         session.session_token = "test-token"
@@ -517,7 +517,7 @@ class TestClose:
 
     async def test_close_http_failure_suppressed(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session._started = True
         session.http_port = 18420
         session.session_token = "test-token"
@@ -537,7 +537,7 @@ class TestClose:
 
     async def test_close_no_process(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.process = None
 
         with mock.patch.object(session, "_cleanup_chrome"):
@@ -553,7 +553,7 @@ class TestClose:
 class TestWaitForAction:
     async def test_returns_action_when_available(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         actions = {"version": 1, "actions": [{"id": "ok", "type": "approve"}]}
         (session.data_dir / "actions.json").write_text(json.dumps(actions))
 
@@ -563,7 +563,7 @@ class TestWaitForAction:
 
     async def test_returns_none_on_timeout(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         # Write empty actions
         (session.data_dir / "actions.json").write_text(json.dumps({"version": 0, "actions": []}))
 
@@ -572,7 +572,7 @@ class TestWaitForAction:
 
     async def test_handles_missing_actions_file(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         # No actions.json file
 
         result = await session.wait_for_action(timeout=0.3)
@@ -580,7 +580,7 @@ class TestWaitForAction:
 
     async def test_progress_callback_called(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.PROGRESS_INTERVAL = 0.05  # Very fast for testing
         session.POLL_INTERVAL = 0.05
         (session.data_dir / "actions.json").write_text(json.dumps({"version": 0, "actions": []}))
@@ -595,7 +595,7 @@ class TestWaitForAction:
 
     async def test_progress_exception_suppressed(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.PROGRESS_INTERVAL = 0.1
         (session.data_dir / "actions.json").write_text(json.dumps({"version": 0, "actions": []}))
 
@@ -614,7 +614,7 @@ class TestWaitForAction:
 class TestDataContractMethods:
     def test_write_and_read_state(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.write_state({"title": "Test"})
         state = session.read_state()
         assert state["title"] == "Test"
@@ -622,7 +622,7 @@ class TestDataContractMethods:
 
     def test_version_auto_increments(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.write_state({"title": "V1"})
         session.write_state({"title": "V2"})
         state = session.read_state()
@@ -630,7 +630,7 @@ class TestDataContractMethods:
 
     def test_merge_state(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.write_state({"title": "Base", "data": {"a": 1}})
         merged = session.merge_state({"data": {"b": 2}})
         assert merged["title"] == "Base"
@@ -639,7 +639,7 @@ class TestDataContractMethods:
 
     def test_merge_state_with_validator(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.write_state({"title": "Base"})
 
         def bad_validator(state):
@@ -650,13 +650,13 @@ class TestDataContractMethods:
 
     def test_read_actions_empty(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         actions = session.read_actions()
         assert actions == {"version": 0, "actions": []}
 
     def test_clear_actions(self, tmp_path):
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         (session.data_dir / "actions.json").write_text(json.dumps({"version": 1, "actions": [{"id": "a"}]}))
         session.clear_actions()
         actions = session.read_actions()
@@ -703,7 +703,7 @@ class TestMergeStateRaceConditions:
         import concurrent.futures
 
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         # Write initial state
         session.write_state({"title": "Init", "data": {"sections": []}})
 
@@ -724,7 +724,7 @@ class TestMergeStateRaceConditions:
     def test_merge_with_validator_rejection_skips_write(self, tmp_path):
         """If the validator raises, the merged state should NOT be written."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.write_state({"title": "Original"})
 
         def bad_validator(state):
@@ -742,7 +742,7 @@ class TestMergeStateRaceConditions:
         import concurrent.futures
 
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.write_state({"title": "Start", "counter": 0})
 
         errors = []
@@ -776,7 +776,7 @@ class TestMergeStateRaceConditions:
         import threading
 
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
         session.write_state({"title": "Test", "items": []})
 
         call_order = []
@@ -868,7 +868,7 @@ class TestIntegrationLifecycle:
     def test_full_state_lifecycle(self, tmp_path):
         """Write → Read → Merge → Read cycle should produce consistent results."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         # Write initial state
         session.write_state({"title": "Test App", "data": {"sections": []}})
@@ -892,7 +892,7 @@ class TestIntegrationLifecycle:
     def test_actions_lifecycle(self, tmp_path):
         """Write actions → Read → Clear → Read cycle."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         # Initially empty
         actions = session.read_actions()
@@ -921,7 +921,7 @@ class TestIntegrationLifecycle:
     def test_state_version_auto_increments(self, tmp_path):
         """Each write_state call should increment the version."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         for i in range(5):
             session.write_state({"title": f"v{i}"})
@@ -931,7 +931,7 @@ class TestIntegrationLifecycle:
     def test_merge_preserves_nested_sections(self, tmp_path):
         """Merging should preserve existing nested data structures."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         session.write_state(
             {
@@ -955,7 +955,7 @@ class TestIntegrationLifecycle:
     def test_merge_replaces_sections_list(self, tmp_path):
         """Merging data.sections should replace (not append) the list."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         session.write_state(
             {
@@ -979,7 +979,7 @@ class TestIntegrationLifecycle:
         from security_gate import SecurityGate
 
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         session.write_state({"title": "Safe", "data": {"sections": []}})
 
@@ -1012,7 +1012,7 @@ class TestIntegrationLifecycle:
     async def test_wait_for_action_timeout(self, tmp_path):
         """wait_for_action should return None on timeout."""
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
-        session.data_dir.mkdir(parents=True)
+        session.data_dir.mkdir(parents=True, exist_ok=True)
 
         result = await session.wait_for_action(timeout=0.1)
         assert result is None
@@ -1025,8 +1025,8 @@ class TestIntegrationLifecycle:
         session_a = WebviewSession(work_dir=dir_a, open_browser=False)
         session_b = WebviewSession(work_dir=dir_b, open_browser=False)
 
-        session_a.data_dir.mkdir(parents=True)
-        session_b.data_dir.mkdir(parents=True)
+        session_a.data_dir.mkdir(parents=True, exist_ok=True)
+        session_b.data_dir.mkdir(parents=True, exist_ok=True)
 
         session_a.write_state({"title": "Session A"})
         session_b.write_state({"title": "Session B"})

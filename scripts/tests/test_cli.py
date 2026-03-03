@@ -26,6 +26,7 @@ from mcp_server import (
     _cmd_status,
     _find_data_dir,
     _find_server_key,
+    _get_data_dir,
     _init_claude,
     _init_opencode,
     _init_usage,
@@ -43,13 +44,13 @@ from mcp_server import (
 
 
 class TestFindDataDir:
-    def test_default_uses_cwd(self):
+    def test_default_uses_platform_data_dir(self):
         result = _find_data_dir(None)
-        assert result == Path.cwd() / ".opencode" / "webview"
+        assert result == _get_data_dir()
 
     def test_explicit_path(self, tmp_path):
         result = _find_data_dir(tmp_path)
-        assert result == tmp_path / ".opencode" / "webview"
+        assert result == tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +303,8 @@ class TestUsage:
 
 class TestCmdRestart:
     def test_no_running_server(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         with mock.patch("sys.argv", ["openwebgoggles", "restart", str(tmp_path)]):
             with pytest.raises(SystemExit) as exc_info:
@@ -314,8 +315,8 @@ class TestCmdRestart:
         assert "No running MCP server found" in output
 
     def test_fallback_webview_pid_hint(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         # Write a webview PID that's alive (our own PID)
         (data_dir / ".server.pid").write_text(str(os.getpid()))
 
@@ -327,8 +328,8 @@ class TestCmdRestart:
         assert "webview server" in output.lower()
 
     def test_sends_sigusr1_on_unix(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
 
         with mock.patch("sys.argv", ["openwebgoggles", "restart", str(tmp_path)]):
@@ -345,8 +346,8 @@ class TestCmdRestart:
         assert "restart" in output.lower()
 
     def test_signal_send_fails(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
 
         with mock.patch("sys.argv", ["openwebgoggles", "restart", str(tmp_path)]):
@@ -364,8 +365,8 @@ class TestCmdRestart:
 
 class TestCmdStatus:
     def test_nothing_running(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         with mock.patch("sys.argv", ["openwebgoggles", "status", str(tmp_path)]):
             _cmd_status()
@@ -375,8 +376,8 @@ class TestCmdStatus:
         assert "OpenWebGoggles Status" in output
 
     def test_mcp_server_running(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
 
         with mock.patch("sys.argv", ["openwebgoggles", "status", str(tmp_path)]):
@@ -387,8 +388,8 @@ class TestCmdStatus:
         assert "running" in output
 
     def test_webview_with_manifest(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
         (data_dir / ".server.pid").write_text(str(os.getpid()))
         manifest = {
@@ -409,8 +410,8 @@ class TestCmdStatus:
         assert "dynamic" in output
 
     def test_webview_running_no_manifest(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".server.pid").write_text(str(os.getpid()))
 
         with mock.patch("sys.argv", ["openwebgoggles", "status", str(tmp_path)]):
@@ -469,8 +470,8 @@ class TestCmdDoctor:
         assert "mcp" in output
 
     def test_stale_pid_cleaned(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         # Write a dead PID
         (data_dir / ".mcp.pid").write_text("99999999")
 
@@ -526,8 +527,8 @@ class TestCmdDoctor:
         assert "differs" in output
 
     def test_lock_file_not_held(self, tmp_path, capsys):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".server.lock").write_text("")
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
@@ -719,8 +720,8 @@ class TestMainDispatch:
         assert (tmp_path / "opencode.json").exists()
 
     def test_restart_dispatch(self, tmp_path):
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         with mock.patch("sys.argv", ["openwebgoggles", "restart", str(tmp_path)]):
             with pytest.raises(SystemExit):
@@ -759,8 +760,8 @@ class TestMainDispatch:
 class TestCmdStatusEdgeCases:
     def test_corrupt_manifest_json(self, tmp_path, capsys):
         """Corrupt manifest.json should be handled gracefully (line 1938-1939)."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
         (data_dir / ".server.pid").write_text(str(os.getpid()))
         (data_dir / "manifest.json").write_text("invalid json{{{")
@@ -774,8 +775,8 @@ class TestCmdStatusEdgeCases:
 
     def test_health_endpoint_reachable(self, tmp_path, capsys):
         """When health endpoint is reachable, shows uptime and ws_clients (lines 1950-1958)."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
         (data_dir / ".server.pid").write_text(str(os.getpid()))
         manifest = {
@@ -802,8 +803,8 @@ class TestCmdStatusEdgeCases:
 
     def test_health_endpoint_under_minute(self, tmp_path, capsys):
         """Uptime under 1 minute shows just seconds (line 1956-1957)."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
         (data_dir / ".server.pid").write_text(str(os.getpid()))
         manifest = {
@@ -890,8 +891,8 @@ class TestCmdDoctorEdgeCases:
 
     def test_stale_pid_oserror_on_read(self, tmp_path, capsys):
         """OSError reading PID file during stale check is suppressed (line 2080-2081)."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         pid_file = data_dir / ".mcp.pid"
         pid_file.write_text("12345")
 
@@ -910,8 +911,8 @@ class TestCmdDoctorEdgeCases:
     def test_lock_held_by_running_server(self, tmp_path, capsys):
         """Lock held by another process shows ok (line 2102-2103)."""
 
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         lock_file = data_dir / ".server.lock"
         lock_file.write_text("")
 
@@ -929,8 +930,8 @@ class TestCmdDoctorEdgeCases:
     def test_lock_present_with_server_pid(self, tmp_path, capsys):
         """Lock file OK when server pid exists (line 2101)."""
 
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         lock_file = data_dir / ".server.lock"
         lock_file.write_text("")
         (data_dir / ".server.pid").write_text(str(os.getpid()))
@@ -944,8 +945,8 @@ class TestCmdDoctorEdgeCases:
 
     def test_lock_open_fails(self, tmp_path, capsys):
         """OSError on lock file open shows no conflicts (line 2106-2107)."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         lock_file = data_dir / ".server.lock"
         lock_file.write_text("")
 
@@ -979,8 +980,8 @@ class TestCmdDoctorEdgeCases:
 class TestCmdRestartEdgeCases:
     def test_restart_process_died_after_signal(self, tmp_path, capsys):
         """After SIGUSR1, if process died, should print fallback message (line 1907-1908)."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
 
         call_count = [0]
@@ -1001,8 +1002,8 @@ class TestCmdRestartEdgeCases:
 
     def test_windows_sigterm_fallback(self, tmp_path, capsys):
         """On Windows, should send SIGTERM instead of SIGUSR1 (already tested but adding edge)."""
-        data_dir = tmp_path / ".opencode" / "webview"
-        data_dir.mkdir(parents=True)
+        data_dir = tmp_path
+        data_dir.mkdir(parents=True, exist_ok=True)
         (data_dir / ".mcp.pid").write_text(str(os.getpid()))
 
         with mock.patch("sys.argv", ["openwebgoggles", "restart", str(tmp_path)]):

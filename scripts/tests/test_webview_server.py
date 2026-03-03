@@ -53,9 +53,9 @@ from webview_server import DataContract, RateLimiter, WebviewHTTPHandler, Webvie
 @pytest.fixture
 def tmp_data_dir(tmp_path):
     """Create a temporary data directory structure."""
-    data_dir = tmp_path / ".opencode" / "webview"
+    data_dir = tmp_path
     apps_dir = data_dir / "apps" / "testapp"
-    apps_dir.mkdir(parents=True)
+    apps_dir.mkdir(parents=True, exist_ok=True)
 
     # Write a minimal manifest
     manifest = {

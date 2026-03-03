@@ -84,6 +84,26 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
+# Platform-aware data directory
+# ---------------------------------------------------------------------------
+
+_DATA_DIR_NAME = "openwebgoggles"
+
+
+def _get_data_dir() -> Path:
+    """Return the platform-appropriate persistent data directory.
+
+    - Linux/macOS: ``$XDG_DATA_HOME/openwebgoggles`` (default ``~/.local/share/openwebgoggles``)
+    - Windows: ``%LOCALAPPDATA%/openwebgoggles``
+    """
+    if platform.system() == "Windows":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return base / _DATA_DIR_NAME
+
+
+# ---------------------------------------------------------------------------
 # Deep merge utility
 # ---------------------------------------------------------------------------
 
@@ -212,7 +232,7 @@ class WebviewSession:
 
     def __init__(self, work_dir: Path | None = None, open_browser: bool = True):
         self.work_dir = work_dir or Path.cwd()
-        self.data_dir = self.work_dir / ".opencode" / "webview"
+        self.data_dir = work_dir if work_dir else _get_data_dir()
         self.process: subprocess.Popen | None = None
         self.session_token: str = ""
         self.session_id: str = ""
@@ -1300,18 +1320,23 @@ def _track_tool_call(fn):  # type: ignore[no-untyped-def]
 
 
 def _write_mcp_pid() -> None:
-    """Write our PID to .openwebgoggles/.mcp.pid so restart/status can find us."""
+    """Write our PID so ``openwebgoggles restart`` / ``status`` can find us.
+
+    Never crashes the server — PID file is a convenience for CLI commands.
+    """
     global _MCP_PID_DIR
-    data_dir = Path.cwd() / ".opencode" / "webview"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    pid_file = data_dir / ".mcp.pid"
-    # Use os.open() with explicit mode instead of process-wide umask (thread-safe)
-    fd = os.open(str(pid_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.write(fd, str(os.getpid()).encode())
-    finally:
-        os.close(fd)
-    _MCP_PID_DIR = data_dir
+        data_dir = _get_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = data_dir / ".mcp.pid"
+        fd = os.open(str(pid_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, str(os.getpid()).encode())
+        finally:
+            os.close(fd)
+        _MCP_PID_DIR = data_dir
+    except OSError:
+        pass
 
 
 def _cleanup_mcp_pid() -> None:
@@ -1454,30 +1479,76 @@ class AppModeState:
 
 _app_mode_state: AppModeState | None = None
 
+_DIAG_LOG = _get_data_dir() / "mode-diag.log"
+
+
+def _write_diag(fn: str, lines: list[str], *, result: object = None) -> None:
+    """Append diagnostic info to a persistent file + stderr."""
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+    msg = f"[{ts}] {fn}: {' | '.join(lines)}"
+    if result is not None:
+        msg += f" -> {result}"
+    print(f"[OWG] {msg}", file=sys.stderr)
+    try:
+        with open(_DIAG_LOG, "a") as f:
+            f.write(msg + "\n")
+    except OSError:
+        pass
+
 
 def _check_host_supports_ui(ctx: Context | None) -> bool:
     """Check client capabilities for io.modelcontextprotocol/ui extension.
 
     MCP Apps hosts advertise UI support during the initialize handshake.
-    We check capabilities.extensions (extra fields are preserved because
-    ClientCapabilities uses model_config = ConfigDict(extra="allow")).
-    Falls back to the resource-fetch flag as a secondary signal.
+
+    Detection strategies (tried in order):
+    1. capabilities.extensions has "io.modelcontextprotocol/ui" (Claude Desktop direct)
+    2. capabilities.experimental has "io.modelcontextprotocol/ui"
+    3. clientInfo.name is "claude-code" — Claude Desktop uses Claude Code as its AI
+       backend. Tool calls go through Claude Code's MCP connection, which doesn't
+       advertise the UI extension. But Claude Desktop wraps Claude Code's stream-json
+       output and renders structuredContent from tool results as MCP Apps.
+    4. _host_fetched_ui_resource flag (set when resources/read was called for ui://)
     """
+    diag: list[str] = []
     if ctx is not None:
         try:
-            caps = ctx.session.client_params.capabilities
-            # Check extensions dict (extra="allow" preserves it)
+            client_params = ctx.session.client_params
+            client_info = getattr(client_params, "clientInfo", None)
+            client_name = getattr(client_info, "name", "") if client_info else ""
+            caps = client_params.capabilities
+            diag.append(f"client={client_name}")
+            diag.append(f"extra={getattr(caps, 'model_extra', {})}")
+
+            # Strategy 1: extensions field (Claude Desktop direct connection)
             extensions = getattr(caps, "extensions", None)
             if isinstance(extensions, dict) and "io.modelcontextprotocol/ui" in extensions:
-                logger.info("MCP Apps: host supports UI via extensions")
+                _write_diag("check_ui", diag, result="MATCH:extensions")
                 return True
-            # Also check experimental as some hosts may put it there
+
+            # Strategy 2: experimental field
             if caps.experimental and "io.modelcontextprotocol/ui" in caps.experimental:
-                logger.info("MCP Apps: host supports UI via experimental")
+                _write_diag("check_ui", diag, result="MATCH:experimental")
                 return True
-            logger.debug("MCP Apps: no UI extension in client capabilities")
-        except Exception:
-            logger.debug("MCP Apps: failed to read client capabilities", exc_info=True)
+
+            # Strategy 3: "local-agent-mode-*" — Claude Desktop's SDK bridge wraps
+            # Claude Code. It sends clientInfo.name as "local-agent-mode-{server}"
+            # without advertising the UI extension. But Claude Desktop intercepts
+            # the stream-json output and renders structuredContent as MCP Apps.
+            # Also match "claude-code" for direct Claude Code stdio connections.
+            if isinstance(client_name, str) and (
+                client_name.startswith("local-agent-mode-") or client_name == "claude-code"
+            ):
+                _write_diag("check_ui", diag, result="MATCH:local-agent-bridge")
+                return True
+
+            diag.append(f"exp={caps.experimental}")
+        except Exception as exc:
+            diag.append(f"ERR:{exc!r}")
+    else:
+        diag.append("ctx=None")
+    diag.append(f"fetched={_host_fetched_ui_resource}")
+    _write_diag("check_ui", diag, result=_host_fetched_ui_resource)
     return _host_fetched_ui_resource
 
 
@@ -1489,16 +1560,17 @@ def _resolve_mode(ctx: Context | None) -> str:
     """
     global _cached_mode  # noqa: PLW0603
     if _cached_mode is not None:
+        _write_diag("resolve", [f"cached={_cached_mode}"])
         return _cached_mode
     if _check_host_supports_ui(ctx):
         _cached_mode = "app"
-        logger.info("MCP Apps: resolved mode=app")
     elif ctx is not None:
         # Only cache browser mode when we have a real ctx (to avoid
         # prematurely locking in browser mode before ctx is available)
         _cached_mode = "browser"
-        logger.info("MCP Apps: resolved mode=browser")
-    return _cached_mode or "browser"
+    result = _cached_mode or "browser"
+    _write_diag("resolve", [f"ctx={'yes' if ctx else 'no'}", f"mode={result}"])
+    return result
 
 
 def _reset_mode() -> None:
@@ -2501,10 +2573,10 @@ _INIT_DISPATCH = {
 
 
 def _find_data_dir(explicit: Path | None = None) -> Path:
-    """Resolve the .opencode/webview data directory."""
+    """Resolve the persistent data directory for PID files, state, etc."""
     if explicit is not None:
-        return explicit / ".opencode" / "webview"
-    return Path.cwd() / ".opencode" / "webview"
+        return explicit
+    return _get_data_dir()
 
 
 def _read_pid_file(path: Path) -> int | None:

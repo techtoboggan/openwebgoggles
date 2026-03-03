@@ -70,14 +70,14 @@ def assert_monitor_detects(ctx):
 
 @given("the MCP server PID file exists with a live PID")
 def pid_exists(ctx, tmp_path):
-    ctx.data_dir = tmp_path / ".opencode" / "webview"
-    ctx.data_dir.mkdir(parents=True)
+    ctx.data_dir = tmp_path
+    ctx.data_dir.mkdir(parents=True, exist_ok=True)
     (ctx.data_dir / ".mcp.pid").write_text(str(os.getpid()))
 
 
 @when("openwebgoggles status is run")
 def run_status(ctx, capsys):
-    with mock.patch("sys.argv", ["openwebgoggles", "status", str(ctx.data_dir.parent.parent)]):
+    with mock.patch("sys.argv", ["openwebgoggles", "status", str(ctx.data_dir)]):
         with mock.patch("mcp_server._find_data_dir", return_value=ctx.data_dir):
             mcp_server._cmd_status()
             ctx.captured = capsys.readouterr()
@@ -90,8 +90,8 @@ def assert_running(ctx):
 
 @given("no PID files exist")
 def no_pids(ctx, tmp_path):
-    ctx.data_dir = tmp_path / ".opencode" / "webview"
-    ctx.data_dir.mkdir(parents=True)
+    ctx.data_dir = tmp_path
+    ctx.data_dir.mkdir(parents=True, exist_ok=True)
 
 
 @then("it should report no server running")
@@ -101,14 +101,14 @@ def assert_not_running(ctx):
 
 @given("a PID file exists with a dead process ID")
 def dead_pid(ctx, tmp_path):
-    ctx.data_dir = tmp_path / ".opencode" / "webview"
-    ctx.data_dir.mkdir(parents=True)
+    ctx.data_dir = tmp_path
+    ctx.data_dir.mkdir(parents=True, exist_ok=True)
     (ctx.data_dir / ".mcp.pid").write_text("999999")
 
 
 @when("openwebgoggles doctor is run")
 def run_doctor(ctx, capsys):
-    with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(ctx.data_dir.parent.parent)]):
+    with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(ctx.data_dir)]):
         with mock.patch("mcp_server._find_data_dir", return_value=ctx.data_dir):
             mcp_server._cmd_doctor()
             ctx.captured = capsys.readouterr()

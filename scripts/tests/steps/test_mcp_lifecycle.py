@@ -55,7 +55,7 @@ def ctx():
 @when("the MCP server lifespan starts")
 def lifespan_starts(ctx, version_monitor_env, tmp_path):
     ctx.env = version_monitor_env
-    ctx.data_dir = tmp_path / ".opencode" / "webview"
+    ctx.data_dir = tmp_path
 
     loop = asyncio.new_event_loop()
     try:
