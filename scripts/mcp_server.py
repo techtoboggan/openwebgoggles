@@ -33,6 +33,7 @@ import urllib.error
 import urllib.request
 import uuid
 import webbrowser
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -1370,6 +1371,109 @@ async def lifespan(server: FastMCP):
         _session = None
 
 
+# ---------------------------------------------------------------------------
+# MCP Apps — dual-mode support (native iframe vs browser fallback)
+# ---------------------------------------------------------------------------
+
+_RESOURCE_URI = "ui://openwebgoggles/dynamic"
+
+# Set to True when a host fetches the UI resource (proves MCP Apps support)
+_host_fetched_ui_resource: bool = False
+
+
+class AppModeState:
+    """In-memory state for MCP Apps mode — no subprocess, no filesystem.
+
+    When the host supports MCP Apps, state flows through structuredContent
+    in tool results rather than state.json/actions.json on disk.
+    """
+
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {}
+        self.state_version: int = 0
+        self.actions: list[dict[str, Any]] = []
+        self._actions_lock = threading.Lock()
+
+    def write_state(self, state: dict[str, Any]) -> None:
+        self.state_version += 1
+        state["version"] = self.state_version
+        self.state = state
+
+    def merge_state(
+        self,
+        partial: dict[str, Any],
+        validator: Any | None = None,
+    ) -> dict[str, Any]:
+        merged = json.loads(json.dumps(self.state))  # deep copy
+        _deep_merge(merged, partial)
+        if validator:
+            validator(merged)
+        self.state_version += 1
+        merged["version"] = self.state_version
+        self.state = merged
+        return merged
+
+    def read_actions(self) -> list[dict[str, Any]]:
+        with self._actions_lock:
+            return list(self.actions)
+
+    def add_action(self, action: dict[str, Any]) -> None:
+        with self._actions_lock:
+            self.actions.append(action)
+
+    def clear_actions(self) -> None:
+        with self._actions_lock:
+            self.actions.clear()
+
+    def clear(self) -> None:
+        self.state = {}
+        self.state_version = 0
+        self.clear_actions()
+
+
+_app_mode_state: AppModeState | None = None
+
+
+def _is_app_mode() -> bool:
+    """Check if we're running in MCP Apps mode (host has fetched UI resource)."""
+    return _host_fetched_ui_resource
+
+
+def _get_app_state() -> AppModeState:
+    """Get or create the app-mode state singleton."""
+    global _app_mode_state  # noqa: PLW0603
+    if _app_mode_state is None:
+        _app_mode_state = AppModeState()
+    return _app_mode_state
+
+
+def _get_bundled_html() -> str:
+    """Get the bundled HTML for the MCP Apps resource."""
+    try:
+        try:
+            from .bundler import bundle_html
+        except ImportError:
+            from bundler import bundle_html  # noqa: I001
+        return bundle_html()
+    except Exception:
+        logger.error("Failed to bundle HTML for MCP Apps resource", exc_info=True)
+        return "<html><body><p>Error: Failed to load OpenWebGoggles UI</p></body></html>"
+
+
+def _make_merge_validator() -> Callable | None:
+    """Build a post-merge SecurityGate validator (or None if no gate)."""
+    if not _security_gate:
+        return None
+
+    def _validate_merged(merged_state: dict) -> None:
+        merged_raw = json.dumps(merged_state, separators=(",", ":"))
+        valid, err, _ = _security_gate.validate_state(merged_raw)
+        if not valid:
+            raise ValueError(f"Merged state validation failed: {err}")
+
+    return _validate_merged
+
+
 mcp = FastMCP(
     "openwebgoggles",
     instructions="""\
@@ -1565,7 +1669,70 @@ Layout types: sidebar, split.
 )
 
 
-@mcp.tool()
+# ---------------------------------------------------------------------------
+# MCP Apps resource — serves bundled HTML for native iframe rendering
+# ---------------------------------------------------------------------------
+
+
+@mcp.resource(_RESOURCE_URI, mime_type="text/html;profile=mcp-app")
+def dynamic_app_resource() -> str:
+    """Return the bundled HTML for the dynamic renderer (MCP Apps mode)."""
+    global _host_fetched_ui_resource  # noqa: PLW0603
+    _host_fetched_ui_resource = True
+    logger.info("MCP Apps: Host fetched UI resource — switching to app mode")
+    return _get_bundled_html()
+
+
+# ---------------------------------------------------------------------------
+# MCP Apps action receiver — app-only tool called by the iframe
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@_track_tool_call
+async def _owg_action(
+    action_id: str,
+    action_type: str,
+    value: Any = None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Receive a user action from the MCP App iframe.
+
+    This tool is called by the embedded iframe (via tools/call through the host)
+    when the user clicks a button or submits a form. Actions are stored in an
+    in-memory queue that the agent reads via webview_read().
+    """
+    if not _is_app_mode():
+        return {"error": "Not in MCP Apps mode"}
+
+    action: dict[str, Any] = {
+        "action_id": action_id,
+        "type": action_type,
+        "value": value,
+        "id": str(uuid.uuid4()),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    if context:
+        action["context"] = context
+
+    # Validate action via SecurityGate
+    if _security_gate:
+        raw = json.dumps(action, separators=(",", ":"))
+        valid, err, _ = _security_gate.validate_state(raw)
+        if not valid:
+            return {"error": f"Action rejected by security gate: {err}"}
+
+    app_state = _get_app_state()
+    app_state.add_action(action)
+    return {"received": True}
+
+
+# ---------------------------------------------------------------------------
+# MCP Tools — webview HITL interface
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def webview(
     state: dict[str, Any],
@@ -1705,6 +1872,17 @@ async def webview(
         if not valid:
             return {"error": f"State validation failed: {err}"}
 
+    # MCP Apps mode: store state in memory, return immediately with structuredContent
+    if _is_app_mode():
+        app_state = _get_app_state()
+        app_state.clear_actions()
+        app_state.write_state(state)
+        return {
+            "content": [{"type": "text", "text": f"Displaying UI: {state.get('title', 'Webview')}"}],
+            "structuredContent": state,
+        }
+
+    # Browser fallback: start subprocess, write state, block until action
     session = await _get_session()
     try:
         await session.ensure_started(app)
@@ -1729,7 +1907,7 @@ async def webview(
     return result
 
 
-@mcp.tool()
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def webview_read(clear: bool = False) -> dict[str, Any]:
     """Read the current user actions from the webview.
@@ -1739,6 +1917,15 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
 
     Set clear=True to clear actions after reading so the next read starts fresh.
     """
+    # MCP Apps mode: read from in-memory queue
+    if _is_app_mode():
+        app_state = _get_app_state()
+        actions = app_state.read_actions()
+        if clear and actions:
+            app_state.clear_actions()
+        return {"version": len(actions), "actions": actions}
+
+    # Browser fallback
     session = await _get_session()
     if not session._started:
         return {"version": 0, "actions": []}
@@ -1750,7 +1937,7 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
     return actions
 
 
-@mcp.tool()
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def webview_update(
     state: dict[str, Any],
@@ -1788,6 +1975,29 @@ async def webview_update(
         if not valid:
             return {"error": f"State validation failed: {err}"}
 
+    validator = _make_merge_validator()
+
+    # MCP Apps mode: update in-memory state, return structuredContent
+    if _is_app_mode():
+        app_state = _get_app_state()
+        if merge:
+            try:
+                merged = app_state.merge_state(state, validator=validator)
+            except ValueError as e:
+                return {"error": str(e)}
+            return {
+                "updated": True,
+                "version": app_state.state_version,
+                "structuredContent": merged,
+            }
+        app_state.write_state(state)
+        return {
+            "updated": True,
+            "version": app_state.state_version,
+            "structuredContent": state,
+        }
+
+    # Browser fallback
     session = await _get_session()
     try:
         await session.ensure_started(app)
@@ -1797,32 +2007,33 @@ async def webview_update(
 
     # Do NOT clear actions — preserve pending user actions
     if merge:
-        # Validate the FINAL merged state BEFORE writing to disk.
-        # Two individually valid payloads can merge into an invalid composite.
-        def _validate_merged(merged_state: dict) -> None:
-            if _security_gate:
-                merged_raw = json.dumps(merged_state, separators=(",", ":"))
-                valid, err, _ = _security_gate.validate_state(merged_raw)
-                if not valid:
-                    raise ValueError(f"Merged state validation failed: {err}")
-
         try:
-            merged = session.merge_state(state, validator=_validate_merged)
+            merged = session.merge_state(state, validator=validator)
         except ValueError as e:
             return {"error": str(e)}
         return {"updated": True, "version": merged.get("version", 0)}
-    else:
-        session.write_state(state)
-        return {"updated": True, "version": session._state_version}
+
+    session.write_state(state)
+    return {"updated": True, "version": session._state_version}
 
 
-@mcp.tool()
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def webview_status() -> dict[str, Any]:
     """Check whether a webview session is currently active.
 
     Returns the session state without modifying anything.
     """
+    # MCP Apps mode
+    if _is_app_mode():
+        app_state = _get_app_state()
+        return {
+            "active": bool(app_state.state),
+            "mode": "mcp_apps",
+            "version": app_state.state_version,
+        }
+
+    # Browser fallback
     async with _get_session_lock():
         if _session is None or not _session._started:
             return {"active": False}
@@ -1834,7 +2045,7 @@ async def webview_status() -> dict[str, Any]:
         }
 
 
-@mcp.tool()
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
     """Close the webview session and stop the server.
@@ -1843,12 +2054,20 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
     browser window is confirmed closed. Idempotent — safe to call even if
     no session is active. Always call this when done with the webview.
     """
-    global _session
+    global _session, _app_mode_state, _host_fetched_ui_resource
     # Validate close message for XSS before passing to browser
     if _security_gate and message:
         xss_warnings = _security_gate._scan_xss(message, "webview_close.message")
         if xss_warnings:
             return {"error": f"Close message rejected by security gate: {xss_warnings[0]}"}
+
+    # MCP Apps mode: clear in-memory state
+    if _is_app_mode():
+        if _app_mode_state is not None:
+            _app_mode_state.clear()
+        return {"status": "ok", "message": "Webview closed."}
+
+    # Browser fallback
     async with _get_session_lock():
         if _session is None or not _session._started:
             return {"status": "ok", "message": "No active session."}

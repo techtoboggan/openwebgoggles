@@ -10,7 +10,8 @@ scripts/              Python source (NOT src/)
   webview_server.py   HTTP + WebSocket server (raw asyncio, no framework)
   security_gate.py    SecurityGate — validates all state payloads before browser
   crypto_utils.py     Ed25519 + HMAC signing, NonceTracker
-  tests/              pytest suite (1800+ tests: unit + 32 BDD + 54 E2E)
+  bundler.py          Runtime HTML bundler for MCP Apps (inlines all JS into single HTML)
+  tests/              pytest suite (1899+ tests: unit + 36 BDD + 54 E2E)
     conftest.py       Shared fixtures (gate, session_keys, nonce_tracker, E2E Playwright)
     features/         BDD feature files (Gherkin scenarios)
     steps/            BDD step definitions (pytest-bdd)
@@ -18,19 +19,20 @@ assets/
   sdk/                Client JS SDK (openwebgoggles-sdk.js)
   apps/dynamic/       Built-in dynamic renderer
     index.html        Entry point — CSS variables, section styles, CSP nonce injection
-    app.js            Orchestrator — WebSocket, state rendering, action dispatch, pages
+    app.js            Orchestrator — transport detection, state rendering, action dispatch, pages
     utils.js          Escaping, sanitization, CSS validation, markdown rendering
     sections.js       Section type renderers (progress, log, diff, table, tabs, metric)
     charts.js         Data-driven SVG chart renderer (bar, line, area, pie, donut, sparkline)
     validation.js     Field validation engine (required, pattern, minLength, maxLength)
     behaviors.js      Conditional show/hide/enable/disable logic
+    mcp-transport.js  PostMessage JSON-RPC adapter for MCP Apps (origin pinning)
 ```
 
 ## JavaScript Architecture
 
 ### IIFE + OWG Namespace (No Build Step)
 
-All JS uses vanilla IIFE modules sharing `window.OWG`. **Load order matters** in `index.html`: `utils.js` → `sections.js` → `charts.js` → `validation.js` → `behaviors.js` → `app.js`. All script tags require the CSP nonce: `<script nonce="{{NONCE}}" src="...">`.
+All JS uses vanilla IIFE modules sharing `window.OWG`. **Load order matters** in `index.html`: `utils.js` → `sections.js` → `charts.js` → `validation.js` → `behaviors.js` → `mcp-transport.js` → `app.js`. All script tags require the CSP nonce: `<script nonce="{{NONCE}}" src="...">`.
 
 ### Key Safety Rules
 
@@ -40,7 +42,46 @@ All JS uses vanilla IIFE modules sharing `window.OWG`. **Load order matters** in
 - **`sanitizeHTML()` strips** — event handler attrs (`on*`), `id`/`name` attrs, and dangerous URLs; preserves `data-*` and `style` (needed by renderer)
 - **CSS classes for visibility** — `.owg-page-hidden`, `.owg-tabs-hidden`, `.hidden` (not inline styles)
 
-## Python Architecture
+## MCP Apps — Dual-Mode Architecture
+
+OpenWebGoggles supports two transport modes, selected automatically at runtime:
+
+| Mode | When | Transport | State Flow |
+|------|------|-----------|------------|
+| **MCP Apps** | Host fetches `ui://openwebgoggles/dynamic` resource | postMessage JSON-RPC via host iframe | `structuredContent` in tool results |
+| **Browser fallback** | Host does not fetch UI resource | WebSocket + HTTP to localhost subprocess | `state.json` / `actions.json` on disk |
+
+### Mode Detection
+
+1. Host calls `resources/read("ui://openwebgoggles/dynamic")` → server sets `_host_fetched_ui_resource = True`
+2. All subsequent tool calls check `_is_app_mode()` and branch accordingly
+3. In app mode: `AppModeState` holds state in memory (no subprocess, no filesystem)
+4. In browser mode: `WebviewSession` manages subprocess lifecycle (unchanged)
+
+### MCP Apps Key Components
+
+- **`bundler.py`** — Runtime HTML bundler producing ~168KB self-contained HTML with all JS inlined. Sets `window.__OWG_MCP_APPS__ = true` flag. Cached for process lifetime.
+- **`mcp-transport.js`** — PostMessage JSON-RPC adapter implementing same interface as SDK (`connect`, `on`, `sendAction`, `getState`). Uses **origin pinning**: first handshake uses `"*"`, then locks to host's `event.origin` for all subsequent messages. Validates `event.source === window.parent`.
+- **`app.js` transport detection** — `isMCPApps = !!(window.__OWG_MCP_APPS__ && window.parent !== window)`. Picks `MCPAppsTransport` or `OpenWebGoggles` SDK accordingly.
+- **`_owg_action` tool** — Hidden tool called by iframe to submit user actions. Actions stored in `AppModeState` memory queue, read by agent via `webview_read()`.
+- **Tool `meta`** — All 5 tools declare `meta={"ui": {"resourceUri": "ui://openwebgoggles/dynamic"}}` linking them to the UI resource.
+
+### MCP Apps Security Model
+
+App mode delegates transport security to the host. SecurityGate validation still applies to all state and actions. The trust boundary comparison:
+
+| Protection | Browser Mode | App Mode |
+|-----------|-------------|----------|
+| State validation (SecurityGate) | ✓ | ✓ |
+| Ed25519 signatures | ✓ | Host responsibility |
+| HMAC action signing | ✓ | Host responsibility |
+| Nonce replay protection | ✓ | Host responsibility |
+| Origin validation | Localhost-only | Origin pinning (postMessage) |
+| Process isolation | Subprocess | Iframe sandbox |
+
+**Key rule**: In app mode, the host is part of the trusted computing base. For untrusted embedding contexts, use browser fallback mode.
+
+
 
 ### SecurityGate — Rejection, Not Mutation
 
@@ -131,13 +172,14 @@ python -m pytest scripts/tests/steps/ -v -m bdd
 - Top-level state keys are allowlisted — nest test data under `"data"`
 - Two tabs nesting levels exceed `MAX_NESTING_DEPTH=10` by design
 
-### BDD Tests (32 scenarios)
+### BDD Tests (36 scenarios)
 
 Feature files in `scripts/tests/features/`, step definitions in `scripts/tests/steps/`:
 - `hot_reload.feature` (9) — version monitor, mtime, error backoff, path recovery
 - `import_fallback.feature` (5) — relative/absolute import resolution
 - `mcp_lifecycle.feature` (5) — lifespan startup/cleanup, background tasks
 - `stale_server.feature` (5) — tool rejection, host notification
+- `mcp_apps.feature` (4) — structured content, browser fallback, action round-trip, close cleanup
 - `cli_lifecycle.feature` (4) — SIGUSR1, status, PID files
 - `installation.feature` (4) — version detection, METADATA reading
 
