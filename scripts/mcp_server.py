@@ -2208,14 +2208,16 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
 # Init command — bootstrap OpenWebGoggles for a specific editor
 # ---------------------------------------------------------------------------
 
-_EDITORS = ["claude", "opencode"]
+_EDITORS = ["claude", "claude-desktop", "opencode"]
 
 # Default config directories per editor (when user doesn't specify a target).
 # Claude Code uses project-level .mcp.json, so cwd is the right default.
+# Claude Desktop uses a global config at ~/Library/Application Support/Claude/.
 # OpenCode has a global config at ~/.config/opencode/, which makes more sense
 # as a default since you typically want the MCP server available everywhere.
 _EDITOR_DEFAULT_DIRS: dict[str, Path | None] = {
     "claude": None,  # None means cwd
+    "claude-desktop": None,  # handled specially — platform-specific global config
     "opencode": Path.home() / ".config" / "opencode",
 }
 
@@ -2319,7 +2321,58 @@ def _init_claude(root: Path) -> None:
         settings_path.write_text(json.dumps(_CLAUDE_SETTINGS, indent=2) + "\n")
         print(f"  {settings_path}: created.")
 
-    print("\nDone! Restart Claude Code to pick up the new MCP server.")
+    # --- Claude Desktop (global config) ---
+    print("\n  [Claude Desktop]")
+    _setup_claude_desktop_config(binary)
+
+    print("\nDone! Restart Claude Code and Claude Desktop to pick up the new MCP server.")
+
+
+def _get_claude_desktop_config_path() -> Path:
+    """Return the platform-specific Claude Desktop config path."""
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    if platform.system() == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            return Path(appdata) / "Claude" / "claude_desktop_config.json"
+    # Linux / fallback
+    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+
+
+def _setup_claude_desktop_config(binary: str) -> None:
+    """Write the Claude Desktop config entry (shared by init claude and init claude-desktop)."""
+    config_path = _get_claude_desktop_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    server_entry: dict[str, Any] = {"command": binary}
+
+    if config_path.exists():
+        existing = json.loads(config_path.read_text())
+        servers = existing.setdefault("mcpServers", {})
+        existing_key = _find_server_key(servers)
+        if existing_key:
+            print(f"  {config_path}: {existing_key} already configured, skipping.")
+        else:
+            servers["openwebgoggles"] = server_entry
+            config_path.write_text(json.dumps(existing, indent=2) + "\n")
+            print(f"  {config_path}: added openwebgoggles server.")
+    else:
+        config = {"mcpServers": {"openwebgoggles": server_entry}}
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+        print(f"  {config_path}: created.")
+
+
+def _init_claude_desktop(_root: Path) -> None:
+    """Set up claude_desktop_config.json for Claude Desktop.
+
+    The root argument is ignored — Claude Desktop always uses the global
+    platform-specific config path.
+    """
+    binary = _resolve_binary()
+    print(f"  binary: {binary}")
+    _setup_claude_desktop_config(binary)
+    print("\nDone! Fully quit and relaunch Claude Desktop to pick up the new MCP server.")
 
 
 def _strip_jsonc_comments(text: str) -> str:
@@ -2421,19 +2474,23 @@ def _init_usage() -> None:
     print("Usage: openwebgoggles init <editor> [target_dir]\n")
     print("Set up OpenWebGoggles for your editor.\n")
     print("Editors:")
-    print("  claude      Claude Code — creates .mcp.json + .claude/settings.json")
-    print("              Default target: current directory (project-level)")
-    print("  opencode    OpenCode — creates opencode.json")
-    print("              Default target: ~/.config/opencode/ (global, all projects)\n")
+    print("  claude          Claude Code + Claude Desktop (sets up both)")
+    print("                  Default target: current directory (project-level)")
+    print("  claude-desktop  Claude Desktop only — adds to claude_desktop_config.json")
+    print("                  Uses the global platform-specific config path")
+    print("  opencode        OpenCode — creates opencode.json")
+    print("                  Default target: ~/.config/opencode/ (global, all projects)\n")
     print("Examples:")
-    print("  openwebgoggles init claude          # set up current project for Claude Code")
-    print("  openwebgoggles init opencode         # set up OpenCode globally")
-    print("  openwebgoggles init opencode .       # set up OpenCode for this project only")
-    print("  openwebgoggles init claude ~/my-proj # set up a specific project for Claude Code")
+    print("  openwebgoggles init claude              # set up Claude Code + Desktop")
+    print("  openwebgoggles init claude-desktop       # set up Claude Desktop only")
+    print("  openwebgoggles init opencode             # set up OpenCode globally")
+    print("  openwebgoggles init opencode .           # set up OpenCode for this project only")
+    print("  openwebgoggles init claude ~/my-proj     # set up a specific project for Claude")
 
 
 _INIT_DISPATCH = {
     "claude": _init_claude,
+    "claude-desktop": _init_claude_desktop,
     "opencode": _init_opencode,
 }
 
