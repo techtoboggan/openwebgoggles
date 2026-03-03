@@ -1469,12 +1469,15 @@ def _check_host_supports_ui(ctx: Context | None) -> bool:
             # Check extensions dict (extra="allow" preserves it)
             extensions = getattr(caps, "extensions", None)
             if isinstance(extensions, dict) and "io.modelcontextprotocol/ui" in extensions:
+                logger.info("MCP Apps: host supports UI via extensions")
                 return True
             # Also check experimental as some hosts may put it there
             if caps.experimental and "io.modelcontextprotocol/ui" in caps.experimental:
+                logger.info("MCP Apps: host supports UI via experimental")
                 return True
+            logger.debug("MCP Apps: no UI extension in client capabilities")
         except Exception:
-            pass
+            logger.debug("MCP Apps: failed to read client capabilities", exc_info=True)
     return _host_fetched_ui_resource
 
 
@@ -1489,10 +1492,12 @@ def _resolve_mode(ctx: Context | None) -> str:
         return _cached_mode
     if _check_host_supports_ui(ctx):
         _cached_mode = "app"
+        logger.info("MCP Apps: resolved mode=app")
     elif ctx is not None:
         # Only cache browser mode when we have a real ctx (to avoid
         # prematurely locking in browser mode before ctx is available)
         _cached_mode = "browser"
+        logger.info("MCP Apps: resolved mode=browser")
     return _cached_mode or "browser"
 
 
@@ -1739,6 +1744,31 @@ Layout types: sidebar, split.
 """,
     lifespan=lifespan,
 )
+
+
+# ---------------------------------------------------------------------------
+# MCP Apps: advertise io.modelcontextprotocol/ui extension in server capabilities
+# ---------------------------------------------------------------------------
+# The MCP Apps spec requires bidirectional negotiation: both client AND server
+# must advertise the extension during initialize.  FastMCP doesn't expose a
+# direct API for setting server extensions, so we wrap get_capabilities() on
+# the low-level server to inject the extension field.
+
+_original_get_capabilities = mcp._mcp_server.get_capabilities
+
+
+def _patched_get_capabilities(*args, **kwargs):  # type: ignore[no-untyped-def]  # noqa: ANN002, ANN003, ANN201
+    caps = _original_get_capabilities(*args, **kwargs)
+    # ServerCapabilities has extra="allow" so this field serializes through
+    caps.extensions = {  # type: ignore[attr-defined]
+        "io.modelcontextprotocol/ui": {
+            "mimeTypes": ["text/html;profile=mcp-app"],
+        },
+    }
+    return caps
+
+
+mcp._mcp_server.get_capabilities = _patched_get_capabilities
 
 
 # ---------------------------------------------------------------------------

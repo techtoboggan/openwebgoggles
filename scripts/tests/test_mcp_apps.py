@@ -301,6 +301,14 @@ class TestModeDetection:
         assert mcp_server._cached_mode == "app"
         assert mcp_server._host_fetched_ui_resource is True
 
+    def test_server_advertises_ui_extension(self):
+        """Server capabilities include io.modelcontextprotocol/ui extension."""
+        init_opts = mcp_server.mcp._mcp_server.create_initialization_options()
+        caps = init_opts.capabilities
+        assert hasattr(caps, "extensions"), "ServerCapabilities must include extensions field"
+        assert "io.modelcontextprotocol/ui" in caps.extensions
+        assert "mimeTypes" in caps.extensions["io.modelcontextprotocol/ui"]
+
 
 # ---------------------------------------------------------------------------
 # _owg_action tool
