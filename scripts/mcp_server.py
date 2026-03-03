@@ -1382,6 +1382,9 @@ _RESOURCE_URI = "ui://openwebgoggles/dynamic"
 # Set to True when a host fetches the UI resource (proves MCP Apps support)
 _host_fetched_ui_resource: bool = False
 
+# Cached mode: "app" | "browser" | None (None = not yet determined)
+_cached_mode: str | None = None
+
 
 class AppModeState:
     """In-memory state for MCP Apps mode — no subprocess, no filesystem.
@@ -1452,9 +1455,60 @@ class AppModeState:
 _app_mode_state: AppModeState | None = None
 
 
-def _is_app_mode() -> bool:
-    """Check if we're running in MCP Apps mode (host has fetched UI resource)."""
+def _check_host_supports_ui(ctx: Context | None) -> bool:
+    """Check client capabilities for io.modelcontextprotocol/ui extension.
+
+    MCP Apps hosts advertise UI support during the initialize handshake.
+    We check capabilities.extensions (extra fields are preserved because
+    ClientCapabilities uses model_config = ConfigDict(extra="allow")).
+    Falls back to the resource-fetch flag as a secondary signal.
+    """
+    if ctx is not None:
+        try:
+            caps = ctx.session.client_params.capabilities
+            # Check extensions dict (extra="allow" preserves it)
+            extensions = getattr(caps, "extensions", None)
+            if isinstance(extensions, dict) and "io.modelcontextprotocol/ui" in extensions:
+                return True
+            # Also check experimental as some hosts may put it there
+            if caps.experimental and "io.modelcontextprotocol/ui" in caps.experimental:
+                return True
+        except Exception:
+            pass
     return _host_fetched_ui_resource
+
+
+def _resolve_mode(ctx: Context | None) -> str:
+    """Resolve and cache the operating mode. Returns 'app' or 'browser'.
+
+    Once determined, the mode is cached for the session lifetime.
+    Call _reset_mode() (via webview_close) to clear the cache.
+    """
+    global _cached_mode  # noqa: PLW0603
+    if _cached_mode is not None:
+        return _cached_mode
+    if _check_host_supports_ui(ctx):
+        _cached_mode = "app"
+    elif ctx is not None:
+        # Only cache browser mode when we have a real ctx (to avoid
+        # prematurely locking in browser mode before ctx is available)
+        _cached_mode = "browser"
+    return _cached_mode or "browser"
+
+
+def _reset_mode() -> None:
+    """Reset the cached mode (called by webview_close)."""
+    global _cached_mode  # noqa: PLW0603
+    _cached_mode = None
+
+
+def _is_app_mode() -> bool:
+    """Check if we're running in MCP Apps mode.
+
+    Uses the cached mode if available, otherwise falls back to the
+    resource-fetch flag for backward compatibility.
+    """
+    return _cached_mode == "app" or _host_fetched_ui_resource
 
 
 def _get_app_state() -> AppModeState:
@@ -1701,8 +1755,9 @@ Layout types: sidebar, split.
 )
 def dynamic_app_resource() -> str:
     """Return the bundled HTML for the dynamic renderer (MCP Apps mode)."""
-    global _host_fetched_ui_resource  # noqa: PLW0603
+    global _host_fetched_ui_resource, _cached_mode  # noqa: PLW0603
     _host_fetched_ui_resource = True
+    _cached_mode = "app"
     logger.info("MCP Apps: Host fetched UI resource — switching to app mode")
     return _get_bundled_html()
 
@@ -1726,7 +1781,7 @@ async def _owg_action(
     when the user clicks a button or submits a form. Actions are stored in an
     in-memory queue that the agent reads via webview_read().
     """
-    if not _is_app_mode():
+    if _resolve_mode(None) != "app":
         return {"error": "Not in MCP Apps mode"}
 
     # Reject internal action_ids (underscore prefix is reserved for navigation bookkeeping)
@@ -1899,37 +1954,37 @@ async def webview(
         if not valid:
             return {"error": f"State validation failed: {err}"}
 
-    # Always return CallToolResult with structuredContent immediately.
-    # The host can only render the iframe AFTER the tool returns, so blocking
-    # here would prevent MCP Apps from ever working.
-    #
-    # Flow:
-    #   1. webview() returns immediately with structuredContent
-    #   2. Host renders iframe, delivers state via ui/notifications/tool-result
-    #   3. User interacts with iframe → _owg_action stores actions in queue
-    #   4. Agent polls webview_read() to collect user actions
-    #
-    # For non-MCP-Apps hosts, the browser subprocess also starts as a fallback.
-    # Actions from either source land in the same queue via webview_read().
-    app_state = _get_app_state()
-    app_state.clear_actions()
-    app_state.write_state(state)
+    mode = _resolve_mode(ctx)
 
-    # Start browser fallback for hosts without MCP Apps support.
-    # The browser runs in the background — we don't block waiting for it.
-    if not _is_app_mode():
-        session = await _get_session()
-        try:
-            await session.ensure_started(app)
-            session.clear_actions()
-            session.write_state(state)
-        except Exception:
-            logger.warning("Failed to start browser fallback", exc_info=True)
+    # ── App mode: return immediately with structuredContent ─────────────
+    # The host renders an iframe AFTER the tool returns, so we must NOT
+    # block here.  User actions arrive via _owg_action → webview_read().
+    if mode == "app":
+        app_state = _get_app_state()
+        app_state.clear_actions()
+        app_state.write_state(state)
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Displaying UI: {state.get('title', 'Webview')}")],
+            structuredContent=state,
+        )
 
-    return CallToolResult(
-        content=[TextContent(type="text", text=f"Displaying UI: {state.get('title', 'Webview')}")],
-        structuredContent=state,
+    # ── Browser mode: start subprocess, block until user acts ──────────
+    session = await _get_session()
+    await session.ensure_started(app)
+    session.clear_actions()
+    session.write_state(state)
+
+    async def _progress(elapsed: float, total: float) -> None:
+        if ctx:
+            await ctx.report_progress(elapsed, total)
+
+    result = await session.wait_for_action(
+        timeout=timeout,
+        on_progress=_progress if ctx else None,
     )
+    if result is None:
+        return {"error": f"Timed out after {timeout}s waiting for user action."}
+    return result
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
@@ -1942,8 +1997,10 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
 
     Set clear=True to clear actions after reading so the next read starts fresh.
     """
-    # MCP Apps mode: read from in-memory queue
-    if _is_app_mode():
+    mode = _resolve_mode(None)
+
+    # ── App mode: read from in-memory queue ────────────────────────────
+    if mode == "app":
         app_state = _get_app_state()
         if clear:
             # Atomic read+clear prevents losing actions submitted between read and clear
@@ -1952,7 +2009,7 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
             actions = app_state.read_actions()
         return {"version": len(actions), "actions": actions}
 
-    # Browser fallback
+    # ── Browser mode ───────────────────────────────────────────────────
     session = await _get_session()
     if not session._started:
         return {"version": 0, "actions": []}
@@ -1971,6 +2028,7 @@ async def webview_update(
     merge: bool = False,
     preset: str | None = None,
     app: str = "dynamic",
+    ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Update the webview state without blocking for a response.
 
@@ -2003,9 +2061,10 @@ async def webview_update(
             return {"error": f"State validation failed: {err}"}
 
     validator = _make_merge_validator()
+    mode = _resolve_mode(ctx)
 
-    # MCP Apps mode: update in-memory state, return structuredContent via CallToolResult
-    if _is_app_mode():
+    # ── App mode: update in-memory state, return structuredContent ─────
+    if mode == "app":
         app_state = _get_app_state()
         if merge:
             try:
@@ -2022,7 +2081,7 @@ async def webview_update(
             structuredContent=state,
         )
 
-    # Browser fallback
+    # ── Browser mode ───────────────────────────────────────────────────
     session = await _get_session()
     try:
         await session.ensure_started(app)
@@ -2049,8 +2108,10 @@ async def webview_status() -> dict[str, Any]:
 
     Returns the session state without modifying anything.
     """
-    # MCP Apps mode
-    if _is_app_mode():
+    mode = _resolve_mode(None)
+
+    # ── App mode ───────────────────────────────────────────────────────
+    if mode == "app":
         app_state = _get_app_state()
         return {
             "active": bool(app_state.state),
@@ -2058,12 +2119,13 @@ async def webview_status() -> dict[str, Any]:
             "version": app_state.state_version,
         }
 
-    # Browser fallback
+    # ── Browser mode ───────────────────────────────────────────────────
     async with _get_session_lock():
         if _session is None or not _session._started:
-            return {"active": False}
+            return {"active": False, "mode": "browser"}
         return {
             "active": True,
+            "mode": "browser",
             "alive": _session.is_alive(),
             "url": _session.url,
             "session_id": _session.session_id,
@@ -2086,14 +2148,18 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
         if xss_warnings:
             return {"error": f"Close message rejected by security gate: {xss_warnings[0]}"}
 
-    # MCP Apps mode: clear in-memory state and reset mode flag
-    if _is_app_mode():
+    mode = _resolve_mode(None)
+
+    # ── App mode: clear in-memory state and reset mode ─────────────────
+    if mode == "app":
         _host_fetched_ui_resource = False
+        _reset_mode()
         if _app_mode_state is not None:
             _app_mode_state.clear()
         return {"status": "ok", "message": "Webview closed."}
 
-    # Browser fallback
+    # ── Browser mode ───────────────────────────────────────────────────
+    _reset_mode()
     async with _get_session_lock():
         if _session is None or not _session._started:
             return {"status": "ok", "message": "No active session."}

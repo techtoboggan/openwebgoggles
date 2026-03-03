@@ -74,9 +74,11 @@ def _reset_app_mode_state():
     old_fetched = mcp_server._host_fetched_ui_resource
     old_app_state = mcp_server._app_mode_state
     old_security_gate = mcp_server._security_gate
+    old_cached_mode = mcp_server._cached_mode
 
     mcp_server._host_fetched_ui_resource = False
     mcp_server._app_mode_state = None
+    mcp_server._cached_mode = None
     # Disable security gate to avoid side effects in unit tests
     mcp_server._security_gate = None
 
@@ -85,6 +87,7 @@ def _reset_app_mode_state():
     mcp_server._host_fetched_ui_resource = old_fetched
     mcp_server._app_mode_state = old_app_state
     mcp_server._security_gate = old_security_gate
+    mcp_server._cached_mode = old_cached_mode
 
 
 # ---------------------------------------------------------------------------
@@ -95,11 +98,13 @@ def _reset_app_mode_state():
 @given("the host has fetched the UI resource")
 def host_fetched_resource(ctx):
     mcp_server._host_fetched_ui_resource = True
+    mcp_server._cached_mode = "app"
 
 
 @given("the host has not fetched the UI resource")
 def host_not_fetched_resource(ctx):
     mcp_server._host_fetched_ui_resource = False
+    mcp_server._cached_mode = None
 
 
 @given("the agent has displayed a webview")
@@ -158,6 +163,7 @@ def call_webview_fallback_ui(ctx):
             with mock.patch("mcp_server._get_session", return_value=mock_session):
                 return await mcp_server.webview(
                     state={"title": "Fallback UI", "data": {"sections": []}},
+                    timeout=30,
                 )
 
         ctx.result = loop.run_until_complete(_call())
@@ -221,11 +227,10 @@ def assert_browser_fallback(ctx):
     # The mock session's ensure_started should have been called
     ctx.mock_session.ensure_started.assert_called_once()
     ctx.mock_session.write_state.assert_called_once()
-    # Result should NOT contain structuredContent (browser mode returns
-    # the wait_for_action result directly)
-    assert "structuredContent" not in ctx.result, (
-        f"Browser fallback should not return structuredContent, got: {ctx.result}"
-    )
+    ctx.mock_session.wait_for_action.assert_called_once()
+    # Browser mode returns plain dict from wait_for_action (not CallToolResult)
+    assert isinstance(ctx.result, dict), f"Browser fallback should return plain dict, got: {type(ctx.result).__name__}"
+    assert "actions" in ctx.result
 
 
 @then("webview_read should return the action")

@@ -17,10 +17,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import mcp_server
 from mcp_server import (
     AppModeState,
+    _check_host_supports_ui,
     _get_app_state,
     _is_app_mode,
     _make_merge_validator,
     _owg_action,
+    _reset_mode,
+    _resolve_mode,
     webview,
     webview_close,
     webview_read,
@@ -42,11 +45,13 @@ def _reset_app_mode():
     old_pending = mcp_server._reload_pending
     old_active = mcp_server._active_tool_calls
     old_gate = mcp_server._security_gate
+    old_cached_mode = mcp_server._cached_mode
 
     mcp_server._host_fetched_ui_resource = False
     mcp_server._app_mode_state = None
     mcp_server._reload_pending = False
     mcp_server._active_tool_calls = 0
+    mcp_server._cached_mode = None
 
     yield
 
@@ -55,10 +60,12 @@ def _reset_app_mode():
     mcp_server._reload_pending = old_pending
     mcp_server._active_tool_calls = old_active
     mcp_server._security_gate = old_gate
+    mcp_server._cached_mode = old_cached_mode
 
 
 def _enable_app_mode():
-    """Enable MCP Apps mode by setting the host-fetched flag."""
+    """Enable MCP Apps mode by setting the cached mode and host-fetched flag."""
+    mcp_server._cached_mode = "app"
     mcp_server._host_fetched_ui_resource = True
 
 
@@ -172,12 +179,17 @@ class TestAppModeState:
 
 class TestAppModeHelpers:
     def test_is_app_mode_false_by_default(self):
-        """_is_app_mode() returns False when host has not fetched the UI resource."""
+        """_is_app_mode() returns False when no mode is set."""
         assert _is_app_mode() is False
 
     def test_is_app_mode_true_after_flag(self):
-        """_is_app_mode() returns True after the host-fetched flag is set."""
+        """_is_app_mode() returns True after the cached mode is set to 'app'."""
         _enable_app_mode()
+        assert _is_app_mode() is True
+
+    def test_is_app_mode_true_via_host_fetched(self):
+        """_is_app_mode() returns True when only _host_fetched_ui_resource is set."""
+        mcp_server._host_fetched_ui_resource = True
         assert _is_app_mode() is True
 
     def test_get_app_state_creates_singleton(self):
@@ -201,6 +213,93 @@ class TestAppModeHelpers:
         # Calling it should not raise when gate says valid
         validator({"title": "OK"})
         gate.validate_state.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Mode detection
+# ---------------------------------------------------------------------------
+
+
+class TestModeDetection:
+    def test_resolve_mode_defaults_to_browser(self):
+        """_resolve_mode(None) returns 'browser' when nothing is cached."""
+        assert _resolve_mode(None) == "browser"
+
+    def test_resolve_mode_caches_app(self):
+        """_resolve_mode caches 'app' when host supports UI."""
+        mcp_server._host_fetched_ui_resource = True
+        assert _resolve_mode(None) == "app"
+        assert mcp_server._cached_mode == "app"
+
+    def test_resolve_mode_cached_value(self):
+        """_resolve_mode returns cached mode without re-checking."""
+        mcp_server._cached_mode = "app"
+        # Even with _host_fetched_ui_resource = False, cached mode wins
+        assert _resolve_mode(None) == "app"
+
+    def test_resolve_mode_browser_with_ctx(self):
+        """_resolve_mode caches 'browser' when ctx is provided but no UI support."""
+        mock_ctx = mock.MagicMock()
+        mock_ctx.session.client_params.capabilities = mock.MagicMock()
+        mock_ctx.session.client_params.capabilities.experimental = None
+        # No extensions attribute means no UI support
+        del mock_ctx.session.client_params.capabilities.extensions
+        result = _resolve_mode(mock_ctx)
+        assert result == "browser"
+        assert mcp_server._cached_mode == "browser"
+
+    def test_resolve_mode_app_via_capabilities(self):
+        """_resolve_mode detects app mode via client capabilities extensions."""
+        mock_ctx = mock.MagicMock()
+        mock_caps = mock.MagicMock()
+        mock_caps.extensions = {"io.modelcontextprotocol/ui": {}}
+        mock_caps.experimental = None
+        mock_ctx.session.client_params.capabilities = mock_caps
+        result = _resolve_mode(mock_ctx)
+        assert result == "app"
+        assert mcp_server._cached_mode == "app"
+
+    def test_resolve_mode_app_via_experimental(self):
+        """_resolve_mode detects app mode via experimental capabilities."""
+        mock_ctx = mock.MagicMock()
+        mock_caps = mock.MagicMock()
+        # No extensions attribute
+        del mock_caps.extensions
+        mock_caps.experimental = {"io.modelcontextprotocol/ui": {}}
+        mock_ctx.session.client_params.capabilities = mock_caps
+        result = _resolve_mode(mock_ctx)
+        assert result == "app"
+        assert mcp_server._cached_mode == "app"
+
+    def test_check_host_supports_ui_no_ctx(self):
+        """_check_host_supports_ui returns False with no ctx and no flag."""
+        assert _check_host_supports_ui(None) is False
+
+    def test_check_host_supports_ui_fallback_to_flag(self):
+        """_check_host_supports_ui falls back to _host_fetched_ui_resource."""
+        mcp_server._host_fetched_ui_resource = True
+        assert _check_host_supports_ui(None) is True
+
+    def test_check_host_supports_ui_ctx_exception(self):
+        """_check_host_supports_ui handles exceptions gracefully."""
+        mock_ctx = mock.MagicMock()
+        mock_ctx.session.client_params.capabilities = mock.PropertyMock(
+            side_effect=AttributeError("no capabilities"),
+        )
+        assert _check_host_supports_ui(mock_ctx) is False
+
+    def test_reset_mode(self):
+        """_reset_mode clears the cached mode."""
+        mcp_server._cached_mode = "app"
+        _reset_mode()
+        assert mcp_server._cached_mode is None
+
+    def test_dynamic_app_resource_sets_cached_mode(self):
+        """dynamic_app_resource() sets _cached_mode to 'app'."""
+        with mock.patch("mcp_server._get_bundled_html", return_value="<html></html>"):
+            mcp_server.dynamic_app_resource()
+        assert mcp_server._cached_mode == "app"
+        assert mcp_server._host_fetched_ui_resource is True
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +495,7 @@ class TestWebviewUpdateAppMode:
 
 class TestWebviewCloseAppMode:
     async def test_clears_state(self):
-        """webview_close clears in-memory state in app mode."""
+        """webview_close clears in-memory state and resets mode in app mode."""
         _enable_app_mode()
         mcp_server._security_gate = None
         app_state = _get_app_state()
@@ -407,6 +506,9 @@ class TestWebviewCloseAppMode:
         assert app_state.state == {}
         assert app_state.state_version == 0
         assert app_state.read_actions() == []
+        # Mode should be reset so next session can re-detect
+        assert mcp_server._cached_mode is None
+        assert mcp_server._host_fetched_ui_resource is False
 
 
 # ---------------------------------------------------------------------------

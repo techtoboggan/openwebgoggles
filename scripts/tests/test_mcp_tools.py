@@ -30,6 +30,23 @@ from mcp_server import (
 
 
 # ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _ensure_browser_mode():
+    """Ensure browser mode for all tests in this file."""
+    old_cached_mode = mcp_server._cached_mode
+    old_host_fetched = mcp_server._host_fetched_ui_resource
+    mcp_server._cached_mode = None
+    mcp_server._host_fetched_ui_resource = False
+    yield
+    mcp_server._cached_mode = old_cached_mode
+    mcp_server._host_fetched_ui_resource = old_host_fetched
+
+
+# ---------------------------------------------------------------------------
 # Helper: create a mock session
 # ---------------------------------------------------------------------------
 
@@ -59,22 +76,38 @@ def _make_mock_session(**kwargs):
 
 
 class TestWebviewTool:
-    async def test_returns_call_tool_result(self):
-        """webview always returns CallToolResult with structuredContent."""
+    async def test_browser_mode_blocks_and_returns_actions(self):
+        """webview in browser mode blocks via wait_for_action and returns result."""
         mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {
+            "actions": [{"action_id": "ok", "type": "approve"}],
+        }
+
+        with mock.patch("mcp_server._get_session", return_value=mock_session):
+            result = await webview(state={"title": "Test"}, timeout=30, ctx=None)
+
+        # Browser mode returns the wait_for_action result directly (plain dict)
+        assert isinstance(result, dict)
+        assert "actions" in result
+        mock_session.ensure_started.assert_called_once()
+        mock_session.write_state.assert_called_once()
+        mock_session.wait_for_action.assert_called_once()
+
+    async def test_browser_mode_timeout(self):
+        """webview returns timeout error when no user action arrives."""
+        mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = None  # timeout
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
             result = await webview(state={"title": "Test"}, timeout=1, ctx=None)
 
-        assert hasattr(result, "structuredContent")
-        assert result.structuredContent["title"] == "Test"
-        # Browser fallback should also start
-        mock_session.ensure_started.assert_called_once()
-        mock_session.write_state.assert_called_once()
+        assert "error" in result
+        assert "Timed out" in result["error"]
 
-    async def test_starts_browser_fallback(self):
-        """webview starts browser subprocess as fallback for non-MCP-Apps hosts."""
+    async def test_browser_mode_starts_session(self):
+        """webview starts browser subprocess and clears actions."""
         mock_session = _make_mock_session()
+        mock_session.wait_for_action.return_value = {"actions": []}
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
             await webview(state={"title": "Test"}, timeout=30, ctx=None)
@@ -127,17 +160,14 @@ class TestWebviewTool:
         finally:
             mcp_server._security_gate = old_gate
 
-    async def test_ensure_started_failure_still_returns(self):
-        """webview returns CallToolResult even if browser fallback fails."""
+    async def test_ensure_started_failure_raises(self):
+        """webview propagates RuntimeError when browser start fails."""
         mock_session = _make_mock_session()
         mock_session.ensure_started = mock.AsyncMock(side_effect=RuntimeError("bind failed"))
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state={"title": "Test"}, timeout=1, ctx=None)
-
-        # Should still return structuredContent — browser failure is non-fatal
-        assert hasattr(result, "structuredContent")
-        assert result.structuredContent["title"] == "Test"
+            with pytest.raises(RuntimeError, match="bind failed"):
+                await webview(state={"title": "Test"}, timeout=1, ctx=None)
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +316,7 @@ class TestWebviewStatusTool:
         try:
             result = await webview_status()
             assert result["active"] is False
+            assert result["mode"] == "browser"
         finally:
             mcp_server._session = old
 
@@ -297,6 +328,7 @@ class TestWebviewStatusTool:
         try:
             result = await webview_status()
             assert result["active"] is False
+            assert result["mode"] == "browser"
         finally:
             mcp_server._session = old
 
@@ -308,6 +340,7 @@ class TestWebviewStatusTool:
         try:
             result = await webview_status()
             assert result["active"] is True
+            assert result["mode"] == "browser"
             assert result["alive"] is True
             assert "url" in result
             assert "session_id" in result
