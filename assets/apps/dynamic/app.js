@@ -13,7 +13,15 @@
   U.formValues = Object.create(null);
   U.fieldValidators = Object.create(null);
 
-  var wv = new OpenWebGoggles();
+  // Transport detection: MCP Apps (iframe) vs standalone browser (WebSocket)
+  var wv;
+  var isMCPApps = !!(window.__OWG_MCP_APPS__ && window.parent !== window);
+  if (isMCPApps && U.MCPAppsTransport) {
+    wv = new U.MCPAppsTransport();
+  } else {
+    wv = new OpenWebGoggles();
+  }
+
   var done = false;
 
   var els = {
@@ -25,11 +33,19 @@
     connDot:    document.getElementById("conn-dot"),
   };
 
+  // Hide header in MCP Apps mode (host provides its own chrome)
+  if (isMCPApps) {
+    var hdr = document.querySelector("header");
+    if (hdr) hdr.style.display = "none";
+  }
+
   wv.connect()
     .then(function (instance) {
-      var m = instance.getManifest();
-      if (m && m.session) els.hdrSession.textContent = "Session: " + m.session.id.slice(0, 8);
-      els.connDot.classList.add("on");
+      if (!isMCPApps) {
+        var m = instance.getManifest();
+        if (m && m.session) els.hdrSession.textContent = "Session: " + m.session.id.slice(0, 8);
+        els.connDot.classList.add("on");
+      }
       render(instance.getState());
     })
     .catch(function (err) {
