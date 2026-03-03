@@ -1705,7 +1705,7 @@ def dynamic_app_resource() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI, "visibility": ["app"]}})
 @_track_tool_call
 async def _owg_action(
     action_id: str,
