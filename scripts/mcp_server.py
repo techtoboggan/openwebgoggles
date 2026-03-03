@@ -1899,40 +1899,37 @@ async def webview(
         if not valid:
             return {"error": f"State validation failed: {err}"}
 
-    # MCP Apps mode: return CallToolResult with structuredContent so the host
-    # renders the iframe and forwards the state via ui/notifications/tool-result.
-    if _is_app_mode():
-        app_state = _get_app_state()
-        app_state.clear_actions()
-        app_state.write_state(state)
-        return CallToolResult(
-            content=[TextContent(type="text", text=f"Displaying UI: {state.get('title', 'Webview')}")],
-            structuredContent=state,
-        )
+    # Always return CallToolResult with structuredContent immediately.
+    # The host can only render the iframe AFTER the tool returns, so blocking
+    # here would prevent MCP Apps from ever working.
+    #
+    # Flow:
+    #   1. webview() returns immediately with structuredContent
+    #   2. Host renders iframe, delivers state via ui/notifications/tool-result
+    #   3. User interacts with iframe → _owg_action stores actions in queue
+    #   4. Agent polls webview_read() to collect user actions
+    #
+    # For non-MCP-Apps hosts, the browser subprocess also starts as a fallback.
+    # Actions from either source land in the same queue via webview_read().
+    app_state = _get_app_state()
+    app_state.clear_actions()
+    app_state.write_state(state)
 
-    # Browser fallback: start subprocess, write state, block until action
-    session = await _get_session()
-    try:
-        await session.ensure_started(app)
-    except Exception:
-        logger.warning("Failed to start webview", exc_info=True)
-        return {"error": "Failed to start webview server"}
+    # Start browser fallback for hosts without MCP Apps support.
+    # The browser runs in the background — we don't block waiting for it.
+    if not _is_app_mode():
+        session = await _get_session()
+        try:
+            await session.ensure_started(app)
+            session.clear_actions()
+            session.write_state(state)
+        except Exception:
+            logger.warning("Failed to start browser fallback", exc_info=True)
 
-    session.clear_actions()
-    session.write_state(state)
-
-    async def _report_progress(elapsed: float, total: float) -> None:
-        if ctx is not None:
-            await ctx.report_progress(elapsed, total, message="Waiting for user response…")
-
-    result = await session.wait_for_action(
-        timeout=float(timeout),
-        on_progress=_report_progress,
+    return CallToolResult(
+        content=[TextContent(type="text", text=f"Displaying UI: {state.get('title', 'Webview')}")],
+        structuredContent=state,
     )
-    if result is None:
-        return {"error": "Timeout waiting for user response", "timeout_seconds": timeout}
-
-    return result
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})

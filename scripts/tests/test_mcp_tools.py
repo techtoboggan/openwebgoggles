@@ -59,30 +59,28 @@ def _make_mock_session(**kwargs):
 
 
 class TestWebviewTool:
-    async def test_basic_timeout(self):
-        """webview returns timeout error when no action is received."""
+    async def test_returns_call_tool_result(self):
+        """webview always returns CallToolResult with structuredContent."""
         mock_session = _make_mock_session()
-        mock_session.wait_for_action.return_value = None
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
             result = await webview(state={"title": "Test"}, timeout=1, ctx=None)
 
-        assert "error" in result
-        assert "Timeout" in result["error"]
+        assert hasattr(result, "structuredContent")
+        assert result.structuredContent["title"] == "Test"
+        # Browser fallback should also start
         mock_session.ensure_started.assert_called_once()
         mock_session.write_state.assert_called_once()
-        mock_session.clear_actions.assert_called_once()
 
-    async def test_basic_success(self):
-        """webview returns the action result when user responds."""
+    async def test_starts_browser_fallback(self):
+        """webview starts browser subprocess as fallback for non-MCP-Apps hosts."""
         mock_session = _make_mock_session()
-        action_result = {"version": 1, "actions": [{"id": "ok", "type": "approve"}]}
-        mock_session.wait_for_action.return_value = action_result
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state={"title": "Test"}, timeout=30, ctx=None)
+            await webview(state={"title": "Test"}, timeout=30, ctx=None)
 
-        assert result == action_result
+        mock_session.ensure_started.assert_called_once()
+        mock_session.clear_actions.assert_called_once()
 
     async def test_preset_expansion(self):
         """webview expands preset before writing state."""
@@ -129,16 +127,17 @@ class TestWebviewTool:
         finally:
             mcp_server._security_gate = old_gate
 
-    async def test_ensure_started_failure(self):
-        """webview returns error when server fails to start."""
+    async def test_ensure_started_failure_still_returns(self):
+        """webview returns CallToolResult even if browser fallback fails."""
         mock_session = _make_mock_session()
         mock_session.ensure_started = mock.AsyncMock(side_effect=RuntimeError("bind failed"))
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
             result = await webview(state={"title": "Test"}, timeout=1, ctx=None)
 
-        assert "error" in result
-        assert "Failed to start" in result["error"]
+        # Should still return structuredContent — browser failure is non-fatal
+        assert hasattr(result, "structuredContent")
+        assert result.structuredContent["title"] == "Test"
 
 
 # ---------------------------------------------------------------------------
