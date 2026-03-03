@@ -1691,7 +1691,13 @@ Layout types: sidebar, split.
 # ---------------------------------------------------------------------------
 
 
-@mcp.resource(_RESOURCE_URI, mime_type="text/html;profile=mcp-app")
+@mcp.resource(
+    _RESOURCE_URI,
+    name="OpenWebGoggles Dynamic UI",
+    description="Interactive dashboard renderer for MCP Apps hosts",
+    mime_type="text/html;profile=mcp-app",
+    meta={"ui": {}},
+)
 def dynamic_app_resource() -> str:
     """Return the bundled HTML for the dynamic renderer (MCP Apps mode)."""
     global _host_fetched_ui_resource  # noqa: PLW0603
