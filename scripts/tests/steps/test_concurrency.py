@@ -137,7 +137,7 @@ def close_called_concurrently(ctx):
                     await asyncio.sleep(0.05)
                     return {"result": "ok"}
 
-                close_task = asyncio.create_task(mcp_server.webview_close(message="closing"))
+                close_task = asyncio.create_task(mcp_server.openwebgoggles_close(message="closing"))
                 tool_task = asyncio.create_task(_dummy_tool())
 
                 results = await asyncio.gather(close_task, tool_task, return_exceptions=True)
@@ -223,8 +223,8 @@ def close_and_status_race(ctx):
         try:
 
             async def _test():
-                status_task = asyncio.create_task(mcp_server.webview_status())
-                close_task = asyncio.create_task(mcp_server.webview_close(message="teardown"))
+                status_task = asyncio.create_task(mcp_server.openwebgoggles_status())
+                close_task = asyncio.create_task(mcp_server.openwebgoggles_close(message="teardown"))
                 results = await asyncio.gather(status_task, close_task, return_exceptions=True)
                 ctx.status_result = results[0]
                 ctx.close_result = results[1]

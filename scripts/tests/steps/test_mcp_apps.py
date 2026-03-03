@@ -113,7 +113,7 @@ def agent_displayed_webview(ctx):
     try:
 
         async def _display():
-            result = await mcp_server.webview(
+            result = await mcp_server.openwebgoggles(
                 state={"title": "Active UI", "data": {"sections": []}},
             )
             return result
@@ -137,7 +137,7 @@ def call_webview_test_ui(ctx):
     try:
 
         async def _call():
-            return await mcp_server.webview(
+            return await mcp_server.openwebgoggles(
                 state={"title": "Test UI", "data": {"sections": []}},
             )
 
@@ -161,7 +161,7 @@ def call_webview_fallback_ui(ctx):
 
         async def _call():
             with mock.patch("mcp_server._get_session", return_value=mock_session):
-                return await mcp_server.webview(
+                return await mcp_server.openwebgoggles(
                     state={"title": "Fallback UI", "data": {"sections": []}},
                     timeout=30,
                 )
@@ -195,7 +195,7 @@ def call_webview_close(ctx):
     try:
 
         async def _close():
-            return await mcp_server.webview_close(message="Done.")
+            return await mcp_server.openwebgoggles_close(message="Done.")
 
         ctx.close_result = loop.run_until_complete(_close())
     finally:
@@ -239,7 +239,7 @@ def assert_webview_read_returns_action(ctx):
     try:
 
         async def _read():
-            return await mcp_server.webview_read(clear=False)
+            return await mcp_server.openwebgoggles_read(clear=False)
 
         ctx.read_result = loop.run_until_complete(_read())
     finally:
@@ -262,5 +262,5 @@ def assert_app_mode_cleared(ctx):
     # After webview_close, app_mode_state should be cleared
     app_state = mcp_server._get_app_state()
     assert app_state.state == {}, f"Expected empty state, got: {app_state.state}"
-    assert app_state.state_version == 0, f"Expected version 0, got: {app_state.state_version}"
+    assert app_state.state_version > 0, f"Expected epoch-ms baseline version, got: {app_state.state_version}"
     assert app_state.read_actions() == [], f"Expected empty actions, got: {app_state.read_actions()}"

@@ -24,11 +24,11 @@ from mcp_server import (
     _owg_action,
     _reset_mode,
     _resolve_mode,
-    webview,
-    webview_close,
-    webview_read,
-    webview_status,
-    webview_update,
+    openwebgoggles,
+    openwebgoggles_close,
+    openwebgoggles_read,
+    openwebgoggles_status,
+    openwebgoggles_update,
 )
 
 
@@ -141,13 +141,18 @@ class TestAppModeState:
         assert ams.read_actions() == []
 
     def test_clear_resets_everything(self):
-        """clear() resets state, version, and actions."""
+        """clear() resets state and actions; version resets to a fresh epoch-ms timestamp."""
         ams = AppModeState()
         ams.write_state({"title": "T"})
         ams.add_action({"action_id": "x"})
         ams.clear()
         assert ams.state == {}
-        assert ams.state_version == 0
+        # Version is reset to a new epoch-ms baseline (not zero), so the next write
+        # always produces a version larger than any iframe's remembered state.
+        assert ams.state_version > 0
+        # A subsequent write must still increment beyond the reset baseline
+        ams.write_state({"title": "new"})
+        assert ams.state_version == ams.state["version"]
         assert ams.read_actions() == []
 
     def test_concurrent_action_adds(self):
@@ -309,6 +314,46 @@ class TestModeDetection:
         assert "io.modelcontextprotocol/ui" in caps.extensions
         assert "mimeTypes" in caps.extensions["io.modelcontextprotocol/ui"]
 
+    def test_local_agent_mode_client_triggers_app_mode(self):
+        """'local-agent-mode-*' client name triggers app mode (Strategy 3)."""
+        mock_ctx = mock.MagicMock()
+        mock_caps = mock.MagicMock()
+        del mock_caps.extensions
+        mock_caps.experimental = None
+        mock_ctx.session.client_params.capabilities = mock_caps
+        mock_ctx.session.client_params.clientInfo.name = "local-agent-mode-openwebgoggles"
+        assert _check_host_supports_ui(mock_ctx) is True
+
+    def test_local_agent_mode_any_suffix_triggers_app_mode(self):
+        """Any 'local-agent-mode-*' suffix triggers app mode, not just openwebgoggles."""
+        mock_ctx = mock.MagicMock()
+        mock_caps = mock.MagicMock()
+        del mock_caps.extensions
+        mock_caps.experimental = None
+        mock_ctx.session.client_params.capabilities = mock_caps
+        mock_ctx.session.client_params.clientInfo.name = "local-agent-mode-other-server"
+        assert _check_host_supports_ui(mock_ctx) is True
+
+    def test_claude_code_bare_name_does_not_trigger_app_mode(self):
+        """'claude-code' bare client name does NOT trigger app mode (removed heuristic)."""
+        mock_ctx = mock.MagicMock()
+        mock_caps = mock.MagicMock()
+        del mock_caps.extensions
+        mock_caps.experimental = None
+        mock_ctx.session.client_params.capabilities = mock_caps
+        mock_ctx.session.client_params.clientInfo.name = "claude-code"
+        assert _check_host_supports_ui(mock_ctx) is False
+
+    def test_unknown_client_name_does_not_trigger_app_mode(self):
+        """An unrecognised client name falls through to _host_fetched_ui_resource."""
+        mock_ctx = mock.MagicMock()
+        mock_caps = mock.MagicMock()
+        del mock_caps.extensions
+        mock_caps.experimental = None
+        mock_ctx.session.client_params.capabilities = mock_caps
+        mock_ctx.session.client_params.clientInfo.name = "some-other-client"
+        assert _check_host_supports_ui(mock_ctx) is False
+
 
 # ---------------------------------------------------------------------------
 # _owg_action tool
@@ -380,7 +425,7 @@ class TestWebviewAppMode:
         """webview returns CallToolResult with structuredContent in app mode."""
         _enable_app_mode()
         mcp_server._security_gate = None
-        result = await webview(state={"title": "Test"})
+        result = await openwebgoggles(state={"title": "Test"})
         assert hasattr(result, "structuredContent")
         assert result.structuredContent["title"] == "Test"
 
@@ -390,7 +435,7 @@ class TestWebviewAppMode:
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.add_action({"action_id": "old"})
-        await webview(state={"title": "Fresh"})
+        await openwebgoggles(state={"title": "Fresh"})
         assert app_state.read_actions() == []
 
     async def test_does_not_block(self):
@@ -399,7 +444,7 @@ class TestWebviewAppMode:
         mcp_server._security_gate = None
         # If this blocks, the test will time out
         result = await asyncio.wait_for(
-            webview(state={"title": "Quick"}),
+            openwebgoggles(state={"title": "Quick"}),
             timeout=2.0,
         )
         assert hasattr(result, "structuredContent")
@@ -408,7 +453,7 @@ class TestWebviewAppMode:
         """webview stores state in the AppModeState singleton."""
         _enable_app_mode()
         mcp_server._security_gate = None
-        await webview(state={"title": "Stored", "data": {"sections": []}})
+        await openwebgoggles(state={"title": "Stored", "data": {"sections": []}})
         app_state = _get_app_state()
         assert app_state.state["title"] == "Stored"
         assert app_state.state_version >= 1
@@ -426,7 +471,7 @@ class TestWebviewReadAppMode:
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.add_action({"action_id": "btn", "type": "approve", "value": True})
-        result = await webview_read()
+        result = await openwebgoggles_read()
         assert len(result["actions"]) == 1
         assert result["actions"][0]["action_id"] == "btn"
 
@@ -436,9 +481,9 @@ class TestWebviewReadAppMode:
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.add_action({"action_id": "a"})
-        result1 = await webview_read(clear=True)
+        result1 = await openwebgoggles_read(clear=True)
         assert len(result1["actions"]) == 1
-        result2 = await webview_read()
+        result2 = await openwebgoggles_read()
         assert result2["actions"] == []
 
     async def test_empty_when_no_actions(self):
@@ -447,7 +492,7 @@ class TestWebviewReadAppMode:
         mcp_server._security_gate = None
         # Ensure singleton exists but has no actions
         _get_app_state()
-        result = await webview_read()
+        result = await openwebgoggles_read()
         assert result["actions"] == []
 
 
@@ -463,7 +508,7 @@ class TestWebviewUpdateAppMode:
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.write_state({"title": "Old"})
-        result = await webview_update(state={"title": "New"})
+        result = await openwebgoggles_update(state={"title": "New"})
         assert hasattr(result, "structuredContent")
         assert result.structuredContent["title"] == "New"
         assert app_state.state["title"] == "New"
@@ -474,7 +519,7 @@ class TestWebviewUpdateAppMode:
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.write_state({"title": "Base", "data": {"meta": {"a": 1}}})
-        result = await webview_update(state={"data": {"meta": {"b": 2}}}, merge=True)
+        result = await openwebgoggles_update(state={"data": {"meta": {"b": 2}}}, merge=True)
         assert hasattr(result, "structuredContent")
         merged = result.structuredContent
         assert merged["title"] == "Base"
@@ -486,7 +531,7 @@ class TestWebviewUpdateAppMode:
         _enable_app_mode()
         mcp_server._security_gate = None
         _get_app_state()
-        result = await webview_update(
+        result = await openwebgoggles_update(
             state={"title": "Sure?", "message": "Do it?"},
             preset="confirm",
         )
@@ -509,10 +554,10 @@ class TestWebviewCloseAppMode:
         app_state = _get_app_state()
         app_state.write_state({"title": "Active"})
         app_state.add_action({"action_id": "x"})
-        result = await webview_close()
+        result = await openwebgoggles_close()
         assert result["status"] == "ok"
         assert app_state.state == {}
-        assert app_state.state_version == 0
+        assert app_state.state_version > 0  # reset to epoch-ms, not zero
         assert app_state.read_actions() == []
         # Mode should be reset so next session can re-detect
         assert mcp_server._cached_mode is None
@@ -531,7 +576,7 @@ class TestWebviewStatusAppMode:
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.write_state({"title": "Live"})
-        result = await webview_status()
+        result = await openwebgoggles_status()
         assert result["active"] is True
         assert result["mode"] == "mcp_apps"
         assert result["version"] >= 1
@@ -541,6 +586,6 @@ class TestWebviewStatusAppMode:
         _enable_app_mode()
         mcp_server._security_gate = None
         _get_app_state()  # create singleton but don't write state
-        result = await webview_status()
+        result = await openwebgoggles_status()
         assert result["active"] is False
         assert result["mode"] == "mcp_apps"

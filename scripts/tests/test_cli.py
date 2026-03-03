@@ -20,6 +20,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mcp_server import (
+    _CLAUDE_SETTINGS,
+    _DEPRECATED_PERMISSIONS,
     _SERVER_NAME_ALIASES,
     _cmd_doctor,
     _cmd_restart,
@@ -179,7 +181,7 @@ class TestInitClaude:
         settings = tmp_path / ".claude" / "settings.json"
         assert settings.exists()
         scfg = json.loads(settings.read_text())
-        assert "mcp__openwebgoggles__webview" in scfg["permissions"]["allow"]
+        assert "mcp__openwebgoggles__openwebgoggles" in scfg["permissions"]["allow"]
 
         output = capsys.readouterr().out
         assert "created" in output.lower() or "Done" in output
@@ -215,7 +217,7 @@ class TestInitClaude:
         scfg = json.loads(settings.read_text())
         allow = scfg["permissions"]["allow"]
         assert "some_other_tool" in allow
-        assert "mcp__openwebgoggles__webview" in allow
+        assert "mcp__openwebgoggles__openwebgoggles" in allow
 
 
 # ---------------------------------------------------------------------------
@@ -1016,3 +1018,151 @@ class TestCmdRestartEdgeCases:
                             _cmd_restart()
                         except SystemExit:
                             pass  # Windows path may exit
+
+
+# ---------------------------------------------------------------------------
+# Permission migration in _init_claude
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionMigration:
+    def test_removes_deprecated_permissions(self, tmp_path, capsys):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        settings = claude_dir / "settings.json"
+        old_perms = list(_DEPRECATED_PERMISSIONS) + ["some_other_tool"]
+        settings.write_text(json.dumps({"permissions": {"allow": old_perms}}) + "\n")
+
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_claude(tmp_path)
+
+        scfg = json.loads(settings.read_text())
+        allow = scfg["permissions"]["allow"]
+        # All deprecated strings removed
+        for dep in _DEPRECATED_PERMISSIONS:
+            assert dep not in allow, f"{dep} should have been removed"
+        # New permissions added
+        for new_perm in _CLAUDE_SETTINGS["permissions"]["allow"]:
+            assert new_perm in allow
+        # Unrelated tool preserved
+        assert "some_other_tool" in allow
+
+    def test_migration_reported_in_output(self, tmp_path, capsys):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        settings = claude_dir / "settings.json"
+        stale = ["mcp__openwebgoggles__webview", "mcp__openwebgoggles__webview_read"]
+        settings.write_text(json.dumps({"permissions": {"allow": stale}}) + "\n")
+
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_claude(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "stale" in output.lower()
+
+    def test_deprecated_set_is_frozen(self):
+        assert isinstance(_DEPRECATED_PERMISSIONS, frozenset)
+        assert "mcp__openwebgoggles__webview" in _DEPRECATED_PERMISSIONS
+
+    def test_no_deprecated_perms_leaves_file_untouched(self, tmp_path, capsys):
+        """init should report 'skipping' when permissions already correct."""
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        settings = claude_dir / "settings.json"
+        current = list(_CLAUDE_SETTINGS["permissions"]["allow"])
+        settings.write_text(json.dumps({"permissions": {"allow": current}}) + "\n")
+
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_claude(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "skipping" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# doctor warns about deprecated permissions
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorDeprecatedPermissions:
+    def test_warns_on_stale_permissions(self, tmp_path, capsys):
+        mcp_json = tmp_path / ".mcp.json"
+        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/owg"}}}))
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        settings = claude_dir / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": ["mcp__openwebgoggles__webview"]}}) + "\n")
+
+        with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
+            with mock.patch("shutil.which", return_value="/usr/bin/openwebgoggles"):
+                with mock.patch("pathlib.Path.home", return_value=tmp_path / "fakehome"):
+                    _cmd_doctor()
+
+        output = capsys.readouterr().out
+        assert "[!!]" in output
+        assert "stale" in output.lower()
+
+    def test_no_warning_without_stale_permissions(self, tmp_path, capsys):
+        mcp_json = tmp_path / ".mcp.json"
+        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/owg"}}}))
+
+        with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
+            with mock.patch("shutil.which", return_value="/usr/bin/openwebgoggles"):
+                with mock.patch("pathlib.Path.home", return_value=tmp_path / "fakehome"):
+                    _cmd_doctor()
+
+        output = capsys.readouterr().out
+        assert "stale permission" not in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# init claude --global
+# ---------------------------------------------------------------------------
+
+
+class TestInitClaudeGlobal:
+    def test_global_flag_routes_to_home(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("sys.argv", ["openwebgoggles", "init", "claude", "--global"]):
+                with mock.patch("mcp_server._init_claude") as mock_init:
+                    main()
+
+        mock_init.assert_called_once()
+        call_args = mock_init.call_args
+        # First positional arg should be Path.home(), global_mode=True
+        assert call_args.kwargs.get("global_mode") is True or (len(call_args.args) > 1 and call_args.args[1] is True)
+
+    def test_global_flag_writes_to_home_dir(self, tmp_path, capsys):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("sys.argv", ["openwebgoggles", "init", "claude", "--global"]):
+                with mock.patch("pathlib.Path.home", return_value=fake_home):
+                    with mock.patch("mcp_server._setup_claude_desktop_config"):
+                        _init_claude(fake_home, global_mode=True)
+
+        # Should write ~/.mcp.json (i.e. fake_home/.mcp.json)
+        assert (fake_home / ".mcp.json").exists()
+        # Should write ~/.claude/settings.json
+        assert (fake_home / ".claude" / "settings.json").exists()
+
+    def test_global_done_message(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("mcp_server._setup_claude_desktop_config"):
+                _init_claude(tmp_path, global_mode=True)
+
+        output = capsys.readouterr().out
+        assert "globally" in output.lower() or "all projects" in output.lower()
+
+    def test_project_done_message(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("mcp_server._setup_claude_desktop_config"):
+                _init_claude(tmp_path, global_mode=False)
+
+        output = capsys.readouterr().out
+        assert "globally" not in output.lower()
+
+    def test_global_flag_in_usage(self, capsys):
+        _init_usage()
+        output = capsys.readouterr().out
+        assert "--global" in output

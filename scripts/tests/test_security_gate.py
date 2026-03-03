@@ -2071,10 +2071,65 @@ class TestProgressSection:
         assert ok, err
 
     def test_invalid_task_status(self, gate):
-        state = {"data": {"sections": [{"type": "progress", "tasks": [{"label": "Test", "status": "running"}]}]}}
+        state = {"data": {"sections": [{"type": "progress", "tasks": [{"label": "Test", "status": "bogus_status"}]}]}}
         ok, err, _ = gate.validate_state(json.dumps(state))
         assert not ok
         assert "status" in err
+
+    @pytest.mark.parametrize(
+        "alias,canonical",
+        [
+            ("done", "completed"),
+            ("complete", "completed"),
+            ("success", "completed"),
+            ("finished", "completed"),
+            ("running", "in_progress"),
+            ("active", "in_progress"),
+            ("live", "in_progress"),
+            ("working", "in_progress"),
+            ("processing", "in_progress"),
+            ("error", "failed"),
+            ("failure", "failed"),
+            ("errored", "failed"),
+            ("waiting", "pending"),
+            ("queued", "pending"),
+            ("todo", "pending"),
+            ("skip", "skipped"),
+            ("cancelled", "skipped"),
+            ("canceled", "skipped"),
+        ],
+    )
+    def test_task_status_aliases_accepted(self, gate, alias, canonical):
+        state = {"data": {"sections": [{"type": "progress", "tasks": [{"label": "Test", "status": alias}]}]}}
+        ok, err, sanitized = gate.validate_state(json.dumps(state))
+        assert ok, f"alias {alias!r} should be accepted: {err}"
+        task = sanitized["data"]["sections"][0]["tasks"][0]
+        assert task["status"] == canonical, f"alias {alias!r} should normalize to {canonical!r}"
+
+    @pytest.mark.parametrize(
+        "alias,canonical",
+        [
+            ("live", "processing"),
+            ("active", "processing"),
+            ("running", "processing"),
+            ("working", "processing"),
+            ("done", "completed"),
+            ("complete", "completed"),
+            ("success", "completed"),
+            ("finished", "completed"),
+            ("failed", "error"),
+            ("failure", "error"),
+            ("waiting", "waiting_input"),
+            ("idle", "ready"),
+            ("starting", "initializing"),
+            ("loading", "initializing"),
+        ],
+    )
+    def test_top_level_status_aliases_accepted(self, gate, alias, canonical):
+        state = {"status": alias}
+        ok, err, sanitized = gate.validate_state(json.dumps(state))
+        assert ok, f"alias {alias!r} should be accepted: {err}"
+        assert sanitized["status"] == canonical, f"alias {alias!r} should normalize to {canonical!r}"
 
     def test_percentage_out_of_range(self, gate):
         state = {"data": {"sections": [{"type": "progress", "tasks": [], "percentage": 150}]}}

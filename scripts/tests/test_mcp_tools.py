@@ -21,11 +21,11 @@ import mcp_server
 from mcp_server import (
     WebviewSession,
     _expand_preset,
-    webview,
-    webview_close,
-    webview_read,
-    webview_status,
-    webview_update,
+    openwebgoggles,
+    openwebgoggles_close,
+    openwebgoggles_read,
+    openwebgoggles_status,
+    openwebgoggles_update,
 )
 
 
@@ -84,7 +84,7 @@ class TestWebviewTool:
         }
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state={"title": "Test"}, timeout=30, ctx=None)
+            result = await openwebgoggles(state={"title": "Test"}, timeout=30, ctx=None)
 
         # Browser mode returns the wait_for_action result directly (plain dict)
         assert isinstance(result, dict)
@@ -99,7 +99,7 @@ class TestWebviewTool:
         mock_session.wait_for_action.return_value = None  # timeout
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state={"title": "Test"}, timeout=1, ctx=None)
+            result = await openwebgoggles(state={"title": "Test"}, timeout=1, ctx=None)
 
         assert "error" in result
         assert "Timed out" in result["error"]
@@ -110,7 +110,7 @@ class TestWebviewTool:
         mock_session.wait_for_action.return_value = {"actions": []}
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            await webview(state={"title": "Test"}, timeout=30, ctx=None)
+            await openwebgoggles(state={"title": "Test"}, timeout=30, ctx=None)
 
         mock_session.ensure_started.assert_called_once()
         mock_session.clear_actions.assert_called_once()
@@ -121,7 +121,7 @@ class TestWebviewTool:
         mock_session.wait_for_action.return_value = {"actions": [{"id": "confirm"}]}
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            await webview(
+            await openwebgoggles(
                 state={"title": "Confirm?", "message": "Are you sure?"},
                 preset="confirm",
                 timeout=1,
@@ -135,7 +135,7 @@ class TestWebviewTool:
     async def test_preset_error(self):
         """webview returns error when preset expansion fails."""
         with mock.patch("mcp_server._get_session"):
-            result = await webview(
+            result = await openwebgoggles(
                 state={"title": "Test"},
                 preset="nonexistent_preset",
                 timeout=1,
@@ -154,7 +154,7 @@ class TestWebviewTool:
         mcp_server._security_gate = mock_gate
         try:
             with mock.patch("mcp_server._get_session", return_value=mock_session):
-                result = await webview(state={"title": "<script>alert(1)</script>"}, timeout=1, ctx=None)
+                result = await openwebgoggles(state={"title": "<script>alert(1)</script>"}, timeout=1, ctx=None)
             assert "error" in result
             assert "validation failed" in result["error"]
         finally:
@@ -167,7 +167,7 @@ class TestWebviewTool:
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
             with pytest.raises(RuntimeError, match="bind failed"):
-                await webview(state={"title": "Test"}, timeout=1, ctx=None)
+                await openwebgoggles(state={"title": "Test"}, timeout=1, ctx=None)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ class TestWebviewReadTool:
         mock_session = _make_mock_session(started=False)
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_read()
+            result = await openwebgoggles_read()
 
         assert result == {"version": 0, "actions": []}
 
@@ -194,7 +194,7 @@ class TestWebviewReadTool:
         }
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_read()
+            result = await openwebgoggles_read()
 
         assert result["actions"][0]["id"] == "submit"
         mock_session.clear_actions.assert_not_called()
@@ -208,7 +208,7 @@ class TestWebviewReadTool:
         }
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            await webview_read(clear=True)
+            await openwebgoggles_read(clear=True)
 
         mock_session.clear_actions.assert_called_once()
 
@@ -217,7 +217,7 @@ class TestWebviewReadTool:
         mock_session = _make_mock_session()
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            await webview_read(clear=True)
+            await openwebgoggles_read(clear=True)
 
         mock_session.clear_actions.assert_not_called()
 
@@ -234,7 +234,7 @@ class TestWebviewUpdateTool:
         mock_session._state_version = 2
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state={"title": "Updated"})
+            result = await openwebgoggles_update(state={"title": "Updated"})
 
         assert result["updated"] is True
         mock_session.write_state.assert_called_once()
@@ -245,7 +245,7 @@ class TestWebviewUpdateTool:
         mock_session.merge_state.return_value = {"version": 3, "title": "Merged"}
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state={"data": {"new": True}}, merge=True)
+            result = await openwebgoggles_update(state={"data": {"new": True}}, merge=True)
 
         assert result["updated"] is True
         mock_session.merge_state.assert_called_once()
@@ -256,7 +256,7 @@ class TestWebviewUpdateTool:
         mock_session.merge_state.side_effect = ValueError("Merged state validation failed")
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state={"data": {}}, merge=True)
+            result = await openwebgoggles_update(state={"data": {}}, merge=True)
 
         assert "error" in result
 
@@ -265,7 +265,7 @@ class TestWebviewUpdateTool:
         mock_session = _make_mock_session()
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(
+            result = await openwebgoggles_update(
                 state={"tasks": [], "percentage": 50},
                 preset="progress",
             )
@@ -274,7 +274,7 @@ class TestWebviewUpdateTool:
 
     async def test_preset_error(self):
         """Update returns error for unknown preset."""
-        result = await webview_update(state={}, preset="nonexistent")
+        result = await openwebgoggles_update(state={}, preset="nonexistent")
         assert "error" in result
 
     async def test_security_gate_failure(self):
@@ -286,7 +286,7 @@ class TestWebviewUpdateTool:
         mcp_server._security_gate = mock_gate
         try:
             with mock.patch("mcp_server._get_session", return_value=mock_session):
-                result = await webview_update(state={"title": "bad"})
+                result = await openwebgoggles_update(state={"title": "bad"})
             assert "error" in result
         finally:
             mcp_server._security_gate = old_gate
@@ -297,7 +297,7 @@ class TestWebviewUpdateTool:
         mock_session.ensure_started = mock.AsyncMock(side_effect=RuntimeError("fail"))
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state={"title": "Test"})
+            result = await openwebgoggles_update(state={"title": "Test"})
 
         assert "error" in result
         assert "Failed to start" in result["error"]
@@ -314,7 +314,7 @@ class TestWebviewStatusTool:
         old = mcp_server._session
         mcp_server._session = None
         try:
-            result = await webview_status()
+            result = await openwebgoggles_status()
             assert result["active"] is False
             assert result["mode"] == "browser"
         finally:
@@ -326,7 +326,7 @@ class TestWebviewStatusTool:
         mock_session = _make_mock_session(started=False)
         mcp_server._session = mock_session
         try:
-            result = await webview_status()
+            result = await openwebgoggles_status()
             assert result["active"] is False
             assert result["mode"] == "browser"
         finally:
@@ -338,7 +338,7 @@ class TestWebviewStatusTool:
         mock_session = _make_mock_session()
         mcp_server._session = mock_session
         try:
-            result = await webview_status()
+            result = await openwebgoggles_status()
             assert result["active"] is True
             assert result["mode"] == "browser"
             assert result["alive"] is True
@@ -359,7 +359,7 @@ class TestWebviewCloseTool:
         old = mcp_server._session
         mcp_server._session = None
         try:
-            result = await webview_close()
+            result = await openwebgoggles_close()
             assert result["status"] == "ok"
             assert "No active session" in result["message"]
         finally:
@@ -371,7 +371,7 @@ class TestWebviewCloseTool:
         mock_session = _make_mock_session()
         mcp_server._session = mock_session
         try:
-            result = await webview_close(message="Goodbye")
+            result = await openwebgoggles_close(message="Goodbye")
             assert result["status"] == "ok"
             assert mcp_server._session is None
             mock_session.close.assert_called_once_with(message="Goodbye")
@@ -385,7 +385,7 @@ class TestWebviewCloseTool:
         mock_session.close = mock.AsyncMock(side_effect=Exception("close failed"))
         mcp_server._session = mock_session
         try:
-            result = await webview_close()
+            result = await openwebgoggles_close()
             assert "error" in result
             assert "Failed to close session" in result["error"]
         finally:
@@ -397,7 +397,7 @@ class TestWebviewCloseTool:
         mock_session = _make_mock_session(started=False)
         mcp_server._session = mock_session
         try:
-            result = await webview_close()
+            result = await openwebgoggles_close()
             assert result["status"] == "ok"
         finally:
             mcp_server._session = old
@@ -811,7 +811,7 @@ class TestWebviewMetricIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
         # State should have been written to the session
@@ -842,7 +842,7 @@ class TestWebviewMetricIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -861,7 +861,7 @@ class TestWebviewMetricIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
         assert "validation failed" in result["error"]
@@ -893,7 +893,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -921,7 +921,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -947,7 +947,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -972,7 +972,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -997,7 +997,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -1019,7 +1019,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -1042,7 +1042,7 @@ class TestWebviewChartIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
 
@@ -1062,7 +1062,7 @@ class TestWebviewChartIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
 
@@ -1093,7 +1093,7 @@ class TestWebviewClickableTableIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -1118,7 +1118,7 @@ class TestWebviewClickableTableIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -1161,7 +1161,7 @@ class TestWebviewPagesIntegration:
             "activePage": "overview",
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -1206,7 +1206,7 @@ class TestWebviewPagesIntegration:
             "activePage": "servers",
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -1234,7 +1234,7 @@ class TestWebviewPagesIntegration:
             "activePage": "logs",
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
 
@@ -1252,7 +1252,7 @@ class TestWebviewPagesIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
 
@@ -1270,7 +1270,7 @@ class TestWebviewPagesIntegration:
         mock_session.wait_for_action.return_value = {"actions": []}
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
         mock_session.write_state.assert_called_once()
@@ -1294,7 +1294,7 @@ class TestWebviewUpdatePagesIntegration:
             }
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state=state, merge=True)
+            result = await openwebgoggles_update(state=state, merge=True)
 
         assert result["updated"] is True
         mock_session.merge_state.assert_called_once()
@@ -1319,7 +1319,7 @@ class TestWebviewUpdatePagesIntegration:
             }
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state=state, merge=True)
+            result = await openwebgoggles_update(state=state, merge=True)
 
         assert result["updated"] is True
 
@@ -1329,7 +1329,7 @@ class TestWebviewUpdatePagesIntegration:
         mock_session.merge_state.return_value = {"version": 4}
 
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state={"activePage": "servers"}, merge=True)
+            result = await openwebgoggles_update(state={"activePage": "servers"}, merge=True)
 
         assert result["updated"] is True
 
@@ -1356,7 +1356,7 @@ class TestWebviewUpdatePagesIntegration:
             "activePage": "main",
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state=state)
+            result = await openwebgoggles_update(state=state)
 
         assert result["updated"] is True
         mock_session.write_state.assert_called_once()
@@ -1389,7 +1389,7 @@ class TestWebviewUpdatePagesIntegration:
             },
         }
         with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await webview_update(state=state)
+            result = await openwebgoggles_update(state=state)
 
         assert result["updated"] is True
 
@@ -1545,7 +1545,7 @@ class TestWebviewCloseXSS:
         try:
 
             async def _test():
-                result = await webview_close(message="<script>alert(1)</script>")
+                result = await openwebgoggles_close(message="<script>alert(1)</script>")
                 return result
 
             result = loop.run_until_complete(_test())
@@ -1561,7 +1561,7 @@ class TestWebviewCloseXSS:
         try:
 
             async def _test():
-                result = await webview_close(message='<img onerror="alert(1)" src=x>')
+                result = await openwebgoggles_close(message='<img onerror="alert(1)" src=x>')
                 return result
 
             result = loop.run_until_complete(_test())
@@ -1580,7 +1580,7 @@ class TestWebviewCloseXSS:
                 original = mcp_server._session
                 mcp_server._session = None
                 try:
-                    result = await webview_close(message="Goodbye!")
+                    result = await openwebgoggles_close(message="Goodbye!")
                 finally:
                     mcp_server._session = original
                 return result

@@ -149,6 +149,18 @@ class DataContract:
         self.write_json(self.actions_path, actions)
         return actions
 
+    def clear_state(self) -> None:
+        """Delete the state file so the server starts with a clean slate.
+
+        Called at server startup to prevent stale state from a previous session
+        being served to newly connected clients.  The MCP server (browser mode)
+        will write fresh state via write_state() once a new webview() call arrives.
+        """
+        try:
+            self.state_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
     def clear_actions(self) -> int:
         actions = self.get_actions()
         count = len(actions["actions"]) if actions and "actions" in actions else 0
@@ -405,7 +417,9 @@ class WebviewHTTPHandler:
                         return
                 await self._send_response(writer, 200, data)
             else:
-                await self._send_response(writer, 404, {"error": "state.json not found"})
+                # No state yet (server just started or cleared) — return empty loading state
+                # rather than 404 so the SDK doesn't interpret it as a connection error.
+                await self._send_response(writer, 200, {"version": 0, "status": "initializing"})
 
         elif path == "/_api/actions":
             if method == "GET":
@@ -495,7 +509,11 @@ class WebviewHTTPHandler:
         clean_path = path.lstrip("/")
         primary = self.apps_dir / app_dir_name / clean_path
         fallback = self.apps_dir / clean_path
+        # SDK fallback: when apps_dir != data_dir/apps (e.g. dev mode pointing to assets/apps),
+        # SDK files won't be co-located with the app. Check sdk_path.parent as a third location.
+        sdk_fallback = self.sdk_path.parent / clean_path
         apps_dir_resolved = self.apps_dir.resolve()
+        sdk_dir_resolved = self.sdk_path.parent.resolve()
 
         # Security: validate path containment BEFORE any filesystem access.
         # Checking file existence first could leak timing information about whether
@@ -506,9 +524,15 @@ class WebviewHTTPHandler:
             except ValueError:
                 await self._send_response(writer, 403, {"error": "Forbidden"})
                 return
+        try:
+            sdk_fallback.resolve().relative_to(sdk_dir_resolved)
+        except ValueError:
+            sdk_fallback = None  # traversal attempt — ignore this candidate
 
-        # Both paths are confirmed within apps_dir — now check existence
+        # Confirmed-safe paths — now check existence
         file_path = primary if primary.is_file() else fallback
+        if not file_path.is_file() and sdk_fallback and sdk_fallback.is_file():
+            file_path = sdk_fallback
         if not file_path.is_file():
             await self._send_response(writer, 404, {"error": "File not found"})
             return
@@ -635,9 +659,9 @@ class WebviewHTTPHandler:
 class WebviewServer:
     """Main server orchestrating HTTP, WebSocket, and file watching."""
 
-    def __init__(self, data_dir: str, http_port: int, ws_port: int, sdk_path: str):
+    def __init__(self, data_dir: str, http_port: int, ws_port: int, sdk_path: str, apps_dir: str | None = None):
         self.data_dir = Path(data_dir)
-        self.apps_dir = self.data_dir / "apps"
+        self.apps_dir = Path(apps_dir) if apps_dir else self.data_dir / "apps"
         self.http_port = http_port
         self.ws_port = ws_port
         self.sdk_path = Path(sdk_path)
@@ -731,6 +755,7 @@ class WebviewServer:
             logger.warning("WebSocket not available (pip install websockets). Running HTTP-only mode.")
 
         # Write PID file with explicit permissions (thread-safe, no process-wide umask)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         pid_path = self.data_dir / ".server.pid"
         fd = os.open(str(pid_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -818,19 +843,19 @@ class WebviewServer:
         logger.info("WebSocket client connected (%d total)", len(self._ws_clients))
 
         try:
-            # Send initial state (signed)
-            state = self.contract.get_state()
+            # Send initial state (signed) — only if present and valid
+            state = self.contract.get_state() or {}
+            if state and self._security_gate:
+                ok, _err, _sanitized = self._security_gate.validate_state(json.dumps(state))
+                if not ok:
+                    logger.warning("WS connected: invalid state from disk, skipping: %s", _err)
+                    state = {}
+            # Always send the connected message so the SDK transitions out of
+            # "connecting" state; include state only when present and valid.
+            msg: dict = {"type": "connected"}
             if state:
-                msg = {"type": "connected", "state": state}
-                # Defense-in-depth: validate connected message through SecurityGate.
-                # This is a fixed-structure message, but validating ensures the state
-                # payload from disk hasn't been tampered with.
-                if self._security_gate:
-                    try:
-                        self._security_gate.validate_state(json.dumps(state))
-                    except Exception:
-                        logger.warning("WS connected message failed SecurityGate validation", exc_info=True)
-                await self._send_ws_signed(websocket, msg)
+                msg["state"] = state
+            await self._send_ws_signed(websocket, msg)
 
             async for message in websocket:
                 # Server-side message size guard (matches client-side 1MB limit)
@@ -978,6 +1003,8 @@ def main():  # pragma: no cover
     parser.add_argument("--http-port", type=int, default=18420, help="HTTP server port (default: 18420)")
     parser.add_argument("--ws-port", type=int, default=18421, help="WebSocket server port (default: 18421)")
     parser.add_argument("--sdk-path", required=True, help="Path to openwebgoggles-sdk.js")
+    parser.add_argument("--apps-dir", default=None, help="Override apps directory (default: data-dir/apps)")
+    parser.add_argument("--app", default=None, help="Auto-create a dev manifest for this app name")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level")
     args = parser.parse_args()
 
@@ -987,11 +1014,31 @@ def main():  # pragma: no cover
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
+    # Auto-create a minimal dev manifest so the server serves without a prior MCP session
+    if args.app:
+        data_dir = Path(args.data_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = data_dir / "manifest.json"
+        if not manifest_path.exists():
+            import json as _json
+
+            manifest_path.write_text(
+                _json.dumps(
+                    {
+                        "version": "1.0",
+                        "app": {"name": args.app, "entry": f"{args.app}/index.html", "title": args.app},
+                        "session": {"id": "dev", "created_at": "dev", "token": "REDACTED"},
+                        "server": {"http_port": args.http_port, "ws_port": args.ws_port, "host": "127.0.0.1"},
+                    }
+                )
+            )
+
     server = WebviewServer(
         data_dir=args.data_dir,
         http_port=args.http_port,
         ws_port=args.ws_port,
         sdk_path=args.sdk_path,
+        apps_dir=args.apps_dir,
     )
 
     loop = asyncio.new_event_loop()

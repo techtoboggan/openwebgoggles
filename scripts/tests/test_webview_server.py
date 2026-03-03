@@ -629,6 +629,18 @@ class TestDataContract:
         result = contract.get_actions()
         assert len(result["actions"]) == 0
 
+    def test_clear_state_removes_file(self, contract, tmp_data_dir):
+        """clear_state deletes state.json so the server starts fresh."""
+        contract.write_json(contract.state_path, {"title": "stale"})
+        assert contract.state_path.exists()
+        contract.clear_state()
+        assert not contract.state_path.exists()
+        assert contract.get_state() is None
+
+    def test_clear_state_no_file_is_safe(self, contract, tmp_data_dir):
+        """clear_state is a no-op when state.json doesn't exist."""
+        contract.clear_state()  # should not raise
+
     @pytest.mark.owasp_a08
     def test_change_detection(self, contract, tmp_data_dir):
         """check_changes detects file modifications."""
@@ -1986,6 +1998,8 @@ class TestWSAuthProtocol:
     @pytest.mark.asyncio
     async def test_auth_sends_connected_state(self, ws_server):
         """After successful auth, server should send connected message with state."""
+        # Write state so the connected message includes the state field.
+        ws_server.contract.write_json(ws_server.contract.state_path, {"version": 1, "status": "ready", "title": "Test"})
         ws = MockWebSocket(messages=[_auth_msg()])
         await ws_server._handle_ws(ws)
 
@@ -2158,6 +2172,10 @@ class TestWSMessageHandling:
     @pytest.mark.asyncio
     async def test_request_state_returns_state(self, ws_server):
         """request_state message should return current state."""
+        # Write state so request_state has something to return.
+        ws_server.contract.write_json(
+            ws_server.contract.state_path, {"version": 1, "status": "ready", "data": {"sections": []}}
+        )
         req = _wrap_signed("test_ws_token_xyz", {"type": "request_state"})
         ws = MockWebSocket(messages=[_auth_msg(), req])
         await ws_server._handle_ws(ws)
@@ -3091,3 +3109,221 @@ class TestStripTokenDeepCopy:
         original = {"server": {"host": "127.0.0.1"}}
         result = _strip_token(original)
         assert result == {"server": {"host": "127.0.0.1"}}
+
+
+# ---------------------------------------------------------------------------
+# WebviewServer apps_dir override and dev-mode features
+# ---------------------------------------------------------------------------
+
+
+class TestWebviewServerAppsDirOverride:
+    """WebviewServer accepts a custom apps_dir instead of data_dir/apps."""
+
+    def test_default_apps_dir_is_data_dir_apps(self, tmp_path):
+        """Without apps_dir override, apps_dir defaults to data_dir/apps."""
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": "sometoken123"}):
+            server = WebviewServer(
+                data_dir=str(tmp_path),
+                http_port=18430,
+                ws_port=18431,
+                sdk_path=str(tmp_path / "sdk.js"),
+            )
+        assert server.apps_dir == tmp_path / "apps"
+
+    def test_custom_apps_dir_is_used(self, tmp_path):
+        """When apps_dir is passed, it overrides data_dir/apps."""
+        custom = tmp_path / "my_custom_apps"
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": "sometoken123"}):
+            server = WebviewServer(
+                data_dir=str(tmp_path),
+                http_port=18430,
+                ws_port=18431,
+                sdk_path=str(tmp_path / "sdk.js"),
+                apps_dir=str(custom),
+            )
+        assert server.apps_dir == custom
+
+    def test_custom_apps_dir_passed_to_http_handler(self, tmp_path):
+        """Custom apps_dir flows through to the HTTP handler."""
+        custom = tmp_path / "assets" / "apps"
+        with patch.dict(os.environ, {"OCV_SESSION_TOKEN": "sometoken123"}):
+            server = WebviewServer(
+                data_dir=str(tmp_path),
+                http_port=18430,
+                ws_port=18431,
+                sdk_path=str(tmp_path / "sdk.js"),
+                apps_dir=str(custom),
+            )
+        assert server.http_handler.apps_dir == custom
+
+
+class TestDevManifestAutoCreate:
+    """--app flag auto-creates manifest.json for dev mode."""
+
+    def test_app_flag_creates_manifest(self, tmp_path):
+        """main() with --app creates manifest.json in data_dir."""
+        import json
+
+        from webview_server import main
+
+        data_dir = tmp_path / "dev-data"
+        sdk = tmp_path / "sdk.js"
+        sdk.write_text("// sdk")
+
+        with (
+            patch.dict(os.environ, {"OCV_SESSION_TOKEN": "devtoken123"}),
+            pytest.raises(SystemExit),
+        ):
+            with patch(
+                "sys.argv",
+                [
+                    "webview_server.py",
+                    "--data-dir",
+                    str(data_dir),
+                    "--http-port",
+                    "19999",
+                    "--ws-port",
+                    "19998",
+                    "--sdk-path",
+                    str(sdk),
+                    "--app",
+                    "dynamic",
+                ],
+            ):
+                # Patch server.start so it exits immediately
+                with patch("webview_server.WebviewServer.start", side_effect=SystemExit(0)):
+                    main()
+
+        manifest_path = data_dir / "manifest.json"
+        assert manifest_path.exists(), "manifest.json should be created by --app flag"
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["app"]["name"] == "dynamic"
+        assert manifest["app"]["entry"] == "dynamic/index.html"
+
+    def test_app_flag_does_not_overwrite_existing_manifest(self, tmp_path):
+        """--app does not overwrite an already-present manifest.json."""
+        import json
+
+        from webview_server import main
+
+        data_dir = tmp_path / "dev-data"
+        data_dir.mkdir()
+        sdk = tmp_path / "sdk.js"
+        sdk.write_text("// sdk")
+
+        existing = {"app": {"name": "existing", "entry": "existing/index.html"}}
+        (data_dir / "manifest.json").write_text(json.dumps(existing))
+
+        with (
+            patch.dict(os.environ, {"OCV_SESSION_TOKEN": "devtoken123"}),
+            pytest.raises(SystemExit),
+        ):
+            with patch(
+                "sys.argv",
+                [
+                    "webview_server.py",
+                    "--data-dir",
+                    str(data_dir),
+                    "--http-port",
+                    "19999",
+                    "--ws-port",
+                    "19998",
+                    "--sdk-path",
+                    str(sdk),
+                    "--app",
+                    "dynamic",
+                ],
+            ):
+                with patch("webview_server.WebviewServer.start", side_effect=SystemExit(0)):
+                    main()
+
+        manifest = json.loads((data_dir / "manifest.json").read_text())
+        assert manifest["app"]["name"] == "existing", "Existing manifest must not be overwritten"
+
+
+class TestDataDirMkdirOnStart:
+    """WebviewServer.start() creates data_dir if it doesn't exist before writing PID."""
+
+    def test_mkdir_called_before_pid_write_in_source(self):
+        """start() must call data_dir.mkdir() before os.open() for the PID file.
+
+        Structural test: verifies that mkdir(parents=True, exist_ok=True) appears
+        before the PID file os.open() call in the source, preventing FileNotFoundError
+        when data_dir doesn't exist yet (e.g. fresh dev mode run).
+        """
+        import inspect
+
+        from webview_server import WebviewServer
+
+        src = inspect.getsource(WebviewServer.start)
+        mkdir_pos = src.find("mkdir(parents=True, exist_ok=True)")
+        pid_pos = src.find(".server.pid")
+        assert mkdir_pos != -1, "start() must call mkdir(parents=True, exist_ok=True)"
+        assert pid_pos != -1, "start() must write a .server.pid file"
+        assert mkdir_pos < pid_pos, "mkdir() must appear before the PID file write"
+
+
+class TestSdkFallbackFileServing:
+    """_handle_static falls back to sdk_path.parent for SDK assets not in apps_dir."""
+
+    @pytest.mark.asyncio
+    async def test_sdk_file_served_from_sdk_dir_when_missing_from_apps(self, tmp_data_dir, contract):
+        """SDK file not in apps_dir is served from sdk_path.parent as fallback."""
+        from webview_server import WebviewHTTPHandler
+
+        # Custom apps_dir separate from sdk dir (simulates dev mode)
+        custom_apps = tmp_data_dir / "custom_apps"
+        app_dir = custom_apps / "testapp"
+        app_dir.mkdir(parents=True)
+        (app_dir / "index.html").write_text("<html></html>")
+
+        # SDK lives in a separate dir
+        sdk_dir = tmp_data_dir / "sdk"
+        sdk_dir.mkdir()
+        sdk_file = sdk_dir / "openwebgoggles-sdk.js"
+        sdk_file.write_text("// SDK content")
+
+        from security_gate import SecurityGate
+
+        h = WebviewHTTPHandler(
+            contract=contract,
+            apps_dir=custom_apps,
+            sdk_path=sdk_dir / "openwebgoggles-sdk.js",
+            session_token="secret_token_abc",
+            http_port=18420,
+            ws_port=18421,
+            security_gate=SecurityGate(),
+        )
+        h._public_key_hex = "deadbeef" * 8
+
+        auth = {"authorization": "Bearer secret_token_abc"}
+        w = await send_request(h, "GET", "/openwebgoggles-sdk.js", headers=auth)
+        assert w.status_code == 200, "SDK file should be served from sdk_path.parent fallback"
+
+    @pytest.mark.asyncio
+    async def test_sdk_fallback_traversal_blocked(self, tmp_data_dir, contract):
+        """Path traversal via SDK fallback must be rejected."""
+        from webview_server import WebviewHTTPHandler
+
+        custom_apps = tmp_data_dir / "custom_apps"
+        (custom_apps / "testapp").mkdir(parents=True)
+        sdk_dir = tmp_data_dir / "sdk"
+        sdk_dir.mkdir()
+        (sdk_dir / "openwebgoggles-sdk.js").write_text("// sdk")
+
+        from security_gate import SecurityGate
+
+        h = WebviewHTTPHandler(
+            contract=contract,
+            apps_dir=custom_apps,
+            sdk_path=sdk_dir / "openwebgoggles-sdk.js",
+            session_token="secret_token_abc",
+            http_port=18420,
+            ws_port=18421,
+            security_gate=SecurityGate(),
+        )
+        h._public_key_hex = "deadbeef" * 8
+
+        auth = {"authorization": "Bearer secret_token_abc"}
+        w = await send_request(h, "GET", "/../../etc/passwd", headers=auth)
+        assert w.status_code == 403, "Traversal through SDK fallback must be blocked"

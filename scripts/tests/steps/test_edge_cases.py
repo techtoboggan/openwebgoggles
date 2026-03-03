@@ -222,7 +222,7 @@ def call_merge_with_dangerous_css(ctx):
         try:
 
             async def _test():
-                result = await mcp_server.webview_update(
+                result = await mcp_server.openwebgoggles_update(
                     state={"custom_css": "body { background: url(javascript:alert(1)) }"},
                     merge=True,
                 )
@@ -306,7 +306,7 @@ def call_close_with_xss(ctx):
         try:
 
             async def _test():
-                return await mcp_server.webview_close(
+                return await mcp_server.openwebgoggles_close(
                     message="<script>alert(1)</script>",
                 )
 

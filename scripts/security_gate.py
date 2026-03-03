@@ -173,6 +173,67 @@ class SecurityGate:
     MAX_TABS = 20
     MAX_PAGES = 20
     ALLOWED_TASK_STATUSES = frozenset({"pending", "in_progress", "completed", "failed", "skipped"})
+    # Aliases normalised to canonical values before validation — keeps LLM agents from spinning
+    # their wheels on near-misses. Both dicts are case-sensitive (already lower-case).
+    STATUS_ALIASES: dict[str, str] = {
+        # → processing
+        "live": "processing",
+        "active": "processing",
+        "running": "processing",
+        "working": "processing",
+        "busy": "processing",
+        # → completed
+        "done": "completed",
+        "complete": "completed",
+        "success": "completed",
+        "succeeded": "completed",
+        "finished": "completed",
+        # → error
+        "failed": "error",
+        "failure": "error",
+        "err": "error",
+        # → waiting_input
+        "waiting": "waiting_input",
+        "waiting_for_input": "waiting_input",
+        # → ready
+        "idle": "ready",
+        # → initializing
+        "starting": "initializing",
+        "init": "initializing",
+        "loading": "initializing",
+    }
+    TASK_STATUS_ALIASES: dict[str, str] = {
+        # → completed
+        "complete": "completed",
+        "done": "completed",
+        "success": "completed",
+        "succeeded": "completed",
+        "finished": "completed",
+        "ok": "completed",
+        # → in_progress
+        "running": "in_progress",
+        "active": "in_progress",
+        "live": "in_progress",
+        "working": "in_progress",
+        "processing": "in_progress",
+        "busy": "in_progress",
+        # → failed
+        "error": "failed",
+        "failure": "failed",
+        "errored": "failed",
+        "err": "failed",
+        # → pending
+        "wait": "pending",
+        "waiting": "pending",
+        "queued": "pending",
+        "todo": "pending",
+        "not_started": "pending",
+        # → skipped
+        "skip": "skipped",
+        "ignored": "skipped",
+        "cancelled": "skipped",
+        "canceled": "skipped",
+    }
     ALLOWED_BEHAVIOR_CONDITIONS = frozenset(
         {"equals", "notEquals", "in", "notIn", "checked", "unchecked", "empty", "notEmpty", "matches"}
     )
@@ -313,8 +374,11 @@ class SecurityGate:
         if not self._check_depth(state):
             return False, f"Nesting depth exceeds {self.MAX_NESTING_DEPTH}", {}
 
-        # 4. Validate status
+        # 4. Validate status (normalize aliases first)
         status = state.get("status", "")
+        if status:
+            status = self.STATUS_ALIASES.get(status, status)
+            state["status"] = status
         if status and status not in self.ALLOWED_STATUS_VALUES:
             return False, f"Invalid status: {status!r}", {}
 
@@ -802,6 +866,9 @@ class SecurityGate:
                 if not isinstance(task, dict):
                     return False, f"{prefix}.tasks[{ti}] must be an object"
                 ts = task.get("status", "")
+                if ts:
+                    ts = self.TASK_STATUS_ALIASES.get(ts, ts)
+                    task["status"] = ts
                 if ts and ts not in self.ALLOWED_TASK_STATUSES:
                     return False, f"{prefix}.tasks[{ti}].status: invalid {ts!r}"
             pct = sec.get("percentage")

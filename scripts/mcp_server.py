@@ -2,7 +2,7 @@
 """
 OpenWebGoggles MCP Server — exposes browser-based HITL UIs as MCP tools.
 
-Agents call webview() to show an interactive UI and block until the user
+Agents call openwebgoggles() to show an interactive UI and block until the user
 responds.  The MCP server manages the full lifecycle: data directory setup,
 subprocess launch, browser opening, state updates, and cleanup.
 
@@ -1422,7 +1422,12 @@ class AppModeState:
 
     def __init__(self) -> None:
         self.state: dict[str, Any] = {}
-        self.state_version: int = 0
+        # Start version at current epoch-ms so each server restart produces versions
+        # strictly larger than any previous session.  The MCP Apps iframe has a
+        # monotonicity guard (_isStateDowngrade) that rejects version <= current —
+        # without this, a server restart (resetting to v1) would be silently ignored
+        # by an iframe that already holds state from the previous process.
+        self.state_version: int = int(time.time() * 1000)
         self.actions: list[dict[str, Any]] = []
         self._state_lock = threading.Lock()
         self._actions_lock = threading.Lock()
@@ -1473,7 +1478,9 @@ class AppModeState:
     def clear(self) -> None:
         with self._state_lock:
             self.state = {}
-            self.state_version = 0
+            # Reset to a new timestamp epoch so the next session always wins the
+            # downgrade check in the iframe, even if the iframe stayed open.
+            self.state_version = int(time.time() * 1000)
         self.clear_actions()
 
 
@@ -1504,10 +1511,9 @@ def _check_host_supports_ui(ctx: Context | None) -> bool:
     Detection strategies (tried in order):
     1. capabilities.extensions has "io.modelcontextprotocol/ui" (Claude Desktop direct)
     2. capabilities.experimental has "io.modelcontextprotocol/ui"
-    3. clientInfo.name is "claude-code" — Claude Desktop uses Claude Code as its AI
-       backend. Tool calls go through Claude Code's MCP connection, which doesn't
-       advertise the UI extension. But Claude Desktop wraps Claude Code's stream-json
-       output and renders structuredContent from tool results as MCP Apps.
+    3. clientInfo.name is "local-agent-mode-*" — Claude Code's MCP client name when
+       running as an agent host. Claude Code renders structuredContent from tool
+       results as an inline preview pane (MCP Apps mode).
     4. _host_fetched_ui_resource flag (set when resources/read was called for ui://)
     """
     diag: list[str] = []
@@ -1531,14 +1537,9 @@ def _check_host_supports_ui(ctx: Context | None) -> bool:
                 _write_diag("check_ui", diag, result="MATCH:experimental")
                 return True
 
-            # Strategy 3: "local-agent-mode-*" — Claude Desktop's SDK bridge wraps
-            # Claude Code. It sends clientInfo.name as "local-agent-mode-{server}"
-            # without advertising the UI extension. But Claude Desktop intercepts
-            # the stream-json output and renders structuredContent as MCP Apps.
-            # Also match "claude-code" for direct Claude Code stdio connections.
-            if isinstance(client_name, str) and (
-                client_name.startswith("local-agent-mode-") or client_name == "claude-code"
-            ):
+            # Strategy 3: "local-agent-mode-*" — Claude Code's agent MCP client name.
+            # Claude Code renders structuredContent inline as a preview pane.
+            if isinstance(client_name, str) and client_name.startswith("local-agent-mode-"):
                 _write_diag("check_ui", diag, result="MATCH:local-agent-bridge")
                 return True
 
@@ -1556,7 +1557,7 @@ def _resolve_mode(ctx: Context | None) -> str:
     """Resolve and cache the operating mode. Returns 'app' or 'browser'.
 
     Once determined, the mode is cached for the session lifetime.
-    Call _reset_mode() (via webview_close) to clear the cache.
+    Call _reset_mode() (via openwebgoggles_close) to clear the cache.
     """
     global _cached_mode  # noqa: PLW0603
     if _cached_mode is not None:
@@ -1574,7 +1575,7 @@ def _resolve_mode(ctx: Context | None) -> str:
 
 
 def _reset_mode() -> None:
-    """Reset the cached mode (called by webview_close)."""
+    """Reset the cached mode (called by openwebgoggles_close)."""
     global _cached_mode  # noqa: PLW0603
     _cached_mode = None
 
@@ -1626,11 +1627,11 @@ def _make_merge_validator() -> Callable | None:
 mcp = FastMCP(
     "openwebgoggles",
     instructions="""\
-Browser-based HITL UIs for CLI agents. Show interactive webviews and collect user input.
+Human-in-the-loop (HITL) UI panels for agents. Show interactive data, forms, and dashboards; collect structured user input.
 
 ## When to use these tools
 
-Use webview instead of plain text or AskUserQuestion when ANY of these apply:
+Use openwebgoggles instead of plain text or AskUserQuestion when ANY of these apply:
 
 - **Multiple items to review**: Lists of PRs, issues, findings, migrations, configs, etc. \
 where the user needs to act on each one (approve/reject/edit/skip).
@@ -1639,7 +1640,7 @@ fields, checkboxes, or multi-field input.
 - **Structured data review**: Tables, key-value pairs, nested objects, or arrays where \
 visual layout helps comprehension.
 - **Multi-step workflows**: Wizards, sequential approvals, or processes where you call \
-webview repeatedly for each step.
+openwebgoggles repeatedly for each step.
 - **Batch operations**: When the user needs to triage, categorize, or make choices across \
 many items at once.
 - **Rich context alongside a decision**: When showing code diffs, logs, configs, or \
@@ -1654,10 +1655,10 @@ When the user needs to review/decide on multiple items (issues, PRs, findings, c
 migrations, etc.), ALWAYS present them **one at a time** as a step-by-step wizard. \
 NEVER dump all items into a single long scrolling page.
 
-For N items, call webview N times in sequence:
+For N items, call openwebgoggles N times in sequence:
 - Show "Item 1 of N" with context + form for that item
 - Collect the response, then show "Item 2 of N", etc.
-- After the last item, show a summary and call webview_close
+- After the last item, show a summary and call openwebgoggles_close
 
 Each step should show:
 1. An "items" section with just the current item (title + subtitle)
@@ -1668,7 +1669,7 @@ Each step should show:
 
 Example — step 1 of a 3-item wizard:
 ```
-webview({
+openwebgoggles({
   "title": "Issue Triage",
   "message": "Issue 1 of 3",
   "status": "pending_review",
@@ -1691,14 +1692,14 @@ webview({
 })
 ```
 
-Then call webview again for item 2, then 3, etc. Collect all responses, \
-then show a summary and call webview_close.
+Then call openwebgoggles again for item 2, then 3, etc. Collect all responses, \
+then show a summary and call openwebgoggles_close.
 
 ## Quick patterns
 
 **Single item review or form input**:
 ```
-webview({
+openwebgoggles({
   "title": "Configuration",
   "data": {"sections": [
     {"type": "form", "fields": [
@@ -1733,7 +1734,7 @@ Example — text section with markdown:
 
 Beyond form/items/text/actions, these section types are available:
 
-**progress** — Task progress tracker (pair with `webview_update` for live updates):
+**progress** — Task progress tracker (pair with `openwebgoggles_update` for live updates):
 ```
 {"type": "progress", "title": "Running Tests", "tasks": [
   {"label": "Unit tests", "status": "completed"},
@@ -1768,18 +1769,18 @@ Task statuses: pending, in_progress, completed, failed, skipped.
 ]}
 ```
 
-## Non-blocking updates with webview_update
+## Non-blocking updates with openwebgoggles_update
 
-Use `webview_update` to push UI changes without waiting for user action. \
+Use `openwebgoggles_update` to push UI changes without waiting for user action. \
 This is ideal for progress tracking, streaming logs, and live status:
 
 ```
-webview_update({"status": "processing", "message": "Running tests..."}, merge=True)
+openwebgoggles_update({"status": "processing", "message": "Running tests..."}, merge=True)
 ```
 
 Or use presets for common patterns:
 ```
-webview_update({"tasks": [...], "percentage": 50}, preset="progress")
+openwebgoggles_update({"tasks": [...], "percentage": 50}, preset="progress")
 ```
 
 ## Field validation
@@ -1881,7 +1882,7 @@ async def _owg_action(
 
     This tool is called by the embedded iframe (via tools/call through the host)
     when the user clicks a button or submits a form. Actions are stored in an
-    in-memory queue that the agent reads via webview_read().
+    in-memory queue that the agent reads via openwebgoggles_read().
     """
     if _resolve_mode(None) != "app":
         return {"error": "Not in MCP Apps mode"}
@@ -1912,24 +1913,34 @@ async def _owg_action(
 
 
 # ---------------------------------------------------------------------------
-# MCP Tools — webview HITL interface
+# MCP Tools — OpenWebGoggles HITL interface
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def webview(
+async def openwebgoggles(
     state: dict[str, Any],
     timeout: int = 300,
     app: str = "dynamic",
     preset: str | None = None,
     ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Show an interactive webview UI and wait for the user to respond.
+    """Show an interactive UI panel and wait for the user to respond.
 
-    This is the primary tool for human-in-the-loop interactions. Pass a state
-    object describing the UI and this tool blocks until the user clicks an
-    action button.
+    Use this whenever you need a human in the loop: approval workflows,
+    code/PR review, data display, structured input collection, progress
+    tracking, or any time the agent needs to show results and wait for
+    feedback. This is the primary tool for human-in-the-loop (HITL) interactions.
+
+    Trigger on any scenario such as:
+    - "approve / review / confirm" — show data and collect approval
+    - "show me / display / visualize" — render tables, charts, metrics
+    - "fill out / input / collect" — present a form and gather responses
+    - "waiting for user / need feedback" — block until user acts
+
+    Pass a state object describing the UI; this tool blocks until the user
+    clicks an action button, then returns their response.
 
     The state object schema:
       - title (str): Header title
@@ -2005,7 +2016,7 @@ async def webview(
       - context (optional): {item_index, item_id, section_index, section_id} for per-item actions
 
     Example:
-        result = webview({
+        result = openwebgoggles({
             "title": "Code Review",
             "message": "Please review these changes.",
             "data": {
@@ -2023,7 +2034,7 @@ async def webview(
         })
 
     Example — review a list of items with per-item actions:
-        result = webview({
+        result = openwebgoggles({
             "title": "PR Triage",
             "message": "Review these pull requests.",
             "data": {"sections": [
@@ -2049,24 +2060,36 @@ async def webview(
         except ValueError as e:
             return {"error": str(e)}
 
-    # Validate eagerly so the agent gets a clear error
+    # Validate eagerly so the agent gets a clear error; use sanitized state
+    # (which has aliases normalized to canonical values) for everything downstream.
     if _security_gate:
         raw = json.dumps(state, separators=(",", ":"))
-        valid, err, _ = _security_gate.validate_state(raw)
+        valid, err, sanitized = _security_gate.validate_state(raw)
         if not valid:
             return {"error": f"State validation failed: {err}"}
+        state = sanitized
 
     mode = _resolve_mode(ctx)
 
     # ── App mode: return immediately with structuredContent ─────────────
     # The host renders an iframe AFTER the tool returns, so we must NOT
-    # block here.  User actions arrive via _owg_action → webview_read().
+    # block here.  User actions arrive via _owg_action → openwebgoggles_read().
     if mode == "app":
         app_state = _get_app_state()
         app_state.clear_actions()
         app_state.write_state(state)
+        title = state.get("title", "Webview")
         return CallToolResult(
-            content=[TextContent(type="text", text=f"Displaying UI: {state.get('title', 'Webview')}")],
+            content=[
+                TextContent(
+                    type="text",
+                    text=(
+                        f'UI ready: "{title}". '
+                        "Tell the user to click the **Preview** button (▶) in the tool result "
+                        "to open the interactive panel, then poll openwebgoggles_read() for their response."
+                    ),
+                )
+            ],
             structuredContent=state,
         )
 
@@ -2091,13 +2114,15 @@ async def webview(
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def webview_read(clear: bool = False) -> dict[str, Any]:
-    """Read the current user actions from the webview.
+async def openwebgoggles_read(clear: bool = False) -> dict[str, Any]:
+    """Read the current user actions from the OpenWebGoggles panel.
 
-    Use after webview() to check if the user has responded (polling pattern).
-    Returns the actions array, or an empty array if no response yet.
+    Poll this after openwebgoggles() returns (MCP Apps / Claude Desktop) to
+    check if the human has submitted a response. Use in a polling loop:
+    call openwebgoggles_read() repeatedly until actions are present.
 
-    Set clear=True to clear actions after reading so the next read starts fresh.
+    Returns the actions array (may be empty if no response yet).
+    Set clear=True to clear actions after reading so the next poll starts fresh.
     """
     mode = _resolve_mode(None)
 
@@ -2125,20 +2150,22 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def webview_update(
+async def openwebgoggles_update(
     state: dict[str, Any],
     merge: bool = False,
     preset: str | None = None,
     app: str = "dynamic",
     ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Update the webview state without blocking for a response.
+    """Push a live UI update to the open OpenWebGoggles panel without blocking.
 
-    Use this to push UI updates (progress, status changes, new data) while
-    the webview is open, without waiting for user action.
+    Use this to stream progress updates, append log lines, swap data, or
+    change status while the panel is open — without waiting for the human
+    to act. Ideal for long-running tasks where you want to show real-time
+    feedback (e.g. build progress, live metrics, step-by-step status).
 
     Args:
-        state: The state object (same schema as webview).
+        state: The state object (same schema as openwebgoggles).
         merge: If True, deep-merge into existing state instead of full replacement.
                Dicts are merged recursively. Lists are replaced, not appended.
         preset: Optional preset name to expand state from shorthand.
@@ -2155,12 +2182,13 @@ async def webview_update(
         except ValueError as e:
             return {"error": str(e)}
 
-    # Validate eagerly so the agent gets a clear error
+    # Validate eagerly; use sanitized state (aliases normalized) for everything downstream.
     if _security_gate:
         raw = json.dumps(state, separators=(",", ":"))
-        valid, err, _ = _security_gate.validate_state(raw)
+        valid, err, sanitized = _security_gate.validate_state(raw)
         if not valid:
             return {"error": f"State validation failed: {err}"}
+        state = sanitized
 
     validator = _make_merge_validator()
     mode = _resolve_mode(ctx)
@@ -2205,10 +2233,11 @@ async def webview_update(
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def webview_status() -> dict[str, Any]:
-    """Check whether a webview session is currently active.
+async def openwebgoggles_status() -> dict[str, Any]:
+    """Check whether an OpenWebGoggles human-in-the-loop session is active.
 
-    Returns the session state without modifying anything.
+    Returns the session state without modifying anything. Use before calling
+    openwebgoggles_read() or openwebgoggles_update() to verify a panel is open.
     """
     mode = _resolve_mode(None)
 
@@ -2236,12 +2265,12 @@ async def webview_status() -> dict[str, Any]:
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
-    """Close the webview session and stop the server.
+async def openwebgoggles_close(message: str = "Session complete.") -> dict[str, Any]:
+    """Close the OpenWebGoggles panel and end the human-in-the-loop session.
 
     Shows a farewell message to the user before closing. Blocks until the
     browser window is confirmed closed. Idempotent — safe to call even if
-    no session is active. Always call this when done with the webview.
+    no session is active. Always call this when the HITL workflow is complete.
     """
     global _session, _app_mode_state, _host_fetched_ui_resource
     # Validate close message for XSS before passing to browser
@@ -2341,16 +2370,35 @@ def _resolve_binary() -> str:
 _CLAUDE_SETTINGS = {
     "permissions": {
         "allow": [
-            "mcp__openwebgoggles__webview",
-            "mcp__openwebgoggles__webview_read",
-            "mcp__openwebgoggles__webview_close",
+            "mcp__openwebgoggles__openwebgoggles",
+            "mcp__openwebgoggles__openwebgoggles_read",
+            "mcp__openwebgoggles__openwebgoggles_close",
+            "mcp__openwebgoggles__openwebgoggles_update",
+            "mcp__openwebgoggles__openwebgoggles_status",
         ]
     }
 }
 
+# Permission strings written by older versions (tool rename: webview_* → openwebgoggles_*).
+# Removed automatically by `init` and flagged by `doctor`.
+_DEPRECATED_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "mcp__openwebgoggles__webview",
+        "mcp__openwebgoggles__webview_read",
+        "mcp__openwebgoggles__webview_close",
+        "mcp__openwebgoggles__webview_update",
+        "mcp__openwebgoggles__webview_status",
+    }
+)
 
-def _init_claude(root: Path) -> None:
-    """Set up .mcp.json and .claude/settings.json for Claude Code."""
+
+def _init_claude(root: Path, global_mode: bool = False) -> None:
+    """Set up .mcp.json and .claude/settings.json for Claude Code.
+
+    When global_mode=True, root should be Path.home() so files land at
+    ~/.mcp.json and ~/.claude/settings.json — making openwebgoggles available
+    in every project without per-project init.
+    """
     root.mkdir(parents=True, exist_ok=True)
     binary = _resolve_binary()
     print(f"  binary: {binary}")
@@ -2383,10 +2431,18 @@ def _init_claude(root: Path) -> None:
         allow_list = existing.setdefault("permissions", {}).setdefault("allow", [])
         already = set(allow_list)
         missing = needed - already
-        if missing:
+        deprecated = [p for p in allow_list if p in _DEPRECATED_PERMISSIONS]
+        for dep in deprecated:
+            allow_list.remove(dep)
+        if missing or deprecated:
             allow_list.extend(sorted(missing))
             settings_path.write_text(json.dumps(existing, indent=2) + "\n")
-            print(f"  {settings_path}: added {len(missing)} permission(s).")
+            parts = []
+            if missing:
+                parts.append(f"added {len(missing)} permission(s)")
+            if deprecated:
+                parts.append(f"removed {len(deprecated)} stale permission(s)")
+            print(f"  {settings_path}: {', '.join(parts)}.")
         else:
             print(f"  {settings_path}: permissions already present, skipping.")
     else:
@@ -2397,7 +2453,8 @@ def _init_claude(root: Path) -> None:
     print("\n  [Claude Desktop]")
     _setup_claude_desktop_config(binary)
 
-    print("\nDone! Restart Claude Code and Claude Desktop to pick up the new MCP server.")
+    scope = "globally (all projects)" if global_mode else f"for project: {root}"
+    print(f"\nDone! Configured {scope}. Restart Claude Code and Claude Desktop to pick up the new MCP server.")
 
 
 def _get_claude_desktop_config_path() -> Path:
@@ -2543,17 +2600,19 @@ def _init_opencode(root: Path) -> None:
 
 def _init_usage() -> None:
     """Print init subcommand usage."""
-    print("Usage: openwebgoggles init <editor> [target_dir]\n")
+    print("Usage: openwebgoggles init <editor> [target_dir] [--global]\n")
     print("Set up OpenWebGoggles for your editor.\n")
     print("Editors:")
     print("  claude          Claude Code + Claude Desktop (sets up both)")
     print("                  Default target: current directory (project-level)")
+    print("                  Use --global to write ~/.mcp.json + ~/.claude/settings.json")
     print("  claude-desktop  Claude Desktop only — adds to claude_desktop_config.json")
     print("                  Uses the global platform-specific config path")
     print("  opencode        OpenCode — creates opencode.json")
     print("                  Default target: ~/.config/opencode/ (global, all projects)\n")
     print("Examples:")
-    print("  openwebgoggles init claude              # set up Claude Code + Desktop")
+    print("  openwebgoggles init claude              # set up Claude Code for this project")
+    print("  openwebgoggles init claude --global     # set up Claude Code for ALL projects")
     print("  openwebgoggles init claude-desktop       # set up Claude Desktop only")
     print("  openwebgoggles init opencode             # set up OpenCode globally")
     print("  openwebgoggles init opencode .           # set up OpenCode for this project only")
@@ -2806,6 +2865,21 @@ def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic 
         if not found_config:
             warn("No editor config found (run: openwebgoggles init claude)")
 
+    # Stale permissions from old 'webview' tool name (pre-rename migration)
+    for sp in (cwd / ".claude" / "settings.json", Path.home() / ".claude" / "settings.json"):
+        if sp.exists():
+            try:
+                scfg = json.loads(sp.read_text())
+                allow = scfg.get("permissions", {}).get("allow", [])
+                stale = [p for p in allow if p in _DEPRECATED_PERMISSIONS]
+                if stale:
+                    warn(
+                        f"{sp}: {len(stale)} stale permission(s) from old 'webview' tool name"
+                        " — run: openwebgoggles init claude"
+                    )
+            except (json.JSONDecodeError, OSError):
+                pass
+
     # Stale processes
     data_dir = _find_data_dir(data_dir_arg)
     stale_cleaned = False
@@ -2903,11 +2977,19 @@ def main():
             _init_usage()
             return
         editor = sys.argv[2]
-        if len(sys.argv) > 3:
-            target = Path(sys.argv[3])
+        remaining = sys.argv[3:]
+        global_mode = "--global" in remaining
+        path_args = [a for a in remaining if not a.startswith("-")]
+        if path_args:
+            target = Path(path_args[0])
+        elif global_mode and editor == "claude":
+            target = Path.home()
         else:
             target = _EDITOR_DEFAULT_DIRS.get(editor) or Path.cwd()
-        _INIT_DISPATCH[editor](target)
+        if global_mode and editor == "claude":
+            _init_claude(target, global_mode=True)
+        else:
+            _INIT_DISPATCH[editor](target)
         return
 
     if cmd == "restart":
