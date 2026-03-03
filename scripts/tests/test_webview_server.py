@@ -2728,14 +2728,15 @@ class TestTrivialTokenGuard:
 class TestTempFileUmask:
     """Atomic file writes must use restrictive umask."""
 
-    def test_umask_in_write_json_source(self):
-        """DataContract.write_json must set umask(0o077) during writes."""
+    def test_restrictive_permissions_in_write_json_source(self):
+        """DataContract.write_json must use restrictive file permissions."""
         import inspect
 
         src = inspect.getsource(DataContract.write_json)
-        assert "umask" in src, "write_json must use umask for file writes"
-        assert "0o077" in src, "umask must be restrictive (0o077)"
-        assert "finally" in src, "umask must be restored in a finally block"
+        # Must use os.open with explicit mode 0o600 (thread-safe alternative to os.umask)
+        assert "os.open" in src, "write_json must use os.open for restrictive permissions"
+        assert "0o600" in src, "file permissions must be restrictive (0o600)"
+        assert "finally" in src, "fd must be closed in a finally block"
 
     def test_umask_in_pid_write_source(self):
         """PID file write must also use umask."""
@@ -2868,15 +2869,15 @@ class TestDeploymentSecurity:
     critical in production deployments.
     """
 
-    def test_write_json_umask_pattern(self):
-        """DataContract.write_json must set umask(0o077) in a try/finally block."""
+    def test_write_json_permissions_pattern(self):
+        """DataContract.write_json must use os.open with 0o600 for thread-safe restrictive permissions."""
         import inspect
 
         src = inspect.getsource(DataContract.write_json)
-        assert "os.umask(0o077)" in src, "write_json must set umask(0o077)"
-        assert src.index("os.umask(0o077)") < src.index("finally"), "umask must be set BEFORE the finally block"
-        # Count umask calls — should have set + restore
-        assert src.count("os.umask") >= 2, "Must both set and restore umask"
+        assert "os.open(" in src, "write_json must use os.open for file creation"
+        assert "0o600" in src, "write_json must set permissions to 0o600"
+        assert "os.close(fd)" in src, "write_json must close the fd in a finally block"
+        assert "O_CREAT" in src, "write_json must use O_CREAT flag"
 
     def test_pid_write_restrictive_permissions(self):
         """PID file write must use restrictive permissions (os.open with 0o600)."""

@@ -173,11 +173,23 @@
     }
   };
 
+  MCPAppsTransport.prototype._isStateDowngrade = function (newState) {
+    // Version monotonicity: reject state with version <= current (prevents replay/downgrade)
+    if (newState && this._state &&
+        typeof newState.version === "number" && typeof this._state.version === "number" &&
+        newState.version <= this._state.version) {
+      console.warn("MCPAppsTransport: Rejected state downgrade (v" + newState.version + " <= v" + this._state.version + ")");
+      return true;
+    }
+    return false;
+  };
+
   MCPAppsTransport.prototype._handleNotification = function (method, params) {
     // State delivered via tool input/result notifications
     if (method === "notifications/tools/input" || method === "ui/toolInput") {
       var inputState = params && params.arguments && params.arguments.state;
       if (inputState) {
+        if (this._isStateDowngrade(inputState)) return;
         this._state = inputState;
         this._emit("state_updated", inputState);
       }
@@ -187,6 +199,7 @@
     if (method === "notifications/tools/result" || method === "ui/toolResult") {
       var content = params && params.structuredContent;
       if (content) {
+        if (this._isStateDowngrade(content)) return;
         this._state = content;
         this._emit("state_updated", content);
       }

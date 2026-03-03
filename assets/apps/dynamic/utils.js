@@ -142,7 +142,7 @@
   var DANGEROUS_SVG_TAGS = /^(script|foreignobject|use|set|handler|listener|animate|animatetransform|animatemotion)$/i;
   var SAFE_SVG_TAGS = /^(svg|g|rect|circle|ellipse|line|polyline|polygon|path|text|tspan|defs|clippath|lineargradient|radialgradient|stop)$/i;
   var EVENT_ATTR_RE = /^on/i;
-  var DANGEROUS_URL_RE = /^\s*(javascript|data\s*:|vbscript)\s*:/i;
+  var DANGEROUS_URL_RE = /^\s*(javascript|data|vbscript)\s*:/i;
   var SAFE_URL_PROTOCOL_RE = /^(https?:|mailto:|#|\/[^\/])/i;
 
   function sanitizeHTML(html) {

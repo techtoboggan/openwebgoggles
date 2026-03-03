@@ -468,7 +468,12 @@
             });
             return; // handled asynchronously above
           }
-          // No verify key or no ps field — if envelope has sig, log a warning
+          // Require ps field when verify key is available — reject signed messages missing ps
+          if (self._verifyKey && raw.sig && !raw.ps) {
+            console.error("OpenWebGoggles: Signed message missing ps field — rejected");
+            return;
+          }
+          // No verify key — if envelope has sig, log a warning
           if (raw.sig) {
             console.warn("OpenWebGoggles: Signed message received but verify key unavailable; accepting with nonce-only protection");
           }

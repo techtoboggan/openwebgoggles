@@ -890,12 +890,13 @@ class WebviewSession:
     @staticmethod
     def _write_json(path: Path, data: dict[str, Any]) -> None:
         tmp = path.with_suffix(".tmp")
-        # Restrictive permissions: temp files may contain session tokens or state data
-        old_umask = os.umask(0o077)
+        # Thread-safe restrictive permissions via os.open (avoids process-wide os.umask)
+        content = json.dumps(data, indent=2)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            tmp.write_text(json.dumps(data, indent=2))
+            os.write(fd, content.encode())
         finally:
-            os.umask(old_umask)
+            os.close(fd)
         tmp.replace(path)
 
     def _cleanup_process(self) -> None:
@@ -1388,37 +1389,52 @@ class AppModeState:
     in tool results rather than state.json/actions.json on disk.
     """
 
+    MAX_ACTION_QUEUE = 1000  # Cap to prevent unbounded memory growth
+
     def __init__(self) -> None:
         self.state: dict[str, Any] = {}
         self.state_version: int = 0
         self.actions: list[dict[str, Any]] = []
+        self._state_lock = threading.Lock()
         self._actions_lock = threading.Lock()
 
     def write_state(self, state: dict[str, Any]) -> None:
-        self.state_version += 1
-        state["version"] = self.state_version
-        self.state = state
+        with self._state_lock:
+            self.state_version += 1
+            state["version"] = self.state_version
+            self.state = state
 
     def merge_state(
         self,
         partial: dict[str, Any],
-        validator: Any | None = None,
+        validator: Callable | None = None,
     ) -> dict[str, Any]:
-        merged = json.loads(json.dumps(self.state))  # deep copy
-        _deep_merge(merged, partial)
-        if validator:
-            validator(merged)
-        self.state_version += 1
-        merged["version"] = self.state_version
-        self.state = merged
-        return merged
+        with self._state_lock:
+            merged = json.loads(json.dumps(self.state))  # deep copy
+            _deep_merge(merged, partial)
+            if validator:
+                validator(merged)
+            self.state_version += 1
+            merged["version"] = self.state_version
+            self.state = merged
+            return merged
 
     def read_actions(self) -> list[dict[str, Any]]:
         with self._actions_lock:
             return list(self.actions)
 
+    def read_and_clear_actions(self) -> list[dict[str, Any]]:
+        """Atomically read and clear — prevents lost actions between read+clear."""
+        with self._actions_lock:
+            actions = list(self.actions)
+            self.actions.clear()
+            return actions
+
     def add_action(self, action: dict[str, Any]) -> None:
         with self._actions_lock:
+            if len(self.actions) >= self.MAX_ACTION_QUEUE:
+                logger.warning("MCP Apps: Action queue full (%d), dropping oldest", self.MAX_ACTION_QUEUE)
+                self.actions.pop(0)
             self.actions.append(action)
 
     def clear_actions(self) -> None:
@@ -1426,8 +1442,9 @@ class AppModeState:
             self.actions.clear()
 
     def clear(self) -> None:
-        self.state = {}
-        self.state_version = 0
+        with self._state_lock:
+            self.state = {}
+            self.state_version = 0
         self.clear_actions()
 
 
@@ -1705,6 +1722,10 @@ async def _owg_action(
     if not _is_app_mode():
         return {"error": "Not in MCP Apps mode"}
 
+    # Reject internal action_ids (underscore prefix is reserved for navigation bookkeeping)
+    if action_id.startswith("_"):
+        return {"error": "action_id starting with '_' is reserved for internal use"}
+
     action: dict[str, Any] = {
         "action_id": action_id,
         "type": action_type,
@@ -1715,10 +1736,9 @@ async def _owg_action(
     if context:
         action["context"] = context
 
-    # Validate action via SecurityGate
+    # Validate action via SecurityGate (use validate_action, not validate_state)
     if _security_gate:
-        raw = json.dumps(action, separators=(",", ":"))
-        valid, err, _ = _security_gate.validate_state(raw)
+        valid, err = _security_gate.validate_action(action)
         if not valid:
             return {"error": f"Action rejected by security gate: {err}"}
 
@@ -1920,9 +1940,11 @@ async def webview_read(clear: bool = False) -> dict[str, Any]:
     # MCP Apps mode: read from in-memory queue
     if _is_app_mode():
         app_state = _get_app_state()
-        actions = app_state.read_actions()
-        if clear and actions:
-            app_state.clear_actions()
+        if clear:
+            # Atomic read+clear prevents losing actions submitted between read and clear
+            actions = app_state.read_and_clear_actions()
+        else:
+            actions = app_state.read_actions()
         return {"version": len(actions), "actions": actions}
 
     # Browser fallback
@@ -2061,8 +2083,9 @@ async def webview_close(message: str = "Session complete.") -> dict[str, Any]:
         if xss_warnings:
             return {"error": f"Close message rejected by security gate: {xss_warnings[0]}"}
 
-    # MCP Apps mode: clear in-memory state
+    # MCP Apps mode: clear in-memory state and reset mode flag
     if _is_app_mode():
+        _host_fetched_ui_resource = False
         if _app_mode_state is not None:
             _app_mode_state.clear()
         return {"status": "ok", "message": "Webview closed."}

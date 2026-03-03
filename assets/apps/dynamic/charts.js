@@ -20,14 +20,17 @@
   // Default palette used when no color is specified per dataset
   var DEFAULT_PALETTE = ["blue", "green", "red", "yellow", "purple", "orange", "cyan", "pink"];
 
+  var HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
   function resolveColor(c, fallbackIdx) {
     if (!c) {
       var key = DEFAULT_PALETTE[fallbackIdx % DEFAULT_PALETTE.length];
       return THEME_COLORS[key];
     }
     if (THEME_COLORS[c]) return THEME_COLORS[c];
-    // Must be a hex color (pre-validated by SecurityGate)
-    return c;
+    // Defense-in-depth: validate hex format client-side (server SecurityGate is primary)
+    if (HEX_COLOR_RE.test(c)) return c;
+    return THEME_COLORS.blue; // fallback for unrecognized colors
   }
 
   // ─── Convert columns/rows to internal labels/datasets format ──────────────

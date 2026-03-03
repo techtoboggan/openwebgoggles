@@ -122,12 +122,13 @@ class DataContract:
 
     def write_json(self, path: Path, data: dict) -> None:
         tmp = path.with_suffix(".tmp")
-        # Restrictive permissions: temp files may contain session tokens or state data
-        old_umask = os.umask(0o077)
+        # Thread-safe restrictive permissions via os.open (avoids process-wide os.umask)
+        content = json.dumps(data, indent=2)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            tmp.write_text(json.dumps(data, indent=2))
+            os.write(fd, content.encode())
         finally:
-            os.umask(old_umask)
+            os.close(fd)
         tmp.replace(path)
 
     def get_manifest(self) -> dict | None:

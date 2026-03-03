@@ -152,6 +152,13 @@ exclude_lines = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["scripts"]
+exclude = [
+    "scripts/tests/",
+    "scripts/pytest.ini",
+    "scripts/requirements.txt",
+    "scripts/.gitignore",
+    "scripts/*.sh",
+]
 
 [tool.hatch.build.targets.wheel.force-include]
 "assets" = "scripts/assets"

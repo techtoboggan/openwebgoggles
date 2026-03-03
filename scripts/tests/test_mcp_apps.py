@@ -254,7 +254,7 @@ class TestOwgAction:
         """_owg_action returns error when security gate rejects the action."""
         _enable_app_mode()
         gate = mock.MagicMock()
-        gate.validate_state.return_value = (False, "bad payload", {})
+        gate.validate_action.return_value = (False, "bad payload")
         mcp_server._security_gate = gate
         result = await _owg_action("approve", "approve", True)
         assert "error" in result
