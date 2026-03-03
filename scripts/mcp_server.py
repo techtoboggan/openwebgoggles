@@ -43,6 +43,7 @@ from typing import Any
 _mcp_import_error: Exception | None = None
 try:
     from mcp.server.fastmcp import Context, FastMCP
+    from mcp.types import CallToolResult, TextContent
 except Exception as exc:
     _mcp_import_error = exc
 
@@ -1898,15 +1899,16 @@ async def webview(
         if not valid:
             return {"error": f"State validation failed: {err}"}
 
-    # MCP Apps mode: store state in memory, return immediately with structuredContent
+    # MCP Apps mode: return CallToolResult with structuredContent so the host
+    # renders the iframe and forwards the state via ui/notifications/tool-result.
     if _is_app_mode():
         app_state = _get_app_state()
         app_state.clear_actions()
         app_state.write_state(state)
-        return {
-            "content": [{"type": "text", "text": f"Displaying UI: {state.get('title', 'Webview')}"}],
-            "structuredContent": state,
-        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Displaying UI: {state.get('title', 'Webview')}")],
+            structuredContent=state,
+        )
 
     # Browser fallback: start subprocess, write state, block until action
     session = await _get_session()
@@ -2005,7 +2007,7 @@ async def webview_update(
 
     validator = _make_merge_validator()
 
-    # MCP Apps mode: update in-memory state, return structuredContent
+    # MCP Apps mode: update in-memory state, return structuredContent via CallToolResult
     if _is_app_mode():
         app_state = _get_app_state()
         if merge:
@@ -2013,17 +2015,15 @@ async def webview_update(
                 merged = app_state.merge_state(state, validator=validator)
             except ValueError as e:
                 return {"error": str(e)}
-            return {
-                "updated": True,
-                "version": app_state.state_version,
-                "structuredContent": merged,
-            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Updated (v{app_state.state_version})")],
+                structuredContent=merged,
+            )
         app_state.write_state(state)
-        return {
-            "updated": True,
-            "version": app_state.state_version,
-            "structuredContent": state,
-        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Updated (v{app_state.state_version})")],
+            structuredContent=state,
+        )
 
     # Browser fallback
     session = await _get_session()

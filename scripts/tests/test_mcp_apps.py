@@ -270,12 +270,12 @@ class TestOwgAction:
 
 class TestWebviewAppMode:
     async def test_returns_structured_content(self):
-        """webview returns structuredContent immediately in app mode."""
+        """webview returns CallToolResult with structuredContent in app mode."""
         _enable_app_mode()
         mcp_server._security_gate = None
         result = await webview(state={"title": "Test"})
-        assert "structuredContent" in result
-        assert result["structuredContent"]["title"] == "Test"
+        assert hasattr(result, "structuredContent")
+        assert result.structuredContent["title"] == "Test"
 
     async def test_clears_actions_on_new_webview(self):
         """webview clears pending actions when called in app mode."""
@@ -295,7 +295,7 @@ class TestWebviewAppMode:
             webview(state={"title": "Quick"}),
             timeout=2.0,
         )
-        assert "structuredContent" in result
+        assert hasattr(result, "structuredContent")
 
     async def test_state_stored_in_memory(self):
         """webview stores state in the AppModeState singleton."""
@@ -351,14 +351,14 @@ class TestWebviewReadAppMode:
 
 class TestWebviewUpdateAppMode:
     async def test_update_replaces_state(self):
-        """webview_update replaces state and returns structuredContent."""
+        """webview_update returns CallToolResult with structuredContent."""
         _enable_app_mode()
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.write_state({"title": "Old"})
         result = await webview_update(state={"title": "New"})
-        assert result["updated"] is True
-        assert result["structuredContent"]["title"] == "New"
+        assert hasattr(result, "structuredContent")
+        assert result.structuredContent["title"] == "New"
         assert app_state.state["title"] == "New"
 
     async def test_update_merge_mode(self):
@@ -368,8 +368,8 @@ class TestWebviewUpdateAppMode:
         app_state = _get_app_state()
         app_state.write_state({"title": "Base", "data": {"meta": {"a": 1}}})
         result = await webview_update(state={"data": {"meta": {"b": 2}}}, merge=True)
-        assert result["updated"] is True
-        merged = result["structuredContent"]
+        assert hasattr(result, "structuredContent")
+        merged = result.structuredContent
         assert merged["title"] == "Base"
         assert merged["data"]["meta"]["a"] == 1
         assert merged["data"]["meta"]["b"] == 2
@@ -383,8 +383,8 @@ class TestWebviewUpdateAppMode:
             state={"title": "Sure?", "message": "Do it?"},
             preset="confirm",
         )
-        assert result["updated"] is True
-        sc = result["structuredContent"]
+        assert hasattr(result, "structuredContent")
+        sc = result.structuredContent
         assert "actions_requested" in sc
         assert sc["status"] == "pending_review"
 

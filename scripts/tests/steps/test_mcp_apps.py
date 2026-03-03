@@ -117,8 +117,8 @@ def agent_displayed_webview(ctx):
     finally:
         loop.close()
 
-    # Verify the webview was displayed in app mode
-    assert "structuredContent" in ctx.webview_result
+    # Verify the webview was displayed in app mode (CallToolResult)
+    assert hasattr(ctx.webview_result, "structuredContent")
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +203,10 @@ def call_webview_close(ctx):
 
 @then("the result should contain structuredContent")
 def assert_structured_content(ctx):
-    assert "structuredContent" in ctx.result, (
-        f"Expected 'structuredContent' in result, got keys: {list(ctx.result.keys())}"
+    assert hasattr(ctx.result, "structuredContent"), (
+        f"Expected CallToolResult with structuredContent, got: {type(ctx.result).__name__}"
     )
-    assert ctx.result["structuredContent"]["title"] == "Test UI"
+    assert ctx.result.structuredContent["title"] == "Test UI"
 
 
 @then("no browser subprocess should be launched")
