@@ -1580,6 +1580,51 @@ def _reset_mode() -> None:
     _cached_mode = None
 
 
+def _stop_any_running_server() -> None:
+    """Kill any webview server subprocess found via PID files in known data dirs.
+
+    Called by openwebgoggles_close() so end-to-end cleanup works regardless of
+    whether the server was started by WebviewSession (browser mode) or externally
+    (e.g. ``openwebgoggles init`` / dev preview).  Checks three locations:
+      • <cwd>/.openwebgoggles/   — normal project-level data dir
+      • <cwd>/.openwebgoggles-dev/ — standalone dev / preview-start data dir
+      • ~/.openwebgoggles/        — user-level data dir
+
+    SIGTERM is sent so the server can flush and clean up; errors (process already
+    dead, permission denied, etc.) are silently ignored.
+    """
+    cwd = Path.cwd()
+    data_dirs = [
+        cwd / ".openwebgoggles",
+        cwd / ".openwebgoggles-dev",
+        Path.home() / ".openwebgoggles",
+    ]
+    for data_dir in data_dirs:
+        pid_file = data_dir / ".server.pid"
+        if not pid_file.exists():
+            continue
+        pid_str = pid_file.read_text().strip()
+        if not pid_str.isdigit():
+            continue  # Corrupt/foreign PID file — leave it alone
+        pid = int(pid_str)
+        remove = False
+        try:
+            os.kill(pid, signal.SIGTERM)
+            logger.info("Stopped webview server (PID %d) from %s", pid, data_dir)
+            remove = True
+        except ProcessLookupError:
+            remove = True  # Already dead — stale PID file, clean up
+        except PermissionError:
+            pass  # Not our process — leave it
+        except Exception:
+            logger.debug("Could not stop server at %s", data_dir, exc_info=True)
+        if remove:
+            try:
+                pid_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def _is_app_mode() -> bool:
     """Check if we're running in MCP Apps mode.
 
@@ -2287,21 +2332,25 @@ async def openwebgoggles_close(message: str = "Session complete.") -> dict[str, 
         _reset_mode()
         if _app_mode_state is not None:
             _app_mode_state.clear()
+        _stop_any_running_server()
         return {"status": "ok", "message": "Webview closed."}
 
     # ── Browser mode ───────────────────────────────────────────────────
     _reset_mode()
     async with _get_session_lock():
         if _session is None or not _session._started:
+            _stop_any_running_server()
             return {"status": "ok", "message": "No active session."}
 
         try:
             await _session.close(message=message)
         except Exception:
             logger.warning("Error closing session", exc_info=True)
+            _stop_any_running_server()
             return {"error": "Failed to close session"}
 
         _session = None
+        _stop_any_running_server()
         return {"status": "ok", "message": "Webview closed."}
 
 

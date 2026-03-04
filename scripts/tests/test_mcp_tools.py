@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 from unittest import mock
 
@@ -401,6 +402,97 @@ class TestWebviewCloseTool:
             assert result["status"] == "ok"
         finally:
             mcp_server._session = old
+
+
+# ---------------------------------------------------------------------------
+# _stop_any_running_server
+# ---------------------------------------------------------------------------
+
+
+class TestStopAnyRunningServer:
+    """_stop_any_running_server kills processes found via PID files."""
+
+    def test_kills_process_from_pid_file(self, tmp_path):
+        """Sends SIGTERM to PID found in .server.pid and removes the file."""
+        data_dir = tmp_path / ".openwebgoggles"
+        data_dir.mkdir()
+        pid_file = data_dir / ".server.pid"
+        pid_file.write_text(str(os.getpid()))
+
+        with (
+            mock.patch("mcp_server.Path.cwd", return_value=tmp_path),
+            mock.patch("mcp_server.os.kill") as mock_kill,
+        ):
+            mcp_server._stop_any_running_server()
+
+        mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+        assert not pid_file.exists(), "PID file must be removed after stop"
+
+    def test_no_pid_file_is_noop(self, tmp_path):
+        """Does nothing when no PID file exists."""
+        with (
+            mock.patch("mcp_server.Path.cwd", return_value=tmp_path),
+            mock.patch("mcp_server.os.kill") as mock_kill,
+        ):
+            mcp_server._stop_any_running_server()
+
+        mock_kill.assert_not_called()
+
+    def test_dead_process_is_silently_ignored(self, tmp_path):
+        """ProcessLookupError (process already dead) is swallowed and PID file removed."""
+        data_dir = tmp_path / ".openwebgoggles"
+        data_dir.mkdir()
+        pid_file = data_dir / ".server.pid"
+        pid_file.write_text("99999")
+
+        with (
+            mock.patch("mcp_server.Path.cwd", return_value=tmp_path),
+            mock.patch("mcp_server.os.kill", side_effect=ProcessLookupError),
+        ):
+            mcp_server._stop_any_running_server()  # must not raise
+
+        assert not pid_file.exists(), "Stale PID file must be cleaned up"
+
+    def test_invalid_pid_content_is_skipped(self, tmp_path):
+        """Non-numeric PID file content does not call kill and leaves file intact."""
+        data_dir = tmp_path / ".openwebgoggles"
+        data_dir.mkdir()
+        pid_file = data_dir / ".server.pid"
+        pid_file.write_text("not-a-pid")
+
+        with (
+            mock.patch("mcp_server.Path.cwd", return_value=tmp_path),
+            mock.patch("mcp_server.os.kill") as mock_kill,
+        ):
+            mcp_server._stop_any_running_server()
+
+        mock_kill.assert_not_called()
+        assert pid_file.exists(), "Invalid PID file must not be removed"
+
+    async def test_close_app_mode_calls_stop_server(self):
+        """openwebgoggles_close in app mode calls _stop_any_running_server."""
+        old_mode = mcp_server._cached_mode
+        mcp_server._cached_mode = "app"
+        try:
+            with mock.patch("mcp_server._stop_any_running_server") as mock_stop:
+                await openwebgoggles_close()
+            mock_stop.assert_called_once()
+        finally:
+            mcp_server._cached_mode = old_mode
+
+    async def test_close_browser_mode_calls_stop_server(self):
+        """openwebgoggles_close in browser mode calls _stop_any_running_server."""
+        old_session = mcp_server._session
+        old_mode = mcp_server._cached_mode
+        mcp_server._cached_mode = "browser"
+        mcp_server._session = None
+        try:
+            with mock.patch("mcp_server._stop_any_running_server") as mock_stop:
+                await openwebgoggles_close()
+            mock_stop.assert_called_once()
+        finally:
+            mcp_server._session = old_session
+            mcp_server._cached_mode = old_mode
 
 
 # ---------------------------------------------------------------------------
