@@ -1610,6 +1610,15 @@ def _stop_any_running_server() -> None:
         remove = False
         try:
             os.kill(pid, signal.SIGTERM)
+            # Give up to 2 s to exit gracefully, then force-kill
+            for _ in range(20):
+                time.sleep(0.1)
+                try:
+                    os.kill(pid, 0)  # probe — raises ProcessLookupError if dead
+                except ProcessLookupError:
+                    break  # exited cleanly
+            else:
+                os.kill(pid, signal.SIGKILL)
             logger.info("Stopped webview server (PID %d) from %s", pid, data_dir)
             remove = True
         except ProcessLookupError:

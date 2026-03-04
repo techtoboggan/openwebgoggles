@@ -413,19 +413,29 @@ class TestStopAnyRunningServer:
     """_stop_any_running_server kills processes found via PID files."""
 
     def test_kills_process_from_pid_file(self, tmp_path):
-        """Sends SIGTERM to PID found in .server.pid and removes the file."""
+        """Sends SIGTERM then waits; probe raises ProcessLookupError → no SIGKILL needed."""
         data_dir = tmp_path / ".openwebgoggles"
         data_dir.mkdir()
         pid_file = data_dir / ".server.pid"
-        pid_file.write_text(str(os.getpid()))
+        pid = os.getpid()
+        pid_file.write_text(str(pid))
+
+        # First call: SIGTERM (no-op). Second call: probe(0) → process dead.
+        call_count = {"n": 0}
+
+        def kill_se(p, sig):
+            call_count["n"] += 1
+            if sig == 0:
+                raise ProcessLookupError("dead")
 
         with (
             mock.patch("mcp_server.Path.cwd", return_value=tmp_path),
-            mock.patch("mcp_server.os.kill") as mock_kill,
+            mock.patch("mcp_server.os.kill", side_effect=kill_se) as mock_kill,
+            mock.patch("mcp_server.time.sleep"),
         ):
             mcp_server._stop_any_running_server()
 
-        mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+        assert mock_kill.call_args_list[0] == mock.call(pid, signal.SIGTERM)
         assert not pid_file.exists(), "PID file must be removed after stop"
 
     def test_no_pid_file_is_noop(self, tmp_path):
