@@ -208,8 +208,12 @@ Version monitor uses two-tier detection: cheap mtime poll (30s) → full METADAT
 1. Bump version in `pyproject.toml`
 2. Update `CHANGELOG.md`
 3. Commit and push
-4. `git tag v0.X.Y && git push --tags`
-5. `gh release create v0.X.Y --title "..." --notes "..."` ← triggers PyPI publish
+4. `git tag v0.X.Y && git push origin v0.X.Y`
+5. `gh release create v0.X.Y --title "..." --notes "..."`
+
+> ⚠️ **CRITICAL — PyPI publish ONLY fires on a GitHub Release, NOT a tag push.**
+> Skipping step 5 means the version never reaches PyPI. Always use `gh release create`.
+> Verify with: `pip index versions openwebgoggles` after the workflow completes.
 
 The publish workflow verifies `pyproject.toml` version matches the git tag.
 
