@@ -40,6 +40,14 @@
     });
   }
 
+  /**
+   * Create a new OpenWebGoggles SDK instance.
+   *
+   * @param {Object} [options]
+   * @param {string} [options.httpUrl] - Base HTTP URL for the webview server (default: window.location.origin)
+   * @param {string} [options.wsUrl] - WebSocket URL override (default: derived from manifest)
+   * @param {number} [options.pollInterval] - HTTP polling interval in ms when WebSocket unavailable (default: 2000)
+   */
   function OpenWebGoggles(options) {
     options = options || {};
 
@@ -71,6 +79,17 @@
 
   var MAX_LISTENERS_PER_EVENT = 100;  // Prevent listener accumulation / memory leak
 
+  /**
+   * Register a listener for an SDK event.
+   * Returns an unsubscribe function — call it to remove the listener.
+   * Duplicate registrations of the same callback are silently ignored.
+   * At most 100 listeners per event; oldest is removed when the cap is exceeded.
+   *
+   * @param {string} event - Event name: "connected", "disconnected", "state_updated",
+   *   "manifest_updated", "actions_updated", "actions_cleared", "close", "error"
+   * @param {Function} callback - Handler called with the event payload
+   * @returns {Function} Unsubscribe function
+   */
   OpenWebGoggles.prototype.on = function (event, callback) {
     if (!this._listeners[event]) this._listeners[event] = [];
     // Prevent duplicate registration of the same callback
@@ -111,16 +130,32 @@
 
   // --- Convenience event subscribers ---
 
+  /**
+   * Shorthand: listen for state updates. Equivalent to `on("state_updated", callback)`.
+   * @param {Function} callback - Receives the new state object
+   * @returns {Function} Unsubscribe function
+   */
   OpenWebGoggles.prototype.onStateUpdate = function (callback) {
     return this.on("state_updated", callback);
   };
 
+  /**
+   * Shorthand: listen for manifest updates. Equivalent to `on("manifest_updated", callback)`.
+   * @param {Function} callback - Receives the new manifest object
+   * @returns {Function} Unsubscribe function
+   */
   OpenWebGoggles.prototype.onManifestUpdate = function (callback) {
     return this.on("manifest_updated", callback);
   };
 
   // --- Connection ---
 
+  /**
+   * Connect to the webview server.
+   * Fetches the manifest, bootstraps auth, opens a WebSocket with HTTP polling fallback.
+   * Resolves with `this` once the initial state is available.
+   * @returns {Promise<OpenWebGoggles>}
+   */
   OpenWebGoggles.prototype.connect = function () {
     var self = this;
 
@@ -177,6 +212,11 @@
     });
   };
 
+  /**
+   * Disconnect from the server.
+   * Closes the WebSocket, stops polling, cancels reconnect timers.
+   * Emits the "disconnected" event.
+   */
   OpenWebGoggles.prototype.disconnect = function () {
     this._connected = false;
     if (this._noncePruneTimer) {
@@ -198,35 +238,57 @@
     this._emit("disconnected");
   };
 
+  /**
+   * Returns true if the SDK has a live connection to the server.
+   * @returns {boolean}
+   */
   OpenWebGoggles.prototype.isConnected = function () {
     return this._connected;
   };
 
   // --- State accessors ---
 
+  /**
+   * Returns the current full state object, or null before connect.
+   * @returns {Object|null}
+   */
   OpenWebGoggles.prototype.getState = function () {
     return this._state;
   };
 
+  /**
+   * Returns `state.status`, or null before connect.
+   * @returns {string|null}
+   */
   OpenWebGoggles.prototype.getStatus = function () {
     return this._state ? this._state.status : null;
   };
 
+  /**
+   * Returns `state.data`, or null before connect.
+   * @returns {Object|null}
+   */
   OpenWebGoggles.prototype.getData = function () {
     return this._state ? this._state.data : null;
   };
 
+  /**
+   * Returns `state.actions_requested` array, or an empty array before connect.
+   * @returns {Array}
+   */
   OpenWebGoggles.prototype.getRequestedActions = function () {
     return this._state ? this._state.actions_requested || [] : [];
   };
 
+  /**
+   * Returns the server manifest, or null before connect.
+   * @returns {Object|null}
+   */
   OpenWebGoggles.prototype.getManifest = function () {
     return this._manifest;
   };
 
   // --- Actions (Webview -> Agent) ---
-
-  // --- Crypto helpers ---
 
   OpenWebGoggles.prototype._pruneNonces = function () {
     var cutoff = Date.now() - this._nonceWindowMs;
@@ -284,6 +346,17 @@
     }
   };
 
+  /**
+   * Send an action to the agent.
+   * Routes through WebSocket (HMAC-signed) when connected, HTTP otherwise.
+   * Actions submitted while the WebSocket is still connecting are queued and flushed after auth.
+   *
+   * @param {string} actionId - The action button's id
+   * @param {string} type - Action type: "approve", "reject", "input", "select", "confirm"
+   * @param {*} value - Action payload (true/false for approve/reject, string for input)
+   * @param {Object} [metadata] - Optional extra context
+   * @returns {Promise}
+   */
   OpenWebGoggles.prototype.sendAction = function (actionId, type, value, metadata) {
     var action = {
       action_id: actionId,
@@ -306,22 +379,54 @@
     }
   };
 
+  /**
+   * Send an approve action (type="approve", value=true).
+   * @param {string} actionId
+   * @param {Object} [metadata]
+   * @returns {Promise}
+   */
   OpenWebGoggles.prototype.approve = function (actionId, metadata) {
     return this.sendAction(actionId, "approve", true, metadata);
   };
 
+  /**
+   * Send a reject action (type="reject", value=false).
+   * @param {string} actionId
+   * @param {Object} [metadata]
+   * @returns {Promise}
+   */
   OpenWebGoggles.prototype.reject = function (actionId, metadata) {
     return this.sendAction(actionId, "reject", false, metadata);
   };
 
+  /**
+   * Send a text input action (type="input").
+   * @param {string} actionId
+   * @param {*} value
+   * @param {Object} [metadata]
+   * @returns {Promise}
+   */
   OpenWebGoggles.prototype.submitInput = function (actionId, value, metadata) {
     return this.sendAction(actionId, "input", value, metadata);
   };
 
+  /**
+   * Send a select action (type="select").
+   * @param {string} actionId
+   * @param {*} value
+   * @param {Object} [metadata]
+   * @returns {Promise}
+   */
   OpenWebGoggles.prototype.selectOption = function (actionId, value, metadata) {
     return this.sendAction(actionId, "select", value, metadata);
   };
 
+  /**
+   * Send a confirm action (type="confirm", value=true).
+   * @param {string} actionId
+   * @param {Object} [metadata]
+   * @returns {Promise}
+   */
   OpenWebGoggles.prototype.confirm = function (actionId, metadata) {
     return this.sendAction(actionId, "confirm", true, metadata);
   };
@@ -593,6 +698,12 @@
 
   // --- Utility helpers ---
 
+  /**
+   * Format an ISO 8601 timestamp string into a locale-aware display string.
+   * Returns an empty string if the input is falsy or unparseable.
+   * @param {string} isoString - ISO 8601 timestamp
+   * @returns {string}
+   */
   OpenWebGoggles.formatTimestamp = function (isoString) {
     if (!isoString) return "";
     var d = new Date(isoString);
