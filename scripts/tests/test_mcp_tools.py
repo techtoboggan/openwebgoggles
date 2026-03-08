@@ -880,6 +880,110 @@ class TestExpandPreset:
         with pytest.raises(ValueError, match="Unknown preset"):
             _expand_preset("invalid", {})
 
+    def test_form_wizard_preset(self):
+        steps = [
+            {"title": "Name", "fields": [{"key": "name", "label": "Name", "type": "text"}]},
+            {"title": "Confirm", "fields": [{"key": "ok", "label": "OK?", "type": "checkbox"}]},
+        ]
+        state = _expand_preset("form-wizard", {"title": "Setup", "steps": steps, "step": 0})
+        assert "pages" in state
+        assert "step_0" in state["pages"]
+        assert "step_1" in state["pages"]
+        assert state["active_page"] == "step_0"
+        assert state["message"] == "Step 1 of 2"
+        # Step 0 has Next but no Previous
+        actions_0 = state["pages"]["step_0"]["actions_requested"]
+        assert any(a["id"] == "next_0" for a in actions_0)
+        assert not any(a["id"].startswith("prev") for a in actions_0)
+        # Step 1 (last) has Previous + Submit
+        actions_1 = state["pages"]["step_1"]["actions_requested"]
+        assert any(a["id"].startswith("prev") for a in actions_1)
+        assert any(a["id"] == "submit" for a in actions_1)
+
+    def test_form_wizard_step_index(self):
+        steps = [{"title": "A"}, {"title": "B"}, {"title": "C"}]
+        state = _expand_preset("form-wizard", {"steps": steps, "step": 1})
+        assert state["active_page"] == "step_1"
+        assert state["message"] == "Step 2 of 3"
+
+    def test_triage_preset(self):
+        items = [
+            {"title": "Bug #1", "subtitle": "High", "description": "Crash on login"},
+            {"title": "Bug #2", "subtitle": "Low"},
+        ]
+        state = _expand_preset("triage", {"title": "Bug Triage", "items": items, "current": 0})
+        assert state["status"] == "pending_review"
+        assert state["message"] == "Item 1 of 2"
+        action_ids = {a["id"] for a in state["actions_requested"]}
+        assert "approve" in action_ids
+        assert "reject" in action_ids
+        assert "skip" in action_ids
+        # Description becomes a text section
+        sections = state["data"]["sections"]
+        text_secs = [s for s in sections if s["type"] == "text"]
+        assert any("Crash on login" in s["content"] for s in text_secs)
+
+    def test_triage_preset_second_item(self):
+        items = [{"title": "X"}, {"title": "Y"}]
+        state = _expand_preset("triage", {"items": items, "current": 1})
+        assert state["message"] == "Item 2 of 2"
+
+    def test_dashboard_preset(self):
+        metrics = [
+            {"label": "Revenue", "value": "$1.2M", "delta": "+5%", "trend": "up"},
+            {"label": "Users", "value": "42K"},
+        ]
+        state = _expand_preset("dashboard", {"title": "KPIs", "metrics": metrics})
+        assert state["status"] == "complete"
+        sec = state["data"]["sections"][0]
+        assert sec["type"] == "metric"
+        assert len(sec["cards"]) == 2
+        assert sec["cards"][0]["label"] == "Revenue"
+        assert sec["cards"][0]["delta"] == "+5%"
+        assert "delta" not in sec["cards"][1]  # not provided
+
+    def test_dashboard_preset_columns_default(self):
+        metrics = [{"label": "A", "value": "1"}, {"label": "B", "value": "2"}]
+        state = _expand_preset("dashboard", {"metrics": metrics})
+        assert state["data"]["sections"][0]["columns"] == 2  # min(len, 4)
+
+    def test_table_actions_preset(self):
+        columns = [{"key": "name", "label": "Name"}, {"key": "status", "label": "Status"}]
+        rows = [{"name": "Alice", "status": "active"}]
+        state = _expand_preset("table-actions", {"columns": columns, "rows": rows, "title": "Users"})
+        assert state["status"] == "pending_review"
+        assert state["data"]["sections"][0]["type"] == "table"
+        assert state["data"]["sections"][0]["rows"] == rows
+        assert len(state["actions_requested"]) == 2
+        assert state["actions_requested"][0]["id"] == "confirm"
+
+    def test_table_actions_preset_custom_actions(self):
+        custom = [{"id": "delete", "label": "Delete", "type": "reject"}]
+        state = _expand_preset("table-actions", {"columns": [], "rows": [], "actions": custom})
+        assert state["actions_requested"] == custom
+
+    def test_stepper_preset(self):
+        steps = [
+            {"label": "Fetch", "status": "completed"},
+            {"label": "Build", "status": "in_progress"},
+            {"label": "Deploy", "status": "pending"},
+        ]
+        state = _expand_preset("stepper", {"title": "CI/CD", "steps": steps, "percentage": 60})
+        assert state["status"] == "processing"
+        sec = state["data"]["sections"][0]
+        assert sec["type"] == "progress"
+        assert len(sec["tasks"]) == 3
+        assert sec["tasks"][0]["status"] == "completed"
+        assert sec["percentage"] == 60
+
+    def test_stepper_preset_message(self):
+        state = _expand_preset("stepper", {"steps": [], "message": "Running..."})
+        assert state["message"] == "Running..."
+
+    def test_stepper_preset_no_percentage_when_omitted(self):
+        state = _expand_preset("stepper", {"steps": []})
+        assert "percentage" not in state["data"]["sections"][0]
+
 
 # ---------------------------------------------------------------------------
 # End-to-end integration: metric / chart / clickable table / pages

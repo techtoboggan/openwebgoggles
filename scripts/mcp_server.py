@@ -140,79 +140,221 @@ def _deep_merge(base: dict, override: dict, _depth: int = 0) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _preset_progress(s: dict[str, Any]) -> dict[str, Any]:
+    tasks = s.pop("tasks", [])
+    pct = s.pop("percentage", None)
+    title = s.pop("title", "Progress")
+    base: dict[str, Any] = {
+        "title": title,
+        "status": "processing",
+        "data": {"sections": [{"type": "progress", "title": title if title != "Progress" else "", "tasks": tasks}]},
+    }
+    if pct is not None:
+        base["data"]["sections"][0]["percentage"] = pct
+    _deep_merge(base, s)
+    return base
+
+
+def _preset_confirm(s: dict[str, Any]) -> dict[str, Any]:
+    details = s.pop("details", None)
+    title = s.pop("title", "Confirm")
+    message = s.pop("message", "")
+    base: dict[str, Any] = {
+        "title": title,
+        "message": message,
+        "status": "pending_review",
+        "data": {"sections": []},
+        "actions_requested": [
+            {"id": "confirm", "label": "Confirm", "type": "approve"},
+            {"id": "cancel", "label": "Cancel", "type": "reject"},
+        ],
+    }
+    if details:
+        base["data"]["sections"].append({"type": "text", "content": details, "format": "markdown"})
+    _deep_merge(base, s)
+    return base
+
+
+def _preset_log(s: dict[str, Any]) -> dict[str, Any]:
+    lines = s.pop("lines", [])
+    max_lines = s.pop("maxLines", 500)
+    title = s.pop("title", "Log")
+    base: dict[str, Any] = {
+        "title": title,
+        "status": "processing",
+        "data": {
+            "sections": [
+                {
+                    "type": "log",
+                    "title": title if title != "Log" else "",
+                    "lines": lines,
+                    "autoScroll": True,
+                    "maxLines": max_lines,
+                }
+            ]
+        },
+    }
+    _deep_merge(base, s)
+    return base
+
+
+def _preset_form_wizard(s: dict[str, Any]) -> dict[str, Any]:
+    steps = s.pop("steps", [])
+    title = s.pop("title", "Wizard")
+    current_step = s.pop("step", 0)
+    total = len(steps)
+    pages: dict[str, Any] = {}
+    for i, step in enumerate(steps):
+        step_title = step.get("title", f"Step {i + 1}")
+        sections: list[dict[str, Any]] = []
+        if step.get("message"):
+            sections.append({"type": "text", "content": step["message"], "format": "markdown"})
+        if step.get("fields"):
+            sections.append({"type": "form", "title": step_title, "fields": step["fields"]})
+        nav: list[dict[str, Any]] = []
+        if i > 0:
+            nav.append({"id": f"prev_{i}", "label": "← Previous", "type": "ghost"})
+        nav.append(
+            {
+                "id": "submit" if i == total - 1 else f"next_{i}",
+                "label": "Submit" if i == total - 1 else "Next →",
+                "type": "approve",
+            }
+        )
+        pages[f"step_{i}"] = {"sections": sections, "actions_requested": nav}
+    base: dict[str, Any] = {
+        "title": title,
+        "message": f"Step {current_step + 1} of {total}" if total > 0 else "",
+        "status": "pending_review",
+        "pages": pages,
+        "active_page": f"step_{current_step}",
+    }
+    _deep_merge(base, s)
+    return base
+
+
+def _preset_triage(s: dict[str, Any]) -> dict[str, Any]:
+    items = s.pop("items", [])
+    title = s.pop("title", "Triage")
+    current = s.pop("current", 0)
+    total = len(items)
+    item = items[current] if items and current < total else {}
+    item_title = item.get("title", f"Item {current + 1}")
+    sections: list[dict[str, Any]] = []
+    if item.get("description"):
+        sections.append({"type": "text", "content": item["description"], "format": "markdown"})
+    sections.append(
+        {"type": "items", "title": item_title, "items": [{"title": item_title, "subtitle": item.get("subtitle", "")}]}
+    )
+    base: dict[str, Any] = {
+        "title": title,
+        "message": f"Item {current + 1} of {total}",
+        "status": "pending_review",
+        "data": {"sections": sections},
+        "actions_requested": [
+            {"id": "approve", "label": "Approve", "type": "approve"},
+            {"id": "reject", "label": "Reject", "type": "reject"},
+            {"id": "skip", "label": "Skip", "type": "ghost"},
+        ],
+    }
+    _deep_merge(base, s)
+    return base
+
+
+def _preset_dashboard(s: dict[str, Any]) -> dict[str, Any]:
+    metrics = s.pop("metrics", [])
+    title = s.pop("title", "Dashboard")
+    columns = s.pop("columns", min(len(metrics), 4) or 4)
+    cards = [
+        {
+            "label": m.get("label", ""),
+            "value": m.get("value", ""),
+            **({"delta": m["delta"]} if "delta" in m else {}),
+            **({"trend": m["trend"]} if "trend" in m else {}),
+        }
+        for m in metrics
+    ]
+    base: dict[str, Any] = {
+        "title": title,
+        "status": "complete",
+        "data": {"sections": [{"type": "metric", "columns": columns, "cards": cards}]},
+    }
+    _deep_merge(base, s)
+    return base
+
+
+def _preset_table_actions(s: dict[str, Any]) -> dict[str, Any]:
+    columns = s.pop("columns", [])
+    rows = s.pop("rows", [])
+    actions = s.pop(
+        "actions",
+        [
+            {"id": "confirm", "label": "Confirm", "type": "approve"},
+            {"id": "cancel", "label": "Cancel", "type": "reject"},
+        ],
+    )
+    title = s.pop("title", "Review")
+    base: dict[str, Any] = {
+        "title": title,
+        "status": "pending_review",
+        "data": {"sections": [{"type": "table", "columns": columns, "rows": rows}]},
+        "actions_requested": actions,
+    }
+    _deep_merge(base, s)
+    return base
+
+
+def _preset_stepper(s: dict[str, Any]) -> dict[str, Any]:
+    steps = s.pop("steps", [])
+    title = s.pop("title", "Progress")
+    message = s.pop("message", "")
+    pct = s.pop("percentage", None)
+    sec: dict[str, Any] = {
+        "type": "progress",
+        "title": "",
+        "tasks": [{"label": step.get("label", ""), "status": step.get("status", "pending")} for step in steps],
+    }
+    if pct is not None:
+        sec["percentage"] = pct
+    base: dict[str, Any] = {"title": title, "status": "processing", "data": {"sections": [sec]}}
+    if message:
+        base["message"] = message
+    _deep_merge(base, s)
+    return base
+
+
+_PRESET_HANDLERS: dict[str, Any] = {
+    "progress": _preset_progress,
+    "confirm": _preset_confirm,
+    "log": _preset_log,
+    "form-wizard": _preset_form_wizard,
+    "triage": _preset_triage,
+    "dashboard": _preset_dashboard,
+    "table-actions": _preset_table_actions,
+    "stepper": _preset_stepper,
+}
+
+
 def _expand_preset(preset: str, state: dict[str, Any]) -> dict[str, Any]:
     """Expand a preset name into a full state schema, merging user overrides.
 
-    Template dicts (``base``) are dict literals constructed fresh on each call,
-    so ``_deep_merge()`` mutating them in place is safe — no shared state between
-    invocations.
+    Template dicts are constructed fresh on each call, so ``_deep_merge()``
+    mutating them in place is safe — no shared state between invocations.
+
+    Available presets:
+        - ``progress``: single progress bar section (tasks, percentage, title)
+        - ``confirm``: approve/cancel dialog (title, message, details)
+        - ``log``: scrolling log output (lines, maxLines, title)
+        - ``form-wizard``: multi-step form pages (steps, title, step)
+        - ``triage``: item-by-item review with approve/reject (items, title, current)
+        - ``dashboard``: metric cards grid (metrics, title, columns)
+        - ``table-actions``: table with action buttons (columns, rows, actions, title)
+        - ``stepper``: step progress tracker (steps, title, message, percentage)
     """
-    s = dict(state)  # shallow copy so we can pop
-
-    if preset == "progress":
-        tasks = s.pop("tasks", [])
-        pct = s.pop("percentage", None)
-        title = s.pop("title", "Progress")
-        base: dict[str, Any] = {
-            "title": title,
-            "status": "processing",
-            "data": {
-                "sections": [
-                    {
-                        "type": "progress",
-                        "title": title if title != "Progress" else "",
-                        "tasks": tasks,
-                    }
-                ]
-            },
-        }
-        if pct is not None:
-            base["data"]["sections"][0]["percentage"] = pct
-        _deep_merge(base, s)
-        return base
-
-    if preset == "confirm":
-        details = s.pop("details", None)
-        title = s.pop("title", "Confirm")
-        message = s.pop("message", "")
-        base = {
-            "title": title,
-            "message": message,
-            "status": "pending_review",
-            "data": {"sections": []},
-            "actions_requested": [
-                {"id": "confirm", "label": "Confirm", "type": "approve"},
-                {"id": "cancel", "label": "Cancel", "type": "reject"},
-            ],
-        }
-        if details:
-            base["data"]["sections"].append({"type": "text", "content": details, "format": "markdown"})
-        _deep_merge(base, s)
-        return base
-
-    if preset == "log":
-        lines = s.pop("lines", [])
-        max_lines = s.pop("maxLines", 500)
-        title = s.pop("title", "Log")
-        base = {
-            "title": title,
-            "status": "processing",
-            "data": {
-                "sections": [
-                    {
-                        "type": "log",
-                        "title": title if title != "Log" else "",
-                        "lines": lines,
-                        "autoScroll": True,
-                        "maxLines": max_lines,
-                    }
-                ]
-            },
-        }
-        _deep_merge(base, s)
-        return base
-
-    raise ValueError(f"Unknown preset: {preset!r}")
+    handler = _PRESET_HANDLERS.get(preset)
+    if handler is None:
+        raise ValueError(f"Unknown preset: {preset!r}")
+    return handler(dict(state))  # shallow copy so handlers can pop freely
 
 
 # ---------------------------------------------------------------------------
@@ -2062,6 +2204,11 @@ async def openwebgoggles(
       - preset="progress": state={tasks: [...], percentage: N}
       - preset="confirm": state={title, message, details?}
       - preset="log": state={lines: [...], maxLines?}
+      - preset="form-wizard": state={steps: [{title, fields, message?}], step: 0}
+      - preset="triage": state={items: [{title, subtitle?, description?}], current: 0}
+      - preset="dashboard": state={metrics: [{label, value, delta?, trend?}], columns?}
+      - preset="table-actions": state={columns, rows, actions?, title?}
+      - preset="stepper": state={steps: [{label, status}], percentage?, message?}
 
     Returns the user's response with an "actions" array, where each action has:
       - action_id: Which button was clicked
@@ -2226,6 +2373,11 @@ async def openwebgoggles_update(
                 "progress" — takes {tasks: [...], percentage: N}
                 "confirm" — takes {title, message, details?}
                 "log" — takes {lines: [...], maxLines?}
+                "form-wizard" — takes {steps: [{title, fields, message?}], step: N}
+                "triage" — takes {items: [{title, subtitle?, description?}], current: N}
+                "dashboard" — takes {metrics: [{label, value, delta?, trend?}], columns?}
+                "table-actions" — takes {columns, rows, actions?, title?}
+                "stepper" — takes {steps: [{label, status}], percentage?, message?}
         app: App to use (default: "dynamic").
 
     Returns: {"updated": true, "version": N}
