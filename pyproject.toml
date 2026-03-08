@@ -93,6 +93,7 @@ max-complexity = 15
 ]
 "scripts/crypto_utils.py" = ["S110"]  # best-effort key zeroing
 "scripts/webview_server.py" = ["S110"]  # best-effort cleanup on shutdown
+"scripts/http_handler.py" = ["S110"]  # best-effort cleanup on connection close
 "scripts/mcp_server.py" = ["S110", "S310"]  # best-effort cleanup; localhost-only urlopen
 "scripts/session.py" = ["S110", "S310"]  # best-effort cleanup; localhost-only urlopen (same as mcp_server.py)
 "scripts/cli.py" = ["S310"]  # localhost-only urlopen in status command
