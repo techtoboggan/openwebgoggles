@@ -25,6 +25,8 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+from exceptions import AssetError, LockError, MergeError, SessionError
+
 logger = logging.getLogger("openwebgoggles")
 
 # ---------------------------------------------------------------------------
@@ -68,11 +70,11 @@ def _deep_merge(base: dict, override: dict, _depth: int = 0) -> None:
     against stack overflow — SecurityGate also limits JSON nesting to 10).
     """
     if _depth > MAX_MERGE_DEPTH:
-        raise ValueError(f"Merge depth exceeds maximum ({MAX_MERGE_DEPTH})")
+        raise MergeError(f"Merge depth exceeds maximum ({MAX_MERGE_DEPTH})")
     # Block prototype-pollution keys that could be dangerous when serialized to JS
     for key, value in override.items():
         if key in _DANGEROUS_KEYS:
-            raise ValueError(f"Merge rejected: dangerous key {key!r}")
+            raise MergeError(f"Merge rejected: dangerous key {key!r}")
         if isinstance(value, dict) and isinstance(base.get(key), dict):
             _deep_merge(base[key], value, _depth + 1)
         else:
@@ -220,7 +222,7 @@ class WebviewSession:
                     time.sleep(0.5)
             else:
                 os.close(fd)
-                raise RuntimeError("Cannot acquire webview lock — another instance may be running")
+                raise LockError("Cannot acquire webview lock — another instance may be running")
         self._lock_fd = fd
         # Write our PID into the lock file for debugging
         os.ftruncate(fd, 0)
@@ -314,7 +316,7 @@ class WebviewSession:
                         pass
             self.process.kill()
             self.process = None
-            raise RuntimeError(f"Webview server failed to start: {stderr}")
+            raise SessionError(f"Webview server failed to start: {stderr}")
 
         self._started = True
         # Close stderr pipe to prevent buffer deadlock (errors already reported via health check)
@@ -482,7 +484,7 @@ class WebviewSession:
         pkg_assets = Path(base_file).resolve().parent / "assets"
         if pkg_assets.is_dir():
             return pkg_assets
-        raise FileNotFoundError(f"Cannot find assets directory. Expected at {dev_assets} or {pkg_assets}")
+        raise AssetError(f"Cannot find assets directory. Expected at {dev_assets} or {pkg_assets}")
 
     def _copy_app(self, app_name: str) -> None:
         """Find and copy the app + SDK to the data directory."""
@@ -491,7 +493,7 @@ class WebviewSession:
         # app_name would silently escape the assets directory.
         _app_path = Path(app_name)
         if _app_path.is_absolute() or ".." in _app_path.parts or app_name.startswith("."):
-            raise FileNotFoundError(
+            raise AssetError(
                 f"App '{app_name}' not found. App names must be simple names (no '/', '..', or leading '.')."
             )
 
@@ -517,7 +519,7 @@ class WebviewSession:
             examples_dir = repo_root / "examples"
             if examples_dir.is_dir():
                 available.extend(d.name for d in examples_dir.iterdir() if d.is_dir())
-            raise FileNotFoundError(f"App '{app_name}' not found. Available: {', '.join(available) or 'none'}")
+            raise AssetError(f"App '{app_name}' not found. Available: {', '.join(available) or 'none'}")
 
         dest = self.data_dir / "apps" / app_name
         if dest.exists():
@@ -600,7 +602,7 @@ class WebviewSession:
             if self._port_available(http_port) and self._port_available(ws_port):
                 return http_port, ws_port
             http_port += 2
-        raise RuntimeError(
+        raise SessionError(
             f"Could not find free ports after {self.MAX_PORT_ATTEMPTS} attempts "
             f"(tried {self.DEFAULT_HTTP_PORT}-{http_port - 1})"
         )

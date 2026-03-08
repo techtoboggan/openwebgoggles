@@ -7520,19 +7520,21 @@ class TestDeepMergeProtoPollution:
     """Deep merge must reject __proto__, constructor, prototype at any depth."""
 
     def test_nested_proto_in_merge(self):
+        from exceptions import MergeError
         from mcp_server import _deep_merge
 
         base = {"a": {"b": 1}}
         override = {"a": {"__proto__": {"polluted": True}}}
-        with pytest.raises(ValueError, match="dangerous key"):
+        with pytest.raises(MergeError, match="dangerous key"):
             _deep_merge(base, override)
 
     def test_nested_constructor_in_merge(self):
+        from exceptions import MergeError
         from mcp_server import _deep_merge
 
         base = {"a": {"b": 1}}
         override = {"a": {"constructor": {"prototype": {"x": 1}}}}
-        with pytest.raises(ValueError, match="dangerous key"):
+        with pytest.raises(MergeError, match="dangerous key"):
             _deep_merge(base, override)
 
 

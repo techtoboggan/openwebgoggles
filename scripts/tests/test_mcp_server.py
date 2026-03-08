@@ -19,6 +19,7 @@ import pytest
 # Ensure scripts/ is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from exceptions import AssetError, LockError, MergeError
 from mcp_server import MAX_MERGE_DEPTH, WebviewSession, _deep_merge, _expand_preset
 
 
@@ -112,7 +113,7 @@ class TestAppCopy:
         session.data_dir.mkdir(parents=True, exist_ok=True)
         (session.data_dir / "apps").mkdir(exist_ok=True)
 
-        with pytest.raises(FileNotFoundError, match="not found"):
+        with pytest.raises(AssetError, match="not found"):
             session._copy_app("nonexistent-app-xyz")
 
 
@@ -579,7 +580,7 @@ class TestAppNameSecurity:
         session.data_dir.mkdir(parents=True, exist_ok=True)
         (session.data_dir / "apps").mkdir(exist_ok=True)
 
-        with pytest.raises(FileNotFoundError, match="not found"):
+        with pytest.raises(AssetError, match="not found"):
             session._copy_app("../../../etc")
 
     def test_absolute_path_app_name_raises_not_found(self, session):
@@ -591,7 +592,7 @@ class TestAppNameSecurity:
         session.data_dir.mkdir(parents=True, exist_ok=True)
         (session.data_dir / "apps").mkdir(exist_ok=True)
 
-        with pytest.raises(FileNotFoundError, match="not found"):
+        with pytest.raises(AssetError, match="not found"):
             session._copy_app("/tmp")
 
     def test_null_byte_app_name_raises_not_found(self, session):
@@ -599,7 +600,7 @@ class TestAppNameSecurity:
         session.data_dir.mkdir(parents=True, exist_ok=True)
         (session.data_dir / "apps").mkdir(exist_ok=True)
 
-        with pytest.raises((FileNotFoundError, ValueError)):
+        with pytest.raises((AssetError, ValueError)):
             session._copy_app("dynamic\x00../../etc")
 
     def test_valid_app_name_succeeds(self, session):
@@ -873,13 +874,13 @@ class TestDeepMergeDepthLimit:
         assert node["leaf"] == "new"
 
     def test_exceeds_limit_rejects(self):
-        """Nesting beyond MAX_MERGE_DEPTH raises ValueError."""
+        """Nesting beyond MAX_MERGE_DEPTH raises MergeError."""
         depth = MAX_MERGE_DEPTH + 5
         # Both must have matching nested dicts so _deep_merge actually recurses
         base = self._make_nested(depth, "old")
         override = self._make_nested(depth, "boom")
 
-        with pytest.raises(ValueError, match="Merge depth exceeds maximum"):
+        with pytest.raises(MergeError, match="Merge depth exceeds maximum"):
             _deep_merge(base, override)
 
     def test_flat_merge_unaffected(self):
@@ -1068,7 +1069,7 @@ class TestAcquireLockRetryExhaustion:
 
         with mock.patch.object(session, "_kill_stale_server"):
             with mock.patch("fcntl.flock", side_effect=OSError("mock lock failure")):
-                with pytest.raises(RuntimeError, match="Cannot acquire webview lock"):
+                with pytest.raises(LockError, match="Cannot acquire webview lock"):
                     session._acquire_lock()
 
 

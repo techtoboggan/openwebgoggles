@@ -19,6 +19,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import mcp_server
+from exceptions import MergeError
 from mcp_server import (
     WebviewSession,
     _expand_preset,
@@ -1635,27 +1636,27 @@ class TestDeepMergePrototypePollution:
     """Regression tests for blocking prototype pollution keys in _deep_merge."""
 
     def test_proto_key_rejected(self):
-        """__proto__ key in merge should raise ValueError."""
+        """__proto__ key in merge should raise MergeError."""
         from mcp_server import _deep_merge
 
         base = {"title": "test"}
-        with pytest.raises(ValueError, match="dangerous key"):
+        with pytest.raises(MergeError, match="dangerous key"):
             _deep_merge(base, {"__proto__": {"polluted": True}})
 
     def test_constructor_key_rejected(self):
-        """constructor key in merge should raise ValueError."""
+        """constructor key in merge should raise MergeError."""
         from mcp_server import _deep_merge
 
         base = {"title": "test"}
-        with pytest.raises(ValueError, match="dangerous key"):
+        with pytest.raises(MergeError, match="dangerous key"):
             _deep_merge(base, {"constructor": {"polluted": True}})
 
     def test_prototype_key_rejected(self):
-        """prototype key in merge should raise ValueError."""
+        """prototype key in merge should raise MergeError."""
         from mcp_server import _deep_merge
 
         base = {"title": "test"}
-        with pytest.raises(ValueError, match="dangerous key"):
+        with pytest.raises(MergeError, match="dangerous key"):
             _deep_merge(base, {"prototype": {"polluted": True}})
 
     def test_normal_keys_still_merge(self):
@@ -1673,7 +1674,7 @@ class TestDeepMergePrototypePollution:
         from mcp_server import _deep_merge
 
         base = {"data": {"inner": {}}}
-        with pytest.raises(ValueError, match="dangerous key"):
+        with pytest.raises(MergeError, match="dangerous key"):
             _deep_merge(base, {"data": {"inner": {"__proto__": {"bad": True}}}})
 
 

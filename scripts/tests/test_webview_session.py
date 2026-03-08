@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import mcp_server
+from exceptions import AssetError, LockError, MergeError, SessionError
 from mcp_server import WebviewSession, _get_data_dir, _get_session
 
 
@@ -198,7 +199,7 @@ class TestAcquireLock:
         with mock.patch("fcntl.flock", side_effect=mock_flock):
             with mock.patch.object(session, "_kill_stale_server"):
                 with mock.patch("time.sleep"):
-                    with pytest.raises(RuntimeError, match="Cannot acquire webview lock"):
+                    with pytest.raises(LockError, match="Cannot acquire webview lock"):
                         session._acquire_lock()
 
 
@@ -312,7 +313,7 @@ class TestFindAssetsDir:
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
         # Mock __file__ to return a fake location with no assets dir
         with mock.patch("mcp_server.__file__", str(tmp_path / "scripts" / "mcp_server.py")):
-            with pytest.raises(FileNotFoundError, match="Cannot find assets"):
+            with pytest.raises(AssetError, match="Cannot find assets"):
                 session._find_assets_dir()
 
     def test_pkg_assets_found(self, tmp_path):
@@ -343,7 +344,7 @@ class TestFindFreePorts:
         session = WebviewSession(work_dir=tmp_path, open_browser=False)
 
         with mock.patch.object(WebviewSession, "_port_available", return_value=False):
-            with pytest.raises(RuntimeError, match="Could not find free ports"):
+            with pytest.raises(SessionError, match="Could not find free ports"):
                 session._find_free_ports()
 
 
@@ -484,7 +485,7 @@ class TestEnsureStarted:
                                                     (tmp_path / "sdk").mkdir(exist_ok=True)
                                                     (tmp_path / "sdk" / "openwebgoggles-sdk.js").write_text("")
                                                     with pytest.raises(
-                                                        RuntimeError, match="Webview server failed to start"
+                                                        SessionError, match="Webview server failed to start"
                                                     ):
                                                         await session.ensure_started()
 
@@ -835,7 +836,7 @@ class TestDeepMerge:
             base_inner = {"nested": base_inner}
             override_inner = {"nested": override_inner}
 
-        with pytest.raises(ValueError, match="Merge depth exceeds maximum"):
+        with pytest.raises(MergeError, match="Merge depth exceeds maximum"):
             _deep_merge(base_inner, override_inner)
 
     def test_non_dict_override_replaces_dict(self):
