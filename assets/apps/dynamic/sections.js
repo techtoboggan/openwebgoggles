@@ -197,6 +197,25 @@
         }
         break;
       }
+      case "file": {
+        var acceptAttr = f.accept ? ' accept="' + escAttr(String(f.accept)) + '"' : '';
+        var multipleAttr = f.multiple ? ' multiple' : '';
+        var maxSizeBytes = f.maxSize || 524288; // default 512 KB
+        inner = '<div class="file-upload-wrap">' +
+          '<input type="file" id="' + id + '"' + acceptAttr + multipleAttr +
+          ' data-max-size="' + escAttr(String(maxSizeBytes)) + '"' +
+          dataKey + requiredAttr + ' style="display:none">' +
+          '<label for="' + escAttr(id) + '" class="file-upload-btn">Choose file' + (f.multiple ? 's' : '') + '\u2026</label>' +
+          '<span class="file-upload-status" id="' + escAttr(id) + '-status">No file chosen</span>' +
+          '</div>';
+        // File validator: track required + maxSize
+        OWG.fieldValidators[key] = OWG.fieldValidators[key] || { required: !!f.required, type: "file" };
+        OWG.fieldValidators[key].maxSize = maxSizeBytes;
+        OWG.fieldValidators[key].multiple = !!f.multiple;
+        // Default value: null (no file selected)
+        OWG.formValues[key] = null;
+        break;
+      }
       default: {
         var ALLOWED_INPUT_TYPES = {text:1, email:1, url:1, tel:1, search:1, password:1, date:1, time:1, color:1};
         var inputType = (f.type && ALLOWED_INPUT_TYPES[f.type]) ? f.type : "text";
@@ -772,6 +791,58 @@
         if (OWG.formValues["_table_" + ti + "_selected"]) {
           OWG.formValues["_table_" + ti + "_selected"] = newSelected;
         }
+      });
+    });
+
+    // File upload inputs — read as base64 data URIs on change
+    root.querySelectorAll('input[type="file"][data-field-key]').forEach(function (input) {
+      var fkey = input.getAttribute("data-field-key");
+      var maxSize = parseInt(input.getAttribute("data-max-size") || "524288", 10);
+      var statusEl = root.querySelector("#" + CSS.escape(input.id) + "-status");
+
+      input.addEventListener("change", function () {
+        var files = Array.prototype.slice.call(input.files || []);
+        if (!files.length) {
+          OWG.formValues[fkey] = null;
+          if (statusEl) statusEl.textContent = "No file chosen";
+          return;
+        }
+
+        // Size check
+        var oversized = files.filter(function (f) { return f.size > maxSize; });
+        if (oversized.length) {
+          var limit = (maxSize / 1024).toFixed(0) + " KB";
+          if (statusEl) statusEl.textContent = "\u26A0 File too large (max " + limit + ")";
+          OWG.formValues[fkey] = null;
+          input.value = "";
+          return;
+        }
+
+        // Read all files as base64 data URIs
+        var pending = files.length;
+        var results = new Array(files.length);
+        files.forEach(function (file, idx) {
+          var reader = new FileReader();
+          reader.onload = function (e) {
+            results[idx] = {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              data: e.target.result  // base64 data URI
+            };
+            pending--;
+            if (pending === 0) {
+              OWG.formValues[fkey] = input.multiple ? results : results[0];
+              var names = files.map(function (f) { return f.name; }).join(", ");
+              if (statusEl) statusEl.textContent = names;
+            }
+          };
+          reader.onerror = function () {
+            OWG.formValues[fkey] = null;
+            if (statusEl) statusEl.textContent = "\u26A0 Error reading file";
+          };
+          reader.readAsDataURL(file);
+        });
       });
     });
   };

@@ -21,7 +21,8 @@ export type OWGFieldType =
   | "slider"
   | "date"
   | "datetime"
-  | "autocomplete";
+  | "autocomplete"
+  | "file";
 
 export interface OWGField {
   key: string;
@@ -50,6 +51,12 @@ export interface OWGField {
   unit?: string;
   /** autocomplete: if false, submitted value must be one of options */
   allowCustom?: boolean;
+  /** file: accepted MIME types or extensions, e.g. "image/*,.pdf" */
+  accept?: string;
+  /** file: allow selecting multiple files */
+  multiple?: boolean;
+  /** file: maximum file size in bytes (default: 524288 = 512 KB) */
+  maxSize?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -625,8 +625,8 @@ class TestSchemaValidation:
         assert "invalid" in err.lower()
 
     @pytest.mark.owasp_a04
-    def test_invalid_field_type_file(self, gate):
-        """File input should not be allowed."""
+    def test_valid_field_type_file(self, gate):
+        """File input is now a supported field type."""
         state = {
             "status": "ready",
             "data": {
@@ -634,7 +634,7 @@ class TestSchemaValidation:
             },
         }
         ok, err, _ = gate.validate_state(json.dumps(state))
-        assert not ok
+        assert ok, err
 
     @pytest.mark.owasp_a04
     def test_invalid_field_type_hidden(self, gate):
@@ -8053,3 +8053,122 @@ class TestSectionSpecificBranches:
         assert not ok
         assert "sparkline" in err
         assert "number" in err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 2.4: File upload field validation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFileFieldValidation:
+    """SG-FILE: SecurityGate validates file upload field properties."""
+
+    @pytest.fixture()
+    def gate(self):
+        import sys
+        from pathlib import Path as _Path
+
+        sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    def _make_field(self, **props):
+        base = {"key": "upload", "label": "Upload", "type": "file"}
+        base.update(props)
+        return json.dumps(
+            {
+                "status": "ready",
+                "data": {"sections": [{"type": "form", "fields": [base]}]},
+            }
+        )
+
+    def test_basic_file_field_passes(self, gate):
+        """Basic file field with no extra props is valid."""
+        ok, err, _ = gate.validate_state(self._make_field())
+        assert ok, err
+
+    def test_file_field_with_accept_passes(self, gate):
+        """accept=image/* is valid."""
+        ok, err, _ = gate.validate_state(self._make_field(accept="image/*"))
+        assert ok, err
+
+    def test_file_field_with_extensions_passes(self, gate):
+        """accept=.pdf,.docx is valid."""
+        ok, err, _ = gate.validate_state(self._make_field(accept=".pdf,.docx"))
+        assert ok, err
+
+    def test_file_field_accept_non_string_rejected(self, gate):
+        """accept must be a string."""
+        ok, err, _ = gate.validate_state(self._make_field(accept=123))
+        assert not ok
+        assert "accept" in err
+
+    def test_file_field_accept_too_long_rejected(self, gate):
+        """accept over 500 chars is rejected."""
+        ok, err, _ = gate.validate_state(self._make_field(accept="a" * 501))
+        assert not ok
+        assert "accept" in err
+
+    def test_file_field_accept_invalid_chars_rejected(self, gate):
+        """accept with script injection characters is rejected."""
+        ok, err, _ = gate.validate_state(self._make_field(accept='image/*"><script>'))
+        assert not ok
+        assert "accept" in err
+
+    def test_file_field_multiple_true_passes(self, gate):
+        """multiple=True is valid."""
+        ok, err, _ = gate.validate_state(self._make_field(multiple=True))
+        assert ok, err
+
+    def test_file_field_multiple_non_bool_rejected(self, gate):
+        """multiple must be a boolean."""
+        ok, err, _ = gate.validate_state(self._make_field(multiple="yes"))
+        assert not ok
+        assert "multiple" in err
+
+    def test_file_field_max_size_passes(self, gate):
+        """maxSize=1048576 is valid."""
+        ok, err, _ = gate.validate_state(self._make_field(maxSize=1048576))
+        assert ok, err
+
+    def test_file_field_max_size_zero_rejected(self, gate):
+        """maxSize=0 is rejected (must be positive)."""
+        ok, err, _ = gate.validate_state(self._make_field(maxSize=0))
+        assert not ok
+        assert "maxSize" in err
+
+    def test_file_field_max_size_negative_rejected(self, gate):
+        """maxSize=-1 is rejected."""
+        ok, err, _ = gate.validate_state(self._make_field(maxSize=-1))
+        assert not ok
+        assert "maxSize" in err
+
+    def test_file_field_max_size_non_int_rejected(self, gate):
+        """maxSize must be an integer."""
+        ok, err, _ = gate.validate_state(self._make_field(maxSize=1.5))
+        assert not ok
+        assert "maxSize" in err
+
+    def test_file_field_max_size_bool_rejected(self, gate):
+        """maxSize=True is rejected (bool is a subclass of int)."""
+        ok, err, _ = gate.validate_state(self._make_field(maxSize=True))
+        assert not ok
+        assert "maxSize" in err
+
+    def test_file_field_required_passes(self, gate):
+        """required=True on a file field is valid."""
+        ok, err, _ = gate.validate_state(self._make_field(required=True))
+        assert ok, err
+
+    def test_file_field_all_props_pass(self, gate):
+        """File field with accept, multiple, maxSize, required all valid."""
+        ok, err, _ = gate.validate_state(
+            self._make_field(
+                accept="image/png,image/jpeg,.gif",
+                multiple=True,
+                maxSize=2097152,
+                required=True,
+            )
+        )
+        assert ok, err

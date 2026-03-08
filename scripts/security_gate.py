@@ -54,6 +54,7 @@ class SecurityGate:
             "date",
             "datetime",
             "autocomplete",
+            "file",
         }
     )
     ALLOWED_SECTION_TYPES = frozenset(
@@ -909,6 +910,27 @@ class SecurityGate:
             allow_custom = field.get("allowCustom")
             if allow_custom is not None and not isinstance(allow_custom, bool):
                 return False, f"{path}.allowCustom must be a boolean"
+
+        # File-specific validation
+        if field_type == "file":
+            accept = field.get("accept")
+            if accept is not None:
+                if not isinstance(accept, str):
+                    return False, f"{path}.accept must be a string"
+                if len(accept) > 500:
+                    return False, f"{path}.accept too long (max 500 chars)"
+                # Allow only safe characters: MIME types (letters/digits/+/-/./*)
+                # and extensions (.ext), comma+space separators
+                _ACCEPT_RE = re.compile(r"^[a-zA-Z0-9+\-.*/, ]+$")
+                if not _ACCEPT_RE.match(accept):
+                    return False, f"{path}.accept contains invalid characters"
+            multiple = field.get("multiple")
+            if multiple is not None and not isinstance(multiple, bool):
+                return False, f"{path}.multiple must be a boolean"
+            max_size = field.get("maxSize")
+            if max_size is not None:
+                if isinstance(max_size, bool) or not isinstance(max_size, int) or max_size < 1:
+                    return False, f"{path}.maxSize must be a positive integer (bytes)"
 
         return True, ""
 
