@@ -647,6 +647,128 @@ def _parse_logs_args(argv: list[str]) -> tuple[int, bool]:
 # -- top-level usage --------------------------------------------------------
 
 
+def _find_template_dir() -> Path:
+    """Locate the assets/template/ directory (works for dev and installed)."""
+    # Dev layout: scripts/cli.py → repo root / assets / template
+    repo_root = Path(__file__).resolve().parent.parent
+    dev_template = repo_root / "assets" / "template"
+    if dev_template.is_dir():
+        return dev_template
+    # Installed layout: assets/ bundled alongside scripts/
+    pkg_template = Path(__file__).resolve().parent / "assets" / "template"
+    if pkg_template.is_dir():
+        return pkg_template
+    msg = f"Cannot find template directory. Expected at {dev_template} or {pkg_template}"
+    raise FileNotFoundError(msg)
+
+
+def _find_sdk_file() -> Path | None:
+    """Locate openwebgoggles-sdk.js (dev or installed). Returns None if missing."""
+    repo_root = Path(__file__).resolve().parent.parent
+    sdk = repo_root / "assets" / "sdk" / "openwebgoggles-sdk.js"
+    if sdk.is_file():
+        return sdk
+    pkg_sdk = Path(__file__).resolve().parent / "assets" / "sdk" / "openwebgoggles-sdk.js"
+    if pkg_sdk.is_file():
+        return pkg_sdk
+    return None
+
+
+_APP_NAME_RE = __import__("re").compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,49}$")
+
+
+def _cmd_scaffold(app_name: str, output_dir: Path | None = None, force: bool = False) -> int:
+    """Scaffold a new custom OpenWebGoggles app from the built-in template.
+
+    Args:
+        app_name: Name for the new app (used as directory name and title).
+        output_dir: Parent directory to create the app in. Defaults to cwd.
+        force: If True, overwrite an existing directory without prompting.
+
+    Returns:
+        0 on success, 1 on error.
+    """
+    if not _APP_NAME_RE.match(app_name):
+        print(
+            f"Error: invalid app name {app_name!r}. "
+            "Must start with a letter and contain only letters, digits, hyphens, and underscores (max 50 chars).",
+            file=sys.stderr,
+        )
+        return 1
+
+    dest = (output_dir or Path.cwd()) / app_name
+    if dest.exists() and not force:
+        print(f"Error: directory already exists: {dest}", file=sys.stderr)
+        print("Use --force to overwrite.", file=sys.stderr)
+        return 1
+
+    try:
+        template_dir = _find_template_dir()
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    dest.mkdir(parents=True, exist_ok=True)
+
+    display_name = app_name.replace("-", " ").replace("_", " ").title()
+
+    for tmpl_file in sorted(template_dir.iterdir()):
+        if not tmpl_file.is_file():
+            continue
+        content = tmpl_file.read_text(encoding="utf-8")
+        content = content.replace("{{APP_NAME}}", display_name)
+        (dest / tmpl_file.name).write_text(content, encoding="utf-8")
+
+    sdk_src = _find_sdk_file()
+    if sdk_src is not None:
+        shutil.copy2(sdk_src, dest / "openwebgoggles-sdk.js")
+    else:
+        print("Warning: openwebgoggles-sdk.js not found — copy it manually before opening the app.", file=sys.stderr)
+
+    print(f"Created app scaffold: {dest}/")
+    print()
+    print("Files created:")
+    for f in sorted(dest.iterdir()):
+        print(f"  {f.name}")
+    print()
+    print("Next steps:")
+    print(f"  1. Run your agent: it will call openwebgoggles(state={{...}}, app={app_name!r})")
+    print(f"  2. Or preview: open {dest / 'index.html'}")
+    print("  3. Customize app.js → renderData() to build your domain-specific UI")
+    return 0
+
+
+def _parse_scaffold_args(argv: list[str]) -> tuple[str, Path | None, bool]:
+    """Parse arguments for the scaffold subcommand.
+
+    Returns:
+        Tuple of (app_name, output_dir, force).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="openwebgoggles scaffold",
+        description="Scaffold a new custom OpenWebGoggles app.",
+    )
+    parser.add_argument("app_name", help="Name of the app (becomes directory name)")
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Parent directory to create the app in (default: current directory)",
+    )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Overwrite existing directory",
+    )
+    args = parser.parse_args(argv)
+    return args.app_name, args.output_dir, args.force
+
+
 def _print_usage() -> None:
     """Print top-level usage."""
     print("Usage: openwebgoggles <command> [options]\n")
@@ -657,5 +779,6 @@ def _print_usage() -> None:
     print("  status        Show server status and health")
     print("  doctor        Diagnose setup and environment")
     print("  logs          Show server log output")
+    print("  scaffold      Create a new custom app from template")
     print()
     print("Run 'openwebgoggles <command>' for command-specific help.")

@@ -110,6 +110,7 @@ try:
         _cmd_doctor,
         _cmd_logs,  # noqa: F401
         _cmd_restart,
+        _cmd_scaffold,  # noqa: F401
         _cmd_status,
         _find_server_key,
         _get_claude_desktop_config_path,
@@ -117,6 +118,7 @@ try:
         _init_opencode,
         _init_usage,
         _parse_logs_args,  # noqa: F401
+        _parse_scaffold_args,  # noqa: F401
         _print_usage,
         _read_pid_file,
         _resolve_binary,
@@ -133,6 +135,7 @@ except ImportError:
         _cmd_doctor,
         _cmd_logs,
         _cmd_restart,
+        _cmd_scaffold,
         _cmd_status,
         _find_server_key,
         _get_claude_desktop_config_path,
@@ -140,6 +143,7 @@ except ImportError:
         _init_opencode,
         _init_usage,
         _parse_logs_args,
+        _parse_scaffold_args,
         _print_usage,
         _read_pid_file,
         _resolve_binary,
@@ -1902,12 +1906,13 @@ def main():
     """Entry point for the openwebgoggles console script.
 
     Usage:
-        openwebgoggles                        # Run MCP server (stdio transport)
-        openwebgoggles init <editor> [dir]    # Bootstrap for an editor
-        openwebgoggles restart [dir]          # Restart running MCP server
-        openwebgoggles status [dir]           # Show server status
-        openwebgoggles doctor [dir]           # Diagnose setup
-        openwebgoggles logs [--lines N] [-f]  # Show server log
+        openwebgoggles                          # Run MCP server (stdio transport)
+        openwebgoggles init <editor> [dir]      # Bootstrap for an editor
+        openwebgoggles restart [dir]            # Restart running MCP server
+        openwebgoggles status [dir]             # Show server status
+        openwebgoggles doctor [dir]             # Diagnose setup
+        openwebgoggles logs [--lines N] [-f]    # Show server log
+        openwebgoggles scaffold <app> [-o DIR]  # Create custom app scaffold
     """
     cmd = sys.argv[1] if len(sys.argv) > 1 else None
 
@@ -1949,6 +1954,12 @@ def main():
         n_lines, follow = _parse_logs_args(sys.argv[2:])
         _cmd_logs(lines=n_lines, tail=follow)
         return
+
+    if cmd == "scaffold":
+        from cli import _cmd_scaffold, _parse_scaffold_args
+
+        app_name, out_dir, force = _parse_scaffold_args(sys.argv[2:])
+        sys.exit(_cmd_scaffold(app_name, output_dir=out_dir, force=force))
 
     if cmd in ("help", "--help", "-h"):
         _print_usage()

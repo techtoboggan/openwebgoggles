@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from cli import _cmd_scaffold, _find_sdk_file, _find_template_dir, _parse_scaffold_args
 from mcp_server import (
     _CLAUDE_SETTINGS,
     _DEPRECATED_PERMISSIONS,
@@ -1278,3 +1279,143 @@ class TestLogsMainDispatch:
         _print_usage()
         out = capsys.readouterr().out
         assert "logs" in out
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.5: scaffold command
+# ---------------------------------------------------------------------------
+
+
+class TestParseScaffoldArgs:
+    def test_app_name_required(self):
+        with pytest.raises(SystemExit):
+            _parse_scaffold_args([])
+
+    def test_app_name_parsed(self):
+        app_name, out_dir, force = _parse_scaffold_args(["my-app"])
+        assert app_name == "my-app"
+        assert out_dir is None
+        assert force is False
+
+    def test_output_dir_short(self, tmp_path):
+        app_name, out_dir, force = _parse_scaffold_args(["my-app", "-o", str(tmp_path)])
+        assert out_dir == tmp_path
+
+    def test_output_dir_long(self, tmp_path):
+        app_name, out_dir, force = _parse_scaffold_args(["my-app", "--output-dir", str(tmp_path)])
+        assert out_dir == tmp_path
+
+    def test_force_flag(self):
+        _, _, force = _parse_scaffold_args(["my-app", "--force"])
+        assert force is True
+
+    def test_force_short(self):
+        _, _, force = _parse_scaffold_args(["my-app", "-f"])
+        assert force is True
+
+
+class TestCmdScaffold:
+    def test_creates_directory_with_files(self, tmp_path, capsys):
+        rc = _cmd_scaffold("my-app", output_dir=tmp_path)
+        assert rc == 0
+        dest = tmp_path / "my-app"
+        assert dest.is_dir()
+        # Template files are copied
+        assert (dest / "index.html").is_file()
+        assert (dest / "app.js").is_file()
+        assert (dest / "style.css").is_file()
+
+    def test_substitutes_app_name(self, tmp_path):
+        _cmd_scaffold("my-app", output_dir=tmp_path)
+        content = (tmp_path / "my-app" / "index.html").read_text()
+        # {{APP_NAME}} should be replaced with the display name
+        assert "{{APP_NAME}}" not in content
+        assert "My App" in content
+
+    def test_substitutes_underscore_app_name(self, tmp_path):
+        _cmd_scaffold("my_cool_app", output_dir=tmp_path)
+        content = (tmp_path / "my_cool_app" / "app.js").read_text()
+        assert "{{APP_NAME}}" not in content
+        assert "My Cool App" in content
+
+    def test_sdk_js_copied(self, tmp_path):
+        _cmd_scaffold("my-app", output_dir=tmp_path)
+        # SDK file should be present (or warning printed if not found)
+        dest = tmp_path / "my-app"
+        sdk = dest / "openwebgoggles-sdk.js"
+        # In dev mode, the SDK exists in assets/sdk/
+        assert sdk.is_file()
+
+    def test_invalid_name_returns_1(self, tmp_path, capsys):
+        rc = _cmd_scaffold("123-bad", output_dir=tmp_path)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "invalid app name" in err
+
+    def test_name_with_leading_hyphen_rejected(self, tmp_path, capsys):
+        rc = _cmd_scaffold("-badname", output_dir=tmp_path)
+        assert rc == 1
+
+    def test_existing_dir_without_force_returns_1(self, tmp_path, capsys):
+        _cmd_scaffold("my-app", output_dir=tmp_path)
+        rc = _cmd_scaffold("my-app", output_dir=tmp_path)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "already exists" in err
+
+    def test_force_overwrites_existing(self, tmp_path):
+        _cmd_scaffold("my-app", output_dir=tmp_path)
+        # Modify a file
+        (tmp_path / "my-app" / "app.js").write_text("// modified")
+        rc = _cmd_scaffold("my-app", output_dir=tmp_path, force=True)
+        assert rc == 0
+        # File should be restored from template
+        content = (tmp_path / "my-app" / "app.js").read_text()
+        assert "// modified" not in content
+
+    def test_output_shows_created_message(self, tmp_path, capsys):
+        _cmd_scaffold("my-app", output_dir=tmp_path)
+        out = capsys.readouterr().out
+        assert "Created app scaffold" in out
+        assert "my-app" in out
+
+    def test_output_shows_next_steps(self, tmp_path, capsys):
+        _cmd_scaffold("my-app", output_dir=tmp_path)
+        out = capsys.readouterr().out
+        assert "Next steps" in out
+        assert "renderData" in out
+
+    def test_missing_template_dir_returns_1(self, tmp_path, capsys):
+        with mock.patch("cli._find_template_dir", side_effect=FileNotFoundError("no template")):
+            rc = _cmd_scaffold("my-app", output_dir=tmp_path)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "no template" in err
+
+    def test_find_template_dir_finds_dev_location(self):
+        """_find_template_dir() returns a valid directory in dev mode."""
+        d = _find_template_dir()
+        assert d.is_dir()
+        assert (d / "index.html").is_file()
+        assert (d / "app.js").is_file()
+
+    def test_find_sdk_file_finds_dev_sdk(self):
+        """_find_sdk_file() finds the SDK in dev mode."""
+        sdk = _find_sdk_file()
+        assert sdk is not None
+        assert sdk.is_file()
+        assert sdk.name == "openwebgoggles-sdk.js"
+
+
+class TestScaffoldMainDispatch:
+    def test_scaffold_dispatched_from_main(self, tmp_path, capsys):
+        with mock.patch("sys.argv", ["openwebgoggles", "scaffold", "test-app", "-o", str(tmp_path)]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 0
+        assert (tmp_path / "test-app").is_dir()
+
+    def test_scaffold_in_usage_help(self, capsys):
+        _print_usage()
+        out = capsys.readouterr().out
+        assert "scaffold" in out
