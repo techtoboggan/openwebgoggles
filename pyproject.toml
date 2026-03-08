@@ -39,7 +39,7 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-playwright>=0.6.2,<1",
     "pytest-timeout>=2.3",
-    "pytest-bdd>=7.0,<8",
+    "pytest-bdd>=7.0,<9",
     "ruff>=0.9",
     "pre-commit>=4.0",
 ]
