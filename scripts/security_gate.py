@@ -50,6 +50,10 @@ class SecurityGate:
             "email",
             "url",
             "static",
+            "slider",
+            "date",
+            "datetime",
+            "autocomplete",
         }
     )
     ALLOWED_SECTION_TYPES = frozenset(
@@ -661,6 +665,17 @@ class SecurityGate:
                 if not isinstance(sec_id, str) or not self.KEY_PATTERN.match(sec_id):
                     return False, f"sections[{i}].id: invalid"
 
+            # Validate universal section properties
+            collapsible = sec.get("collapsible")
+            if collapsible is not None and not isinstance(collapsible, bool):
+                return False, f"sections[{i}].collapsible must be a boolean"
+            collapsed = sec.get("collapsed")
+            if collapsed is not None and not isinstance(collapsed, bool):
+                return False, f"sections[{i}].collapsed must be a boolean"
+            copyable = sec.get("copyable")
+            if copyable is not None and not isinstance(copyable, bool):
+                return False, f"sections[{i}].copyable must be a boolean"
+
             # Validate fields
             fields = sec.get("fields", [])
             if isinstance(fields, list):
@@ -848,6 +863,53 @@ class SecurityGate:
             if len(placeholder) > 500:
                 return False, f"{path}.placeholder too long (max 500 chars)"
 
+        # Validate unit (used by slider and metric fields)
+        unit = field.get("unit")
+        if unit is not None:
+            if not isinstance(unit, str):
+                return False, f"{path}.unit must be a string"
+            if len(unit) > 20:
+                return False, f"{path}.unit too long (max 20 chars)"
+
+        # Slider-specific validation
+        field_type = field.get("type", "text")
+        if field_type == "slider":
+            for prop in ("min", "max", "step", "value"):
+                val = field.get(prop)
+                if val is not None:
+                    if isinstance(val, bool) or not isinstance(val, int | float):
+                        return False, f"{path}.{prop} must be a number for slider type"
+                    if isinstance(val, float) and not math.isfinite(val):
+                        return False, f"{path}.{prop} must be a finite number"
+            sl_min = field.get("min")
+            sl_max = field.get("max")
+            if sl_min is not None and sl_max is not None and sl_min >= sl_max:
+                return False, f"{path}: slider min must be less than max"
+            sl_val = field.get("value")
+            if sl_min is not None and sl_max is not None and sl_val is not None:
+                if sl_val < sl_min or sl_val > sl_max:
+                    return False, f"{path}: slider value must be between min and max"
+
+        # Date/datetime-specific validation
+        _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        _DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+        if field_type in ("date", "datetime"):
+            pattern_re = _DATE_RE if field_type == "date" else _DATETIME_RE
+            fmt_name = "YYYY-MM-DD" if field_type == "date" else "YYYY-MM-DDTHH:MM"
+            for prop in ("value", "min", "max"):
+                val = field.get(prop)
+                if val is not None:
+                    if not isinstance(val, str):
+                        return False, f"{path}.{prop} must be a string for {field_type} type"
+                    if not pattern_re.match(val):
+                        return False, f"{path}.{prop}: must match {fmt_name} format"
+
+        # Autocomplete-specific validation
+        if field_type == "autocomplete":
+            allow_custom = field.get("allowCustom")
+            if allow_custom is not None and not isinstance(allow_custom, bool):
+                return False, f"{path}.allowCustom must be a boolean"
+
         return True, ""
 
     # --- Section-type-specific validation ---
@@ -942,6 +1004,13 @@ class SecurityGate:
                     return False, f"{prefix}.navigateToField too long (max 200)"
                 if not self.KEY_PATTERN.match(nav_field):
                     return False, f"{prefix}.navigateToField: invalid format"
+            # Client-side table filter
+            filterable = sec.get("filterable", False)
+            if not isinstance(filterable, bool):
+                return False, f"{prefix}.filterable must be a boolean"
+            filter_ph = sec.get("filterPlaceholder", "")
+            if filter_ph and (not isinstance(filter_ph, str) or len(filter_ph) > 200):
+                return False, f"{prefix}.filterPlaceholder: invalid"
 
         elif sec_type == "metric":
             cards = sec.get("cards", [])

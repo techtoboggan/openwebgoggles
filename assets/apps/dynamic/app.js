@@ -271,9 +271,17 @@
       el.addEventListener(event, function () {
         if (type === "checkbox") {
           U.formValues[key] = el.checked;
-        } else if (type === "number") {
+        } else if (type === "number" || type === "range") {
           var parsed = parseFloat(el.value);
           U.formValues[key] = el.value === "" ? "" : (isNaN(parsed) ? 0 : parsed);
+          // Update live value display for sliders
+          if (type === "range") {
+            var valSpan = document.getElementById(el.id + "-val");
+            if (valSpan) {
+              var unit = el.dataset && el.dataset.unit ? " " + el.dataset.unit : "";
+              valSpan.textContent = el.value + unit;
+            }
+          }
         } else {
           U.formValues[key] = el.value;
         }

@@ -276,6 +276,28 @@
     @media (max-width: 768px) {
       .layout-sidebar, .layout-split { grid-template-columns: 1fr; }
     }
+
+    /* ─── Slider field ─── */
+    .slider-wrap { display: flex; align-items: center; gap: 10px; }
+    .slider-wrap input[type="range"] { flex: 1; }
+    .slider-value { min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text2); font-size: 13px; }
+
+    /* ─── Collapsible sections ─── */
+    .section-title-collapsible { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+    .section-title-collapsible:hover { opacity: 0.8; }
+    .section-toggle { font-size: 10px; width: 14px; display: inline-block; }
+    .section-body-collapsed { display: none; }
+
+    /* ─── Table filter ─── */
+    .table-filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .owg-table-filter { flex: 1; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); color: var(--text); font-size: 13px; }
+    .owg-table-filter:focus { outline: none; border-color: var(--blue); }
+    .table-row-count { font-size: 12px; color: var(--text2); white-space: nowrap; }
+
+    /* ─── Copy-to-clipboard button ─── */
+    .owg-copy-btn { background: none; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; color: var(--text2); font-size: 12px; padding: 1px 5px; float: right; margin-left: 6px; }
+    .owg-copy-btn:hover { color: var(--text); border-color: var(--text2); }
+    .message-box-copyable { position: relative; }
   </style>
 </head>
 <body>

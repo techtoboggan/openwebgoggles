@@ -52,6 +52,18 @@
       return config.errorMessage || "Must be at most " + config.max;
     }
 
+    // Autocomplete allowCustom: false — value must be in allowed options list
+    if (config.allowCustom === false && config.options && config.options.length > 0) {
+      var strVal = String(value);
+      var found = false;
+      for (var i = 0; i < config.options.length; i++) {
+        if (config.options[i] === strVal) { found = true; break; }
+      }
+      if (!found) {
+        return config.errorMessage || "Value must be one of the provided options";
+      }
+    }
+
     return null; // valid
   };
 

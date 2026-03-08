@@ -192,11 +192,11 @@ timestamps in a growing list. Cap the list at 1000 entries.
 
 ---
 
-## Phase 2 — Feature Expansion (`v0.15.x` continued)
+## Phase 2 — Feature Expansion (`v0.15.x` continued) — 6/7 complete
 
 *Unblock real-world workflows that are currently impossible.*
 
-### 2.1 New Field Type: `slider` / `range`
+### 2.1 New Field Type: `slider` / `range` ✅
 
 **What**: A range input field with min, max, step, and current value display.
 
@@ -230,7 +230,7 @@ timestamps in a growing list. Cap the list at 1000 entries.
 
 ---
 
-### 2.2 New Field Type: `date` / `datetime`
+### 2.2 New Field Type: `date` / `datetime` ✅
 
 **What**: Native date and datetime-local pickers.
 
@@ -261,7 +261,7 @@ timestamps in a growing list. Cap the list at 1000 entries.
 
 ---
 
-### 2.3 New Field Type: `autocomplete`
+### 2.3 New Field Type: `autocomplete` ✅
 
 **What**: Text input with a dropdown list of suggestions. Supports both static
 option lists and filtering as-you-type.
@@ -329,7 +329,7 @@ option lists and filtering as-you-type.
 
 ---
 
-### 2.5 Collapsible Sections
+### 2.5 Collapsible Sections ✅
 
 **What**: Any section can be collapsed/expanded by the user. Agents can set initial
 collapsed state.
@@ -360,7 +360,7 @@ collapsed state.
 
 ---
 
-### 2.6 Client-Side Table Filter
+### 2.6 Client-Side Table Filter ✅
 
 **What**: Search box above a table that filters rows client-side without an agent round-trip.
 
@@ -392,7 +392,7 @@ collapsed state.
 
 ---
 
-### 2.7 Copy-to-Clipboard Buttons
+### 2.7 Copy-to-Clipboard Buttons ✅
 
 **What**: `copyable: true` on `text` sections or `static` fields adds a copy icon button.
 Clicking it copies the content to the clipboard.

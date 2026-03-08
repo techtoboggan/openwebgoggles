@@ -15,21 +15,40 @@
   OWG.renderSection = function (sec, si) {
     var secId = sec.id ? ' data-section-id="' + escAttr(sec.id) + '"' : '';
     var html = '<div class="section' + safeClass(sec.className) + '"' + secId + ' data-section-index="' + si + '">';
-    if (sec.title) html += '<div class="section-title">' + esc(sec.title) + "</div>";
 
+    var bodyId = "sec-body-" + si;
+    var isCollapsible = !!sec.collapsible && !!sec.title;
+    var isCollapsed = isCollapsible && !!sec.collapsed;
+
+    if (sec.title) {
+      if (isCollapsible) {
+        html += '<div class="section-title section-title-collapsible" data-collapse-target="' + escAttr(String(bodyId)) + '">' +
+          '<span class="section-toggle">' + (isCollapsed ? "\u25B6" : "\u25BC") + "</span>" + esc(sec.title) + "</div>";
+      } else {
+        html += '<div class="section-title">' + esc(sec.title) + "</div>";
+      }
+    }
+
+    var bodyHtml = "";
     switch (sec.type) {
-      case "form":      html += renderForm(sec, si);            break;
-      case "items":     html += renderItems(sec, si);           break;
-      case "text":      html += renderText(sec);                break;
-      case "actions":   html += renderActionsSection(sec);      break;
-      case "progress":  html += renderProgress(sec);            break;
-      case "log":       html += renderLog(sec);                 break;
-      case "diff":      html += renderDiff(sec);                break;
-      case "table":     html += renderTable(sec, si);           break;
-      case "tabs":      html += renderTabs(sec, si);            break;
-      case "metric":    html += renderMetric(sec, si);          break;
-      case "chart":     html += OWG.renderChart(sec, si);       break;
-      default:          html += renderForm(sec, si);            break;
+      case "form":      bodyHtml += renderForm(sec, si);            break;
+      case "items":     bodyHtml += renderItems(sec, si);           break;
+      case "text":      bodyHtml += renderText(sec);                break;
+      case "actions":   bodyHtml += renderActionsSection(sec);      break;
+      case "progress":  bodyHtml += renderProgress(sec);            break;
+      case "log":       bodyHtml += renderLog(sec);                 break;
+      case "diff":      bodyHtml += renderDiff(sec);                break;
+      case "table":     bodyHtml += renderTable(sec, si);           break;
+      case "tabs":      bodyHtml += renderTabs(sec, si);            break;
+      case "metric":    bodyHtml += renderMetric(sec, si);          break;
+      case "chart":     bodyHtml += OWG.renderChart(sec, si);       break;
+      default:          bodyHtml += renderForm(sec, si);            break;
+    }
+
+    if (isCollapsible) {
+      html += '<div class="section-body' + (isCollapsed ? " section-body-collapsed" : "") + '" id="' + escAttr(String(bodyId)) + '">' + bodyHtml + "</div>";
+    } else {
+      html += bodyHtml;
     }
 
     html += "</div>";
@@ -117,13 +136,67 @@
           'placeholder="' + escAttr(f.placeholder || "") + '" min="' + escAttr(String(f.min != null ? f.min : "")) + '" max="' + escAttr(String(f.max != null ? f.max : "")) + '"' +
           dataKey + requiredAttr + '>';
         break;
-      case "static":
+      case "static": {
+        var staticContent = f.value || "";
+        var copyBtnStatic = f.copyable ? '<button class="owg-copy-btn" aria-label="Copy" data-copy-content="' + escAttr(staticContent) + '">\u2398</button>' : '';
         if (f.format === "markdown") {
-          inner = '<div class="field-static">' + markdownBlock(f.value || "") + "</div>";
+          inner = '<div class="field-static">' + copyBtnStatic + markdownBlock(staticContent) + "</div>";
         } else {
-          inner = '<div class="field-static' + (f.mono ? " mono" : "") + '">' + esc(f.value || "") + "</div>";
+          inner = '<div class="field-static' + (f.mono ? " mono" : "") + '">' + copyBtnStatic + esc(staticContent) + "</div>";
         }
         break;
+      }
+      case "slider": {
+        var sliderVal = f.value != null ? f.value : (f.default != null ? f.default : (f.min || 0));
+        var sliderMin = f.min != null ? escAttr(String(f.min)) : "0";
+        var sliderMax = f.max != null ? escAttr(String(f.max)) : "100";
+        var sliderStep = f.step != null ? escAttr(String(f.step)) : "1";
+        var spanId = id + "-val";
+        var unitAttr = f.unit ? ' data-unit="' + escAttr(String(f.unit)) + '"' : '';
+        inner = '<div class="slider-wrap">' +
+          '<input type="range" id="' + id + '" min="' + sliderMin + '" max="' + sliderMax + '" step="' + sliderStep + '" value="' + escAttr(String(sliderVal)) + '"' + unitAttr + dataKey + '>' +
+          '<span class="slider-value" id="' + escAttr(spanId) + '">' + esc(String(sliderVal)) + (f.unit ? ' ' + esc(String(f.unit)) : '') + '</span>' +
+          '</div>';
+        OWG.formValues[key] = sliderVal;
+        // Store validator with min/max for range validation
+        OWG.fieldValidators[key] = OWG.fieldValidators[key] || { required: !!f.required, type: "slider" };
+        OWG.fieldValidators[key].min = f.min != null ? f.min : null;
+        OWG.fieldValidators[key].max = f.max != null ? f.max : null;
+        break;
+      }
+      case "date":
+        inner = '<input type="date" id="' + id + '" value="' + escAttr(f.value || f.default || "") + '"' +
+          (f.min ? ' min="' + escAttr(String(f.min)) + '"' : '') +
+          (f.max ? ' max="' + escAttr(String(f.max)) + '"' : '') +
+          dataKey + requiredAttr + '>';
+        break;
+      case "datetime":
+        inner = '<input type="datetime-local" id="' + id + '" value="' + escAttr(f.value || f.default || "") + '"' +
+          (f.min ? ' min="' + escAttr(String(f.min)) + '"' : '') +
+          (f.max ? ' max="' + escAttr(String(f.max)) + '"' : '') +
+          dataKey + requiredAttr + '>';
+        break;
+      case "autocomplete": {
+        var dlId = id + "-dl";
+        var acOpts = (f.options || []).map(function (o) {
+          var v = typeof o === "object" ? String(o.value) : String(o);
+          return '<option value="' + escAttr(v) + '">';
+        }).join("");
+        inner = '<input type="text" id="' + id + '" list="' + escAttr(dlId) + '"' +
+          ' value="' + escAttr(String(f.value || f.default || "")) + '"' +
+          ' placeholder="' + escAttr(f.placeholder || "") + '"' +
+          (f.allowCustom === false ? ' data-allow-custom="false"' : '') +
+          dataKey + requiredAttr + '>' +
+          '<datalist id="' + escAttr(dlId) + '">' + acOpts + '</datalist>';
+        if (f.allowCustom === false) {
+          OWG.fieldValidators[key] = OWG.fieldValidators[key] || { required: !!f.required, type: "autocomplete" };
+          OWG.fieldValidators[key].allowCustom = false;
+          OWG.fieldValidators[key].options = (f.options || []).map(function (o) {
+            return typeof o === "object" ? String(o.value) : String(o);
+          });
+        }
+        break;
+      }
       default: {
         var ALLOWED_INPUT_TYPES = {text:1, email:1, url:1, tel:1, search:1, password:1, date:1, time:1, color:1};
         var inputType = (f.type && ALLOWED_INPUT_TYPES[f.type]) ? f.type : "text";
@@ -180,10 +253,11 @@
 
   // ─── Text block ─────────────────────────────────────────────────────────────
   function renderText(sec) {
+    var copyBtn = sec.copyable ? '<button class="owg-copy-btn" aria-label="Copy to clipboard" data-copy-content="' + escAttr(sec.content || "") + '">\u2398</button>' : '';
     if (sec.format === "markdown") {
-      return '<div class="message-box">' + markdownBlock(sec.content || "") + "</div>";
+      return '<div class="message-box' + (sec.copyable ? " message-box-copyable" : "") + '">' + copyBtn + markdownBlock(sec.content || "") + "</div>";
     }
-    return '<div class="message-box message-box-plain">' + esc(sec.content || "") + "</div>";
+    return '<div class="message-box message-box-plain' + (sec.copyable ? " message-box-copyable" : "") + '">' + copyBtn + esc(sec.content || "") + "</div>";
   }
 
   // ─── Actions section ────────────────────────────────────────────────────────
@@ -336,7 +410,16 @@
         tableAttrs += ' data-navigate-to-field="' + escAttr(navigateToField) + '"';
       }
     }
-    var html = '<div class="table-container"><table class="owg-table"' + tableAttrs + '>';
+    var filterable = !!sec.filterable;
+    var filterPh = sec.filterPlaceholder || "Filter rows...";
+    var html = "";
+    if (filterable) {
+      html += '<div class="table-filter-bar">' +
+        '<input type="search" class="owg-table-filter" placeholder="' + escAttr(filterPh) + '" data-table-filter="' + escAttr(String(si)) + '" aria-label="Filter table">' +
+        '<span class="table-row-count" data-table-count="' + escAttr(String(si)) + '"></span>' +
+        '</div>';
+    }
+    html += '<div class="table-container"><table class="owg-table"' + tableAttrs + '>';
 
     // Header
     html += "<thead><tr>";
@@ -473,6 +556,76 @@
 
   // ─── Tab/table event binding (called from app.js bindEvents) ────────────────
   OWG.bindSectionEvents = function (root) {
+    // Collapsible section titles
+    root.querySelectorAll(".section-title-collapsible").forEach(function (title) {
+      title.addEventListener("click", function () {
+        var targetId = title.getAttribute("data-collapse-target");
+        var body = document.getElementById(targetId);
+        if (!body) return;
+        var collapsed = body.classList.toggle("section-body-collapsed");
+        var icon = title.querySelector(".section-toggle");
+        if (icon) icon.textContent = collapsed ? "\u25B6" : "\u25BC";
+      });
+    });
+
+    // Copy-to-clipboard buttons
+    root.querySelectorAll(".owg-copy-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var content = btn.getAttribute("data-copy-content");
+        var orig = btn.textContent;
+        function showFeedback() {
+          btn.textContent = "\u2713";
+          setTimeout(function () { btn.textContent = orig; }, 1500);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(content).then(showFeedback).catch(function () {
+            var ta = document.createElement("textarea");
+            ta.value = content;
+            ta.style.cssText = "position:fixed;opacity:0";
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand("copy"); showFeedback(); } catch (e) { /* ignore */ }
+            document.body.removeChild(ta);
+          });
+        } else {
+          var ta = document.createElement("textarea");
+          ta.value = content;
+          ta.style.cssText = "position:fixed;opacity:0";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); showFeedback(); } catch (e) { /* ignore */ }
+          document.body.removeChild(ta);
+        }
+      });
+    });
+
+    // Table filter inputs
+    root.querySelectorAll(".owg-table-filter").forEach(function (input) {
+      var ti = input.getAttribute("data-table-filter");
+      var table = root.querySelector('.owg-table[data-table-index="' + _esc(ti) + '"]');
+      if (table) {
+        var allRows = table.querySelectorAll("tbody tr");
+        var countEl = root.querySelector('[data-table-count="' + _esc(ti) + '"]');
+        if (countEl) countEl.textContent = allRows.length + " rows";
+      }
+      input.addEventListener("input", function () {
+        var q = input.value.trim().toLowerCase();
+        var ti2 = input.getAttribute("data-table-filter");
+        var table2 = root.querySelector('.owg-table[data-table-index="' + _esc(ti2) + '"]');
+        if (!table2) return;
+        var rows = table2.querySelectorAll("tbody tr");
+        var visible = 0;
+        rows.forEach(function (row) {
+          var text = row.textContent.toLowerCase();
+          var show = !q || text.indexOf(q) !== -1;
+          row.style.display = show ? "" : "none";
+          if (show) visible++;
+        });
+        var countEl2 = root.querySelector('[data-table-count="' + _esc(ti2) + '"]');
+        if (countEl2) countEl2.textContent = visible + " of " + rows.length + " rows";
+      });
+    });
+
     // Tab switching — use dataset comparison to avoid selector injection
     root.querySelectorAll("[data-tab-target]").forEach(function (btn) {
       btn.addEventListener("click", function () {
