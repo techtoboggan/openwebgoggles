@@ -54,6 +54,27 @@
 
   wv.on("connected",     function (d) { render(d.state); });
   wv.on("state_updated", function (s) { if (!done) render(s); });
+  wv.on("disconnected",  function (d) {
+    // Host disconnect (crash, tab close) — show non-dismissable overlay
+    if (done) return;
+    done = true;
+    var wrap = document.createElement("div");
+    wrap.className = "done-state";
+    var icon = document.createElement("div");
+    icon.className = "done-icon";
+    icon.textContent = "\u26a0";
+    var label = document.createElement("div");
+    label.style.cssText = "color:var(--yellow);font-weight:600";
+    label.textContent = "Connection lost";
+    var msg = document.createElement("div");
+    msg.className = "done-msg";
+    msg.textContent = (d && d.message) || "The host disconnected unexpectedly.";
+    wrap.appendChild(icon);
+    wrap.appendChild(label);
+    wrap.appendChild(msg);
+    els.content.textContent = "";
+    els.content.appendChild(wrap);
+  });
   wv.on("close",         function (d) {
     done = true;
     // Build close message via DOM API (prevents HTML structure injection)
@@ -262,6 +283,42 @@
     });
   }
 
+  // ─── Error banner (transport/action failures) ────────────────────────────────
+  var _errorBannerTimer = null;
+  function showErrorBanner(message) {
+    var existing = document.getElementById("owg-error-banner");
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    if (_errorBannerTimer) { clearTimeout(_errorBannerTimer); _errorBannerTimer = null; }
+
+    var banner = document.createElement("div");
+    banner.id = "owg-error-banner";
+    banner.className = "owg-callout owg-callout-error";
+    banner.style.cssText = "display:flex;justify-content:space-between;align-items:flex-start;gap:8px";
+
+    var text = document.createElement("span");
+    text.textContent = message;
+
+    var dismiss = document.createElement("button");
+    dismiss.textContent = "\xd7";
+    dismiss.style.cssText = "background:none;border:none;cursor:pointer;font-size:1.2em;line-height:1;flex-shrink:0;padding:0";
+    dismiss.addEventListener("click", function () {
+      if (banner.parentNode) banner.parentNode.removeChild(banner);
+      if (_errorBannerTimer) { clearTimeout(_errorBannerTimer); _errorBannerTimer = null; }
+    });
+
+    banner.appendChild(text);
+    banner.appendChild(dismiss);
+
+    var content = els.content;
+    if (content && !content.classList.contains("hidden")) {
+      content.insertBefore(banner, content.firstChild);
+    }
+    _errorBannerTimer = setTimeout(function () {
+      if (banner.parentNode) banner.parentNode.removeChild(banner);
+      _errorBannerTimer = null;
+    }, 10000);
+  }
+
   // ─── Action handler ─────────────────────────────────────────────────────────
   function handleAction(actionId, type, scope, btn) {
     if (done) return;
@@ -322,6 +379,7 @@
       btn.disabled = false;
       btn.textContent = actionId;
       console.error("Action failed:", err);
+      showErrorBanner(String((err && err.message) || err));
     });
   }
   // ─── Emit action (for use by sub-modules like sections.js) ────────────────
@@ -336,6 +394,7 @@
     }
     actionPromise.catch(function (err) {
       console.error("Emitted action failed:", err);
+      showErrorBanner(String((err && err.message) || err));
     });
   };
 

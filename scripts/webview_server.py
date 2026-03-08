@@ -99,6 +99,9 @@ class RateLimiter:
         if len(self._timestamps) >= self.max_actions:
             return False
         self._timestamps.append(now)
+        # Cap at 1000 entries — defence-in-depth against unbounded growth (ROADMAP 1.7)
+        if len(self._timestamps) > 1000:
+            self._timestamps = self._timestamps[-1000:]
         return True
 
 
@@ -194,6 +197,7 @@ def _strip_token(data: dict) -> dict:
 
 
 class WebviewHTTPHandler:
+    MAX_HTTP_CONNECTIONS = 50  # Cap simultaneous HTTP connections (ROADMAP 1.5)
     """Async HTTP request handler for the webview server."""
 
     MAX_BODY_SIZE = 1_048_576  # 1MB
@@ -220,6 +224,7 @@ class WebviewHTTPHandler:
         self._public_key_hex: str = ""
         self._rate_limiter = RateLimiter(max_actions=30, window_seconds=60.0)
         self._manifest_rate_limiter = RateLimiter(max_actions=60, window_seconds=60.0)
+        self._http_active_connections: int = 0
         # Injected by WebviewServer to send signed broadcasts; falls back to
         # unsigned plain-JSON if not set (e.g. in tests or standalone usage).
         self._broadcast_fn: Any | None = None
@@ -262,6 +267,13 @@ class WebviewHTTPHandler:
         return types.get(ext, "application/octet-stream")
 
     async def handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):  # noqa: C901 — linear request parsing, not truly complex  # pragma: no cover
+        # Connection limit: reject when at capacity (ROADMAP 1.5)
+        if self._http_active_connections >= self.MAX_HTTP_CONNECTIONS:
+            writer.write(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            await writer.drain()
+            writer.close()
+            return
+        self._http_active_connections += 1
         try:
             request_line = await asyncio.wait_for(reader.readline(), timeout=30)
             if not request_line:
@@ -330,6 +342,7 @@ class WebviewHTTPHandler:
         except (ConnectionResetError, asyncio.IncompleteReadError):
             pass
         finally:
+            self._http_active_connections -= 1
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -748,6 +761,9 @@ class WebviewServer:
                 self._handle_ws,
                 "127.0.0.1",
                 self.ws_port,
+                # Server-initiated keep-alive pings — closes dead connections (ROADMAP 1.4)
+                ping_interval=self.WS_PING_INTERVAL,
+                ping_timeout=self.WS_PING_TIMEOUT,
             )
             logger.info("WebSocket server listening on ws://127.0.0.1:%d", self.ws_port)
             tasks.append(self._file_watcher())
@@ -812,6 +828,8 @@ class WebviewServer:
 
     MAX_WEBSOCKET_CLIENTS = 50  # Prevent connection exhaustion DoS
     MAX_WS_MESSAGE_SIZE = 1_048_576  # 1MB max per WS message (matches SDK limit)
+    WS_PING_INTERVAL = 30  # seconds between server-initiated WS pings (ROADMAP 1.4)
+    WS_PING_TIMEOUT = 10  # seconds to wait for pong before closing connection
 
     async def _handle_ws(self, websocket):  # noqa: C901 — TODO: extract message handlers  # pragma: no cover
         # Reject if at capacity (defense against connection exhaustion)

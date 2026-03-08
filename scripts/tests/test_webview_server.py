@@ -901,6 +901,15 @@ class TestRateLimiter:
         assert rl.max_actions == 30
         assert rl.window_seconds == 60.0
 
+    @pytest.mark.mitre_t1499
+    def test_timestamp_list_capped_at_1000(self):
+        """Timestamp list must not grow beyond 1000 entries (ROADMAP 1.7)."""
+        # Use a very large window so nothing expires, and a high action limit
+        rl = RateLimiter(max_actions=2000, window_seconds=9999.0)
+        for _ in range(1001):
+            rl.check()
+        assert len(rl._timestamps) <= 1000
+
 
 class TestRateLimitingHTTP:
     """Rate limiting integration with HTTP action endpoint."""
@@ -2824,6 +2833,7 @@ class TestInputChannelRegistry:
         ("MAX_WS_MESSAGE_SIZE", 1_048_576, "WebviewServer", "WebSocket message bytes"),
         ("MAX_WEBSOCKET_CLIENTS", 50, "WebviewServer", "Concurrent WS connections"),
         ("MAX_BODY_SIZE", 1_048_576, "WebviewHTTPHandler", "HTTP request body bytes"),
+        ("MAX_HTTP_CONNECTIONS", 50, "WebviewHTTPHandler", "Concurrent HTTP connections"),
         ("MAX_NONCE_COUNT", 100_000, "NonceTracker", "Tracked nonces"),
     ]
 

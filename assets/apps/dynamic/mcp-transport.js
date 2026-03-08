@@ -38,6 +38,8 @@
     this._hostContext = null;
     // Origin pinning — discovered from host's first valid response
     this._pinnedOrigin = null;
+    // Heartbeat timer for disconnect detection (ROADMAP 1.3)
+    this._heartbeatTimer = null;
   }
 
   MCPAppsTransport.prototype.connect = function () {
@@ -60,6 +62,15 @@
           self._pinnedOrigin = event.origin;
         }
         self._handleMessage(event.data);
+      }
+    });
+
+    // Detect page unload (host crash, tab close) — emit disconnected so app can update UI
+    var self2 = self;
+    window.addEventListener("pagehide", function () {
+      if (self2._connected) {
+        self2._connected = false;
+        self2._emit("disconnected", { message: "Page unloaded" });
       }
     });
 
@@ -98,12 +109,14 @@
       // Initial state may come via the initialize result or via a
       // subsequent tool-result notification — emit connected either way
       self._emit("connected", { state: self._state });
+      self._startHeartbeat();
       return self;
     }).catch(function (err) {
       // If ui/initialize isn't supported, still try to work
       console.warn("MCPAppsTransport: ui/initialize failed, continuing anyway:", err);
       self._connected = true;
       self._emit("connected", { state: self._state });
+      self._startHeartbeat();
       return self;
     });
   };
@@ -148,23 +161,28 @@
 
   MCPAppsTransport.prototype.disconnect = function () {
     this._connected = false;
+    if (this._heartbeatTimer) {
+      clearTimeout(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
   };
 
   // ─── Internal: postMessage JSON-RPC ────────────────────────────────────────
 
-  MCPAppsTransport.prototype._sendRequest = function (method, params) {
+  MCPAppsTransport.prototype._sendRequest = function (method, params, options) {
     var id = ++this._requestId;
     var self = this;
+    var timeoutMs = (options && options.timeout) || 30000;
     return new Promise(function (resolve, reject) {
       self._pendingRequests[id] = { resolve: resolve, reject: reject };
 
-      // Set a 30s timeout per request
+      // Per-request timeout — rejects if host doesn't respond in time
       var timer = setTimeout(function () {
         if (Object.prototype.hasOwnProperty.call(self._pendingRequests, id)) {
           delete self._pendingRequests[id];
           reject(new Error("Request timed out: " + method));
         }
-      }, 30000);
+      }, timeoutMs);
       self._pendingRequests[id].timer = timer;
 
       // Use pinned origin when available, "*" only for the initial handshake
@@ -176,6 +194,31 @@
         params: params || {}
       }, targetOrigin);
     });
+  };
+
+  // ─── Heartbeat: detect host disconnect (ROADMAP 1.3) ──────────────────────
+  MCPAppsTransport.prototype._startHeartbeat = function () {
+    var self = this;
+    var INTERVAL = 15000; // 15s between pings
+    var TIMEOUT  = 5000;  // 5s to wait for pong before declaring disconnect
+
+    function beat() {
+      if (!self._connected) return;
+      // Use short 5s timeout for the ping — distinct from the normal 30s request timeout
+      self._sendRequest("ping", {}, { timeout: TIMEOUT }).then(function () {
+        if (self._connected) {
+          self._heartbeatTimer = setTimeout(beat, INTERVAL);
+        }
+      }).catch(function () {
+        // Host failed to respond within 5s — connection lost
+        if (self._connected) {
+          self._connected = false;
+          self._emit("disconnected", { message: "Host connection lost" });
+        }
+      });
+    }
+
+    self._heartbeatTimer = setTimeout(beat, INTERVAL);
   };
 
   MCPAppsTransport.prototype._sendNotification = function (method, params) {

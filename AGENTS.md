@@ -193,7 +193,7 @@ Seven automated gate test classes prevent regression categories, not just indivi
 | Client-Server Sync | `TestClientServerPatternSync` | `test_security_gate.py` | Pattern count mismatch between `DANGEROUS_CSS_PATTERNS` (Python) and `DANGEROUS_CSS_RE` (JS) |
 | Crypto Invariants | `TestCryptoSecurityInvariants` | `test_crypto_utils.py` | Domain separation, token rejection, HMAC round-trip, tamper detection |
 | Stale Crypto Lint | `TestStaleCryptoPatternLint` | `test_crypto_utils.py` | Test files with `(var + var).encode("utf-8")` missing `\x00` delimiter |
-| Input Channel Registry | `TestInputChannelRegistry` | `test_webview_server.py` | Missing or changed limit constants across all 26 input channels + auto-detect new ones |
+| Input Channel Registry | `TestInputChannelRegistry` | `test_webview_server.py` | Missing or changed limit constants across all 27 input channels + auto-detect new ones |
 | Deployment Security | `TestDeploymentSecurity` | `test_webview_server.py` | Umask patterns, trivial token guard, wall-clock usage in security code |
 | Sanitizer Preservation | `TestSanitizerPreservesRendererAttributes` | `test_client_escaping.py` | Ensures `cleanNode` does NOT strip `data-*` or `style` attributes needed by renderers |
 
