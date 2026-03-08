@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-03-08
+
+### Added
+
+**Phase 2 — New Field Types and Section Features**
+
+- **`slider` field type** — Range input with live value display, unit label, and numeric SecurityGate validation (min < max, value in range, unit max 20 chars)
+- **`date` field type** — ISO 8601 date picker with format validation
+- **`datetime` field type** — `datetime-local` picker with ISO 8601 datetime validation
+- **`autocomplete` field type** — Text input with `<datalist>` suggestions; `allowCustom: false` enforces list-only values in client-side validation
+- **Collapsible sections** — Any section supports `collapsible: true` and `collapsed: true`; chevron toggle with no agent round-trip
+- **Table filtering** — `filterable: true` on table sections adds live search bar with row count display
+- **Copy-to-clipboard** — `copyable: true` on text sections and static fields; `navigator.clipboard` with `execCommand` fallback and ✓ feedback
+
+**Phase 1 — Resilience Hardening**
+
+- **Action error banner** — DOM-built dismissable error callout shown on failed action submissions; 10s auto-dismiss + × button
+- **MCP Apps disconnect detection** — `pagehide` event + 15s heartbeat ping (5s timeout) in `MCPAppsTransport`; emits `disconnected` event with ⚠ overlay
+- **WebSocket keep-alive** — `ping_interval=30, ping_timeout=10` on `websockets.serve()` for browser mode connections
+- **HTTP connection limit** — `MAX_HTTP_CONNECTIONS = 50` on `WebviewHTTPHandler`; returns 429 when at capacity
+- **Rate limiter memory cap** — `RateLimiter._timestamps` capped at 1000 entries after append to prevent unbounded growth
+
+### Fixed
+
+- SecurityGate `ALLOWED_FIELD_TYPES` extended from 8 to 12 types (slider, date, datetime, autocomplete)
+- SecurityGate validates collapsible/collapsed/copyable booleans on sections; filterable/filterPlaceholder on tables
+
 ## [0.13.0] - 2026-03-02
 
 ### Fixed
