@@ -590,6 +590,60 @@ def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic 
         print(f"  {ok_count} passed, {warn_count} issue(s) found.")
 
 
+# -- logs subcommand --------------------------------------------------------
+
+
+def _cmd_logs(lines: int = 50, tail: bool = False) -> None:  # pragma: no cover
+    """Print the last N lines of the server log file.
+
+    Args:
+        lines: Number of tail lines to print (default: 50).
+        tail:  If True, keep following the file until Ctrl+C.
+    """
+    import time as _time
+
+    from log_config import DEFAULT_LOG_FILE
+
+    log_path = DEFAULT_LOG_FILE
+    if not log_path.exists():
+        print(f"No log file found at {log_path}")
+        print("The server writes logs to this file automatically when running.")
+        return
+
+    with open(log_path, encoding="utf-8", errors="replace") as fh:
+        all_lines = fh.readlines()
+
+    for line in all_lines[-lines:]:
+        print(line, end="")
+
+    if tail:
+        print(f"\n--- following {log_path} (Ctrl+C to stop) ---", flush=True)
+        try:
+            with open(log_path, encoding="utf-8", errors="replace") as fh:
+                fh.seek(0, 2)  # seek to end of file
+                while True:
+                    chunk = fh.readline()
+                    if chunk:
+                        print(chunk, end="", flush=True)
+                    else:
+                        _time.sleep(0.1)
+        except KeyboardInterrupt:
+            pass
+
+
+def _parse_logs_args(argv: list[str]) -> tuple[int, bool]:
+    """Parse args for the logs subcommand. Returns (lines, tail)."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="openwebgoggles logs", description="Show server log output")
+    parser.add_argument(
+        "--lines", "-n", type=int, default=50, metavar="N", help="Number of lines to show (default: 50)"
+    )
+    parser.add_argument("--tail", "-f", action="store_true", help="Follow the log file (like tail -f)")
+    args = parser.parse_args(argv)
+    return args.lines, args.tail
+
+
 # -- top-level usage --------------------------------------------------------
 
 
@@ -602,5 +656,6 @@ def _print_usage() -> None:
     print("  restart       Restart the running MCP server")
     print("  status        Show server status and health")
     print("  doctor        Diagnose setup and environment")
+    print("  logs          Show server log output")
     print()
     print("Run 'openwebgoggles <command>' for command-specific help.")

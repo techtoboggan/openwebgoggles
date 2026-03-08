@@ -274,6 +274,8 @@ class WebviewSession:
         env = os.environ.copy()
         env["OCV_SESSION_TOKEN"] = self.session_token
 
+        from log_config import DEFAULT_LOG_FILE
+
         self.process = subprocess.Popen(
             [
                 sys.executable,
@@ -286,6 +288,8 @@ class WebviewSession:
                 str(self.ws_port),
                 "--sdk-path",
                 str(sdk_path),
+                "--log-file",
+                str(DEFAULT_LOG_FILE),
             ],
             env=env,
             stdout=subprocess.DEVNULL,

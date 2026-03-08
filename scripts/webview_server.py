@@ -457,12 +457,18 @@ def main():  # pragma: no cover
     parser.add_argument("--apps-dir", default=None, help="Override apps directory (default: data-dir/apps)")
     parser.add_argument("--app", default=None, help="Auto-create a dev manifest for this app name")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level")
+    parser.add_argument("--log-file", default=None, help="Path to log file (enables rotating file output)")
+    parser.add_argument(
+        "--log-format", default="text", choices=["text", "json"], help="Log format: text (default) or json"
+    )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
+    from log_config import configure_logging
+
+    configure_logging(
+        level=args.log_level,
+        log_file=Path(args.log_file) if args.log_file else None,
+        log_format=args.log_format,
     )
 
     # Auto-create a minimal dev manifest so the server serves without a prior MCP session

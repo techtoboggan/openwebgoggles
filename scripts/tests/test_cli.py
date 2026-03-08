@@ -24,6 +24,7 @@ from mcp_server import (
     _DEPRECATED_PERMISSIONS,
     _SERVER_NAME_ALIASES,
     _cmd_doctor,
+    _cmd_logs,
     _cmd_restart,
     _cmd_status,
     _find_data_dir,
@@ -32,6 +33,7 @@ from mcp_server import (
     _init_claude,
     _init_opencode,
     _init_usage,
+    _parse_logs_args,
     _print_usage,
     _read_pid_file,
     _resolve_binary,
@@ -1166,3 +1168,113 @@ class TestInitClaudeGlobal:
         _init_usage()
         output = capsys.readouterr().out
         assert "--global" in output
+
+
+# ---------------------------------------------------------------------------
+# _cmd_logs / _parse_logs_args
+# ---------------------------------------------------------------------------
+
+
+class TestCmdLogsArgs:
+    def test_defaults(self):
+        lines, tail = _parse_logs_args([])
+        assert lines == 50
+        assert tail is False
+
+    def test_lines_short(self):
+        lines, tail = _parse_logs_args(["-n", "20"])
+        assert lines == 20
+
+    def test_lines_long(self):
+        lines, tail = _parse_logs_args(["--lines", "100"])
+        assert lines == 100
+
+    def test_tail_flag(self):
+        _, tail = _parse_logs_args(["--tail"])
+        assert tail is True
+
+    def test_tail_short(self):
+        _, tail = _parse_logs_args(["-f"])
+        assert tail is True
+
+    def test_combined(self):
+        lines, tail = _parse_logs_args(["-n", "5", "-f"])
+        assert lines == 5
+        assert tail is True
+
+
+class TestCmdLogsOutput:
+    def test_no_log_file_prints_helpful_message(self, tmp_path, capsys):
+        missing = tmp_path / "nonexistent.log"
+        import log_config as lc
+
+        real_default = lc.DEFAULT_LOG_FILE
+        lc.DEFAULT_LOG_FILE = missing
+        try:
+            _cmd_logs(lines=50, tail=False)
+        finally:
+            lc.DEFAULT_LOG_FILE = real_default
+
+        out = capsys.readouterr().out
+        assert "No log file" in out or "not found" in out.lower() or str(missing) in out
+
+    def test_prints_last_n_lines(self, tmp_path, capsys):
+        log_file = tmp_path / "server.log"
+        log_file.write_text("\n".join(f"line{i}" for i in range(100)) + "\n")
+
+        import log_config as lc
+
+        real_default = lc.DEFAULT_LOG_FILE
+        lc.DEFAULT_LOG_FILE = log_file
+        try:
+            _cmd_logs(lines=10, tail=False)
+        finally:
+            lc.DEFAULT_LOG_FILE = real_default
+
+        out = capsys.readouterr().out
+        lines = [l for l in out.splitlines() if l.strip()]
+        assert len(lines) == 10
+        assert lines[0] == "line90"
+        assert lines[-1] == "line99"
+
+    def test_prints_all_lines_when_fewer_than_n(self, tmp_path, capsys):
+        log_file = tmp_path / "server.log"
+        log_file.write_text("alpha\nbeta\ngamma\n")
+
+        import log_config as lc
+
+        real_default = lc.DEFAULT_LOG_FILE
+        lc.DEFAULT_LOG_FILE = log_file
+        try:
+            _cmd_logs(lines=50, tail=False)
+        finally:
+            lc.DEFAULT_LOG_FILE = real_default
+
+        out = capsys.readouterr().out
+        assert "alpha" in out
+        assert "beta" in out
+        assert "gamma" in out
+
+
+class TestLogsMainDispatch:
+    def test_logs_dispatched_from_main(self, tmp_path, capsys):
+        log_file = tmp_path / "server.log"
+        log_file.write_text("dispatched log line\n")
+
+        import log_config as lc
+
+        real_default = lc.DEFAULT_LOG_FILE
+        lc.DEFAULT_LOG_FILE = log_file
+        try:
+            with mock.patch("sys.argv", ["openwebgoggles", "logs", "--lines", "5"]):
+                main()
+        finally:
+            lc.DEFAULT_LOG_FILE = real_default
+
+        out = capsys.readouterr().out
+        assert "dispatched log line" in out
+
+    def test_logs_in_usage_help(self, capsys):
+        _print_usage()
+        out = capsys.readouterr().out
+        assert "logs" in out

@@ -108,6 +108,7 @@ try:
         _EDITORS,
         _SERVER_NAME_ALIASES,
         _cmd_doctor,
+        _cmd_logs,  # noqa: F401
         _cmd_restart,
         _cmd_status,
         _find_server_key,
@@ -115,6 +116,7 @@ try:
         _init_claude_desktop,
         _init_opencode,
         _init_usage,
+        _parse_logs_args,  # noqa: F401
         _print_usage,
         _read_pid_file,
         _resolve_binary,
@@ -129,6 +131,7 @@ except ImportError:
         _EDITORS,
         _SERVER_NAME_ALIASES,
         _cmd_doctor,
+        _cmd_logs,
         _cmd_restart,
         _cmd_status,
         _find_server_key,
@@ -136,6 +139,7 @@ except ImportError:
         _init_claude_desktop,
         _init_opencode,
         _init_usage,
+        _parse_logs_args,
         _print_usage,
         _read_pid_file,
         _resolve_binary,
@@ -1903,6 +1907,7 @@ def main():
         openwebgoggles restart [dir]          # Restart running MCP server
         openwebgoggles status [dir]           # Show server status
         openwebgoggles doctor [dir]           # Diagnose setup
+        openwebgoggles logs [--lines N] [-f]  # Show server log
     """
     cmd = sys.argv[1] if len(sys.argv) > 1 else None
 
@@ -1936,6 +1941,13 @@ def main():
 
     if cmd == "doctor":
         _cmd_doctor()
+        return
+
+    if cmd == "logs":
+        from cli import _cmd_logs, _parse_logs_args
+
+        n_lines, follow = _parse_logs_args(sys.argv[2:])
+        _cmd_logs(lines=n_lines, tail=follow)
         return
 
     if cmd in ("help", "--help", "-h"):
