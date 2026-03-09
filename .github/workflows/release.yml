@@ -1,0 +1,94 @@
+name: Create GitHub Release
+
+# Triggers on version tags (e.g. v0.15.1).
+# Extracts the matching CHANGELOG.md section and creates a GitHub Release,
+# which then automatically triggers the publish.yml workflow (PyPI publish).
+#
+# Flow: git push origin v0.X.Y  →  this workflow  →  GitHub Release created
+#       →  publish.yml triggered  →  PyPI updated
+#
+# Manual override: `gh release create` still works and triggers publish.yml
+# the same way — this workflow simply automates that step.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"  # pre-releases: v0.16.0-rc.1
+
+permissions:
+  contents: write  # needed to create the release
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          # Fetch full history so we can diff commits for the release
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Tag: ${TAG}, Version: ${VERSION}"
+
+      - name: Verify pyproject.toml version matches tag
+        run: |
+          PKG_VERSION=$(python3 -c "
+          import tomllib
+          with open('pyproject.toml', 'rb') as f:
+              print(tomllib.load(f)['project']['version'])
+          ")
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag version (${TAG_VERSION}) does not match pyproject.toml version (${PKG_VERSION})"
+            exit 1
+          fi
+          echo "Version check passed: ${PKG_VERSION}"
+
+      - name: Extract CHANGELOG section for this version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Extract lines between "## [VERSION]" and the next "## [" heading
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          fi
+          # Write to a temp file to avoid quoting issues with multiline strings
+          printf '%s' "$NOTES" > /tmp/release_notes.md
+          echo "Extracted $(wc -l < /tmp/release_notes.md) lines of release notes"
+
+      - name: Determine if pre-release
+        id: prerelease
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if [[ "$TAG" == *"-"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          PRERELEASE_FLAG=""
+          if [ "${{ steps.prerelease.outputs.is_prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "${TAG}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release_notes.md \
+            --verify-tag \
+            ${PRERELEASE_FLAG}
+          echo "Release created: https://github.com/${{ github.repository }}/releases/tag/${TAG}"

@@ -205,17 +205,26 @@ Version monitor uses two-tier detection: cheap mtime poll (30s) → full METADAT
 
 ## Release Process
 
+**Automated flow (preferred):**
+
 1. Bump version in `pyproject.toml`
-2. Update `CHANGELOG.md`
-3. Commit and push
+2. Update `CHANGELOG.md` — add a `## [X.Y.Z] - YYYY-MM-DD` section
+3. Commit and push to main
 4. `git tag v0.X.Y && git push origin v0.X.Y`
-5. `gh release create v0.X.Y --title "..." --notes "..."`
+   - `.github/workflows/release.yml` fires automatically
+   - Extracts the `## [X.Y.Z]` section from `CHANGELOG.md` as release notes
+   - Creates the GitHub Release
+   - `publish.yml` triggers on the new release → PyPI updated
 
-> ⚠️ **CRITICAL — PyPI publish ONLY fires on a GitHub Release, NOT a tag push.**
-> Skipping step 5 means the version never reaches PyPI. Always use `gh release create`.
-> Verify with: `pip index versions openwebgoggles` after the workflow completes.
+**Manual override** (still works):
 
-The publish workflow verifies `pyproject.toml` version matches the git tag.
+4. `git tag v0.X.Y && git push origin v0.X.Y`
+5. `gh release create v0.X.Y --title "v0.X.Y" --notes "..."`
+   - `release.yml` will attempt to create a release but fail if one already exists — that's fine
+
+**Verify**: `pip index versions openwebgoggles` after the publish workflow completes.
+
+The publish workflow verifies `pyproject.toml` version matches the git tag before building.
 
 ## Common Pitfalls
 
