@@ -97,7 +97,8 @@ export type OWGSectionType =
   | "tabs"
   | "metric"
   | "chart"
-  | "tree";
+  | "tree"
+  | "timeline";
 
 export type OWGProgressTaskStatus =
   | "pending"
@@ -143,6 +144,19 @@ export interface OWGTab {
   sections: OWGSection[];
 }
 
+export interface OWGTimelineItem {
+  /** Display label (required) */
+  label: string;
+  /** Start date in YYYY-MM-DD format (required) */
+  start: string;
+  /** End date in YYYY-MM-DD format (required) */
+  end: string;
+  /** Bar color: named theme color or hex (#rrggbb) */
+  color?: string;
+  /** Optional group label for visual grouping */
+  group?: string;
+}
+
 export interface OWGTreeNode {
   /** Display label (required) */
   label: string;
@@ -168,8 +182,8 @@ export interface OWGSection {
   // form
   fields?: OWGField[];
 
-  // items
-  items?: OWGItem[];
+  // items (type: "items") / timeline (type: "timeline") — same key, different element shape
+  items?: OWGItem[] | OWGTimelineItem[];
 
   // text / diff
   content?: string;
@@ -215,6 +229,7 @@ export interface OWGSection {
   expandAll?: boolean;
   /** Clicking a node fires an action (id sent as nodeId in payload) */
   clickActionId?: string;
+
 }
 
 // ---------------------------------------------------------------------------

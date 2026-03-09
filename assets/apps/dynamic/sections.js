@@ -43,6 +43,7 @@
       case "metric":    bodyHtml += renderMetric(sec, si);          break;
       case "chart":     bodyHtml += OWG.renderChart(sec, si);       break;
       case "tree":      bodyHtml += renderTree(sec, si);            break;
+      case "timeline":  bodyHtml += renderTimeline(sec);            break;
       default:          bodyHtml += renderForm(sec, si);            break;
     }
 
@@ -572,6 +573,88 @@
   // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
   function _esc(value) {
     return (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/([\\"'\[\](){}|^$+*.?:#>~!])/g, "\\$&");
+  }
+
+  // ─── Timeline / Gantt ───────────────────────────────────────────────────────
+  function renderTimeline(sec) {
+    var items = Array.isArray(sec.items) ? sec.items : [];
+    if (!items.length) return '<div class="owg-timeline-empty">No timeline items</div>';
+
+    // Parse dates and find overall range
+    var parsed = [];
+    var minMs = Infinity, maxMs = -Infinity;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var s = new Date(String(it.start)).getTime();
+      var e = new Date(String(it.end)).getTime();
+      if (isNaN(s) || isNaN(e) || e < s) continue;
+      if (s < minMs) minMs = s;
+      if (e > maxMs) maxMs = e;
+      parsed.push({ label: String(it.label || ""), start: s, end: e, color: String(it.color || ""), group: String(it.group || "") });
+    }
+    if (!parsed.length) return '<div class="owg-timeline-empty">No valid timeline items</div>';
+
+    // Extend range slightly for visual breathing room
+    var pad = Math.max((maxMs - minMs) * 0.02, 86400000); // min 1 day padding
+    var rangeStart = minMs - pad;
+    var rangeEnd = maxMs + pad;
+    var rangeMs = rangeEnd - rangeStart;
+
+    // Layout constants
+    var svgW = 680;
+    var rowH = 28;
+    var labelW = 140;
+    var barArea = svgW - labelW - 10;
+    var headerH = 28;
+    var svgH = headerH + parsed.length * rowH + 4;
+
+    // Color map
+    var colorMap = { blue: "var(--blue)", green: "var(--green)", red: "var(--red)", yellow: "var(--yellow)", purple: "#a371f7", orange: "#f0883e", cyan: "#39c5cf", pink: "#e85aad" };
+
+    function msToX(ms) {
+      return labelW + ((ms - rangeStart) / rangeMs) * barArea;
+    }
+
+    // Build tick marks (4-6 ticks across range)
+    var tickCount = Math.min(6, Math.max(2, Math.round(rangeMs / 86400000 / 7)));
+    var tickStep = rangeMs / tickCount;
+    var ticks = [];
+    for (var ti = 0; ti <= tickCount; ti++) {
+      var tms = rangeStart + ti * tickStep;
+      var td = new Date(tms);
+      var tLabel = td.getFullYear() + "-" + ("0" + (td.getMonth() + 1)).slice(-2) + "-" + ("0" + td.getDate()).slice(-2);
+      ticks.push({ x: msToX(tms), label: tLabel });
+    }
+
+    var svg = '<svg class="owg-timeline-svg" viewBox="0 0 ' + svgW + " " + svgH + '" role="img" aria-label="Timeline">';
+
+    // Grid lines + tick labels
+    svg += '<g class="owg-tl-grid">';
+    for (var gi = 0; gi < ticks.length; gi++) {
+      var gx = ticks[gi].x;
+      svg += '<line x1="' + gx + '" y1="' + headerH + '" x2="' + gx + '" y2="' + svgH + '" class="owg-tl-gridline"/>';
+      svg += '<text x="' + gx + '" y="' + (headerH - 6) + '" class="owg-tl-tick" text-anchor="middle">' + esc(ticks[gi].label) + "</text>";
+    }
+    svg += "</g>";
+
+    // Bars
+    for (var bi = 0; bi < parsed.length; bi++) {
+      var p = parsed[bi];
+      var y = headerH + bi * rowH;
+      var x1 = msToX(p.start);
+      var x2 = msToX(p.end);
+      var bw = Math.max(x2 - x1, 2);
+      var fill = colorMap[p.color] || (p.color.charAt(0) === "#" ? p.color : "var(--blue)");
+
+      // Label (clipped to labelW)
+      svg += '<text x="' + (labelW - 6) + '" y="' + (y + rowH / 2 + 4) + '" class="owg-tl-label" text-anchor="end">' + esc(p.label) + "</text>";
+
+      // Bar background
+      svg += '<rect x="' + x1 + '" y="' + (y + 4) + '" width="' + bw + '" height="' + (rowH - 8) + '" rx="3" class="owg-tl-bar" style="fill:' + escAttr(fill) + '"/>';
+    }
+
+    svg += "</svg>";
+    return '<div class="owg-timeline">' + svg + "</div>";
   }
 
   // ─── Tree / Hierarchy ───────────────────────────────────────────────────────

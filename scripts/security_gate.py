@@ -71,6 +71,7 @@ class SecurityGate:
             "metric",
             "chart",
             "tree",
+            "timeline",
         }
     )
     ALLOWED_ACTION_STYLES = frozenset(
@@ -283,6 +284,7 @@ class SecurityGate:
     MAX_TREE_NODES = 500
     MAX_TREE_DEPTH = 8
     MAX_TREE_BADGE_LENGTH = 50
+    MAX_TIMELINE_ITEMS = 200
 
     # --- className validation (alphanumeric, hyphens, underscores, spaces) ---
     CLASS_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_ -]*$")
@@ -1237,6 +1239,35 @@ class SecurityGate:
                     ok, err = self._validate_ui({"sections": nested}, _depth=_depth + 1)
                     if not ok:
                         return False, f"{prefix}.tabs[{ti}]: {err}"
+
+        elif sec_type == "timeline":
+            items = sec.get("items", [])
+            if not isinstance(items, list):
+                return False, f"{prefix}.items must be an array"
+            if len(items) > self.MAX_TIMELINE_ITEMS:
+                return False, f"{prefix}: too many timeline items ({len(items)}, max {self.MAX_TIMELINE_ITEMS})"
+            _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+            for ii, item in enumerate(items):
+                if not isinstance(item, dict):
+                    return False, f"{prefix}.items[{ii}] must be an object"
+                label = item.get("label")
+                if not isinstance(label, str) or not label:
+                    return False, f"{prefix}.items[{ii}].label: required non-empty string"
+                if len(label) > 200:
+                    return False, f"{prefix}.items[{ii}].label: too long (max 200)"
+                for date_key in ("start", "end"):
+                    val = item.get(date_key)
+                    if not isinstance(val, str) or not _DATE_RE.match(val):
+                        return False, f"{prefix}.items[{ii}].{date_key}: required ISO date (YYYY-MM-DD)"
+                color = item.get("color", "")
+                if color:
+                    if not isinstance(color, str):
+                        return False, f"{prefix}.items[{ii}].color: must be string"
+                    if color not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(color):
+                        return False, f"{prefix}.items[{ii}].color: invalid color {color!r}"
+                group = item.get("group", "")
+                if group and (not isinstance(group, str) or len(group) > 100):
+                    return False, f"{prefix}.items[{ii}].group: must be string ≤100 chars"
 
         elif sec_type == "tree":
             nodes = sec.get("nodes", [])

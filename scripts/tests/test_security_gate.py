@@ -8341,3 +8341,145 @@ class TestTreeSection:
     def test_xss_in_badge_rejected(self, gate):
         ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x", "badge": "<script>x</script>"}]))
         assert not ok
+
+
+class TestTimelineSection:
+    """Tests for the 'timeline' section type (Phase 6.2)."""
+
+    @pytest.fixture
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    def _make_state(self, items=None, **kwargs):
+        if items is None:
+            items = [{"label": "Task A", "start": "2026-01-01", "end": "2026-01-10"}]
+        sec = {"type": "timeline", "items": items}
+        sec.update(kwargs)
+        return json.dumps({"data": {"sections": [sec]}})
+
+    def test_basic_timeline_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state())
+        assert ok, err
+
+    def test_type_allowlisted(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state())
+        assert ok
+
+    def test_items_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(items="bad"))
+        assert not ok
+        assert "items" in err
+
+    def test_empty_items_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(items=[]))
+        assert ok, err
+
+    def test_item_label_required(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(items=[{"start": "2026-01-01", "end": "2026-01-10"}]))
+        assert not ok
+        assert "label" in err
+
+    def test_item_label_empty_rejected(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "", "start": "2026-01-01", "end": "2026-01-10"}])
+        )
+        assert not ok
+        assert "label" in err
+
+    def test_item_label_too_long(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "x" * 201, "start": "2026-01-01", "end": "2026-01-10"}])
+        )
+        assert not ok
+        assert "too long" in err
+
+    def test_item_start_required(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(items=[{"label": "A", "end": "2026-01-10"}]))
+        assert not ok
+        assert "start" in err
+
+    def test_item_end_required(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(items=[{"label": "A", "start": "2026-01-01"}]))
+        assert not ok
+        assert "end" in err
+
+    def test_item_start_invalid_format(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "A", "start": "01/01/2026", "end": "2026-01-10"}])
+        )
+        assert not ok
+        assert "start" in err
+
+    def test_item_end_invalid_format(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "A", "start": "2026-01-01", "end": "not-a-date"}])
+        )
+        assert not ok
+        assert "end" in err
+
+    def test_item_color_named_valid(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "A", "start": "2026-01-01", "end": "2026-01-10", "color": "blue"}])
+        )
+        assert ok, err
+
+    def test_item_color_hex_valid(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "A", "start": "2026-01-01", "end": "2026-01-10", "color": "#3fb950"}])
+        )
+        assert ok, err
+
+    def test_item_color_invalid_rejected(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(
+                items=[{"label": "A", "start": "2026-01-01", "end": "2026-01-10", "color": "invalid-color"}]
+            )
+        )
+        assert not ok
+        assert "color" in err
+
+    def test_item_group_valid(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "A", "start": "2026-01-01", "end": "2026-01-10", "group": "Phase 1"}])
+        )
+        assert ok, err
+
+    def test_item_group_too_long(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "A", "start": "2026-01-01", "end": "2026-01-10", "group": "g" * 101}])
+        )
+        assert not ok
+        assert "group" in err
+
+    def test_max_items_exceeded(self, gate):
+        from security_gate import SecurityGate
+
+        items = [
+            {"label": f"t{i}", "start": "2026-01-01", "end": "2026-01-02"}
+            for i in range(SecurityGate.MAX_TIMELINE_ITEMS + 1)
+        ]
+        ok, err, _ = gate.validate_state(self._make_state(items=items))
+        assert not ok
+        assert "too many" in err
+
+    def test_xss_in_label_rejected(self, gate):
+        ok, err, _ = gate.validate_state(
+            self._make_state(items=[{"label": "<script>alert(1)</script>", "start": "2026-01-01", "end": "2026-01-10"}])
+        )
+        assert not ok
+
+    def test_multiple_items_pass(self, gate):
+        items = [
+            {"label": "Phase 1", "start": "2026-03-08", "end": "2026-03-15", "color": "blue"},
+            {"label": "Phase 2", "start": "2026-03-10", "end": "2026-03-25", "color": "green"},
+            {"label": "Review", "start": "2026-03-20", "end": "2026-03-30"},
+        ]
+        ok, err, _ = gate.validate_state(self._make_state(items=items))
+        assert ok, err
+
+    def test_item_not_object_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(items=["not-an-object"]))
+        assert not ok
+        assert "object" in err

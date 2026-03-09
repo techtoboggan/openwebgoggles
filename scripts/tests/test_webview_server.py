@@ -2832,6 +2832,7 @@ class TestInputChannelRegistry:
         ("MAX_TREE_NODES", 500, "SecurityGate", "Total nodes in a tree section"),
         ("MAX_TREE_DEPTH", 8, "SecurityGate", "Tree nesting depth"),
         ("MAX_TREE_BADGE_LENGTH", 50, "SecurityGate", "Tree node badge length"),
+        ("MAX_TIMELINE_ITEMS", 200, "SecurityGate", "Timeline items per section"),
         ("MAX_ACTIONS", 50, "SecurityGate", "Actions per state"),
         ("MAX_WS_MESSAGE_SIZE", 1_048_576, "WebviewServer", "WebSocket message bytes"),
         ("MAX_WEBSOCKET_CLIENTS", 50, "WebviewServer", "Concurrent WS connections"),
