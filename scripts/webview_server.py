@@ -13,13 +13,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hmac
-import json
 import logging
 import os
 import secrets
 import signal
-import time
 from pathlib import Path
 
 try:
@@ -45,19 +42,13 @@ try:
     try:
         from .crypto_utils import (
             NonceTracker,
-            generate_nonce,
             generate_session_keys,
-            sign_message,
-            verify_hmac,
             zero_key,
         )
     except ImportError:
         from crypto_utils import (  # noqa: I001
             NonceTracker,
-            generate_nonce,
             generate_session_keys,
-            sign_message,
-            verify_hmac,
             zero_key,
         )
 
@@ -101,12 +92,31 @@ try:
 except ImportError:
     from http_handler import WebviewHTTPHandler  # noqa: I001,F811
 
+try:
+    try:
+        from .ws_handler import WebSocketHandler
+    except ImportError:
+        from ws_handler import WebSocketHandler  # noqa: I001
+except ImportError:
+    from ws_handler import WebSocketHandler  # noqa: I001,F811
 
-_SRC_EXTENSIONS: frozenset[str] = frozenset({".js", ".css", ".html"})
+try:
+    try:
+        from .file_watcher import FileWatcher
+    except ImportError:
+        from file_watcher import FileWatcher  # noqa: I001
+except ImportError:
+    from file_watcher import FileWatcher  # noqa: I001,F811
 
 
 class WebviewServer:
-    """Main server orchestrating HTTP, WebSocket, and file watching."""
+    """Orchestrate HTTP, WebSocket, and file watching for the HITL UI server."""
+
+    # Re-export WS constants so existing tests continue to reference WebviewServer.*
+    MAX_WEBSOCKET_CLIENTS = WebSocketHandler.MAX_WEBSOCKET_CLIENTS
+    MAX_WS_MESSAGE_SIZE = WebSocketHandler.MAX_WS_MESSAGE_SIZE
+    WS_PING_INTERVAL = 30  # seconds between server-initiated WS pings
+    WS_PING_TIMEOUT = 10  # seconds to wait for pong before closing
 
     def __init__(
         self,
@@ -123,15 +133,12 @@ class WebviewServer:
         self.http_port = http_port
         self.ws_port = ws_port
         self.sdk_path = Path(sdk_path)
-        self._dev_mode: bool = dev_mode
-        self._watch_dirs: list[Path] = [Path(d) for d in (watch_dirs or [])]
-        self._src_mtimes: dict[Path, float] = {}
-        self.contract = DataContract(data_dir)
         self._running = True
         self._ws_clients: set = set()
         self._ws_server = None
 
         # Read session token — prefer environment variable (secure), fall back to manifest (legacy)
+        self.contract = DataContract(data_dir)
         env_token = os.environ.get("OCV_SESSION_TOKEN", "").strip()
         if env_token:
             # Validate token format: reject control characters, null bytes, and excessive length
@@ -179,6 +186,7 @@ class WebviewServer:
         else:
             logger.warning("Security gate: Not available. Running without content validation.")
 
+        # HTTP handler
         self.http_handler = WebviewHTTPHandler(
             self.contract,
             self.apps_dir,
@@ -191,6 +199,63 @@ class WebviewServer:
         self.http_handler.ws_clients = self._ws_clients
         self.http_handler._public_key_hex = self._public_key_hex
         self.http_handler._broadcast_fn = self._broadcast
+
+        # WebSocket handler
+        self._ws_handler = WebSocketHandler(
+            ws_clients=self._ws_clients,
+            session_token=self.session_token,
+            security_gate=self._security_gate,
+            private_key=self._private_key,
+            nonce_tracker=self._nonce_tracker,
+            contract=self.contract,
+            rate_limiter=self.http_handler._rate_limiter,
+            public_key_hex=self._public_key_hex,
+        )
+
+        # File watcher (data contract + optional dev-mode source files)
+        self._file_watcher = FileWatcher(
+            contract=self.contract,
+            security_gate=self._security_gate,
+            broadcast_fn=self._broadcast,
+            dev_mode=dev_mode,
+            watch_dirs=[Path(d) for d in (watch_dirs or [])],
+        )
+
+    # ---------------------------------------------------------------------------
+    # Delegation methods — kept on WebviewServer so existing tests & callers work
+    # ---------------------------------------------------------------------------
+
+    async def _handle_ws(self, websocket) -> None:  # pragma: no cover
+        """Delegate to WebSocketHandler.handle (kept for backward compat).
+
+        Sync shared mutable references first so tests that replace _ws_clients
+        or http_handler._rate_limiter after construction are respected.
+        """
+        self._ws_handler._ws_clients = self._ws_clients
+        self._ws_handler._rate_limiter = self.http_handler._rate_limiter
+        await self._ws_handler.handle(websocket)
+
+    async def _send_ws_signed(self, websocket, message: dict) -> None:  # pragma: no cover
+        """Delegate to WebSocketHandler.send_signed (kept for backward compat)."""
+        await self._ws_handler.send_signed(websocket, message)
+
+    async def _broadcast(self, message: dict, exclude=None) -> None:  # pragma: no cover
+        """Delegate to WebSocketHandler.broadcast (kept for backward compat)."""
+        await self._ws_handler.broadcast(message, exclude=exclude)
+
+    # ---------------------------------------------------------------------------
+    # File watcher delegation (legacy attribute access)
+    # ---------------------------------------------------------------------------
+
+    def _init_src_mtimes(self) -> None:
+        self._file_watcher.init_src_mtimes()
+
+    def _check_src_changes(self) -> list[Path]:
+        return self._file_watcher.check_src_changes()
+
+    # ---------------------------------------------------------------------------
+    # Server lifecycle
+    # ---------------------------------------------------------------------------
 
     async def start(self):  # pragma: no cover
         # Start HTTP server
@@ -209,14 +274,15 @@ class WebviewServer:
                 self._handle_ws,
                 "127.0.0.1",
                 self.ws_port,
-                # Server-initiated keep-alive pings — closes dead connections (ROADMAP 1.4)
                 ping_interval=self.WS_PING_INTERVAL,
                 ping_timeout=self.WS_PING_TIMEOUT,
             )
             logger.info("WebSocket server listening on ws://127.0.0.1:%d", self.ws_port)
-            tasks.append(self._file_watcher())
+            _running_ref = [True]
+            tasks.append(self._file_watcher.watch(_running_ref))
         else:
             logger.warning("WebSocket not available (pip install websockets). Running HTTP-only mode.")
+            _running_ref = [True]
 
         # Write PID file with explicit permissions (thread-safe, no process-wide umask)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -234,6 +300,7 @@ class WebviewServer:
         except asyncio.CancelledError:
             pass
         finally:
+            _running_ref[0] = False
             # Broadcast close to all connected clients so windows self-close
             if self._ws_clients:
                 try:
@@ -254,257 +321,6 @@ class WebviewServer:
                     self._nonce_tracker.clear()
                 logger.info("Crypto: Ephemeral keys zeroed.")
             pid_path.unlink(missing_ok=True)  # noqa: S110
-
-    async def _send_ws_signed(self, websocket, message: dict):  # pragma: no cover
-        """Send a signed WebSocket message (envelope with nonce + signature).
-
-        Compact separators ensure the payload string (ps) is deterministic so
-        the browser can verify the Ed25519 signature without re-serializing raw.p
-        (JS JSON key ordering is implementation-defined and may differ from Python).
-        """
-        # Compact separators: deterministic byte string the browser can verify against
-        payload_str = json.dumps(message, separators=(",", ":"))
-        if HAS_CRYPTO and self._private_key:
-            nonce = generate_nonce()
-            sig = sign_message(self._private_key, payload_str, nonce)
-            # ps (payload string) is included so the SDK can reconstruct the exact
-            # signed bytes without re-serializing p (which may differ across engines).
-            envelope = json.dumps({"nonce": nonce, "sig": sig, "p": message, "ps": payload_str})
-        else:
-            envelope = payload_str
-        await websocket.send(envelope)
-
-    MAX_WEBSOCKET_CLIENTS = 50  # Prevent connection exhaustion DoS
-    MAX_WS_MESSAGE_SIZE = 1_048_576  # 1MB max per WS message (matches SDK limit)
-    WS_PING_INTERVAL = 30  # seconds between server-initiated WS pings (ROADMAP 1.4)
-    WS_PING_TIMEOUT = 10  # seconds to wait for pong before closing connection
-
-    async def _handle_ws(self, websocket):  # noqa: C901 — TODO: extract message handlers  # pragma: no cover
-        # Reject if at capacity (defense against connection exhaustion)
-        if len(self._ws_clients) >= self.MAX_WEBSOCKET_CLIENTS:
-            await websocket.close(1008, "Server at capacity")
-            logger.warning("WS: Rejected connection — at capacity (%d clients)", len(self._ws_clients))
-            return
-
-        # First-message authentication: client must send {type: "auth", token: "..."}
-        authenticated = False
-
-        try:
-            first_msg_raw = await asyncio.wait_for(websocket.recv(), timeout=5)
-            first_msg = json.loads(first_msg_raw)
-            msg_token = first_msg.get("token", "")
-            # Reject oversized tokens to prevent DoS via memory allocation
-            if not isinstance(msg_token, str) or len(msg_token) > 1024:
-                msg_token = ""
-            if first_msg.get("type") == "auth" and msg_token and hmac.compare_digest(msg_token, self.session_token):
-                authenticated = True
-        except (TimeoutError, json.JSONDecodeError, websockets.exceptions.ConnectionClosed):
-            pass
-
-        if not authenticated:
-            await websocket.close(4001, "Unauthorized")
-            return
-
-        self._ws_clients.add(websocket)
-        logger.info("WebSocket client connected (%d total)", len(self._ws_clients))
-
-        try:
-            # Send initial state (signed) — only if present and valid
-            state = self.contract.get_state() or {}
-            if state and self._security_gate:
-                ok, _err, _sanitized = self._security_gate.validate_state(json.dumps(state))
-                if not ok:
-                    logger.warning("WS connected: invalid state from disk, skipping: %s", _err)
-                    state = {}
-            # Always send the connected message so the SDK transitions out of
-            # "connecting" state; include state only when present and valid.
-            msg: dict = {"type": "connected"}
-            if state:
-                msg["state"] = state
-            await self._send_ws_signed(websocket, msg)
-
-            async for message in websocket:
-                # Server-side message size guard (matches client-side 1MB limit)
-                if isinstance(message, str | bytes) and len(message) > self.MAX_WS_MESSAGE_SIZE:
-                    logger.warning(
-                        "WS: Rejected oversized message (%d bytes, max %d)", len(message), self.MAX_WS_MESSAGE_SIZE
-                    )
-                    continue
-                try:
-                    msg = json.loads(message)
-                except json.JSONDecodeError:
-                    continue
-
-                # Unwrap signed envelope from browser if present
-                if "p" in msg and "nonce" in msg and "sig" in msg:
-                    # Verify HMAC signature from browser
-                    if HAS_CRYPTO and self._nonce_tracker:
-                        # Must use compact separators to match JS JSON.stringify output
-                        payload_str = json.dumps(msg["p"], separators=(",", ":"))
-                        if not verify_hmac(self.session_token, payload_str, msg["nonce"], msg["sig"]):
-                            logger.warning("WS: Rejected message with invalid signature")
-                            continue
-                        if not self._nonce_tracker.check_and_record(msg["nonce"]):
-                            logger.warning("WS: Rejected replayed nonce: %s...", msg["nonce"][:16])
-                            continue
-                    msg = msg["p"]
-                elif HAS_CRYPTO and self._nonce_tracker:
-                    # Crypto is enabled but message has no signed envelope — reject
-                    # This prevents security downgrade by sending unsigned messages
-                    msg_type = msg.get("type", "")
-                    if msg_type != "auth":
-                        logger.warning("WS: Rejected unsigned message (type=%s) — signed envelope required", msg_type)
-                        continue
-
-                msg_type = msg.get("type")
-
-                if msg_type == "auth":
-                    # Already handled above, ignore subsequent auth messages
-                    continue
-
-                elif msg_type == "action":
-                    # Rate limiting for WS actions (shared limiter with HTTP)
-                    if not self.http_handler._rate_limiter.check():
-                        await self._send_ws_signed(
-                            websocket, {"type": "error", "data": {"message": "Rate limit exceeded"}}
-                        )
-                        continue
-                    action_data = msg.get("data", {})
-                    # Validate action through security gate (singleton, same validation as HTTP path)
-                    if self._security_gate:
-                        valid, err = self._security_gate.validate_action(action_data)
-                        if not valid:
-                            logger.warning("WS action rejected by SecurityGate: %s", err)
-                            await self._send_ws_signed(
-                                websocket, {"type": "error", "data": {"message": "Invalid action"}}
-                            )
-                            continue
-                    self.contract.append_action(action_data)
-                    # Notify other clients
-                    actions = self.contract.get_actions()
-                    await self._broadcast({"type": "actions_updated", "data": actions}, exclude=websocket)
-
-                elif msg_type == "heartbeat":
-                    await self._send_ws_signed(
-                        websocket,
-                        {
-                            "type": "heartbeat_ack",
-                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                        },
-                    )
-
-                elif msg_type == "request_state":
-                    state = self.contract.get_state()
-                    if state:
-                        await self._send_ws_signed(websocket, {"type": "state_updated", "data": state})
-
-        except websockets.exceptions.ConnectionClosed:
-            pass
-        finally:
-            self._ws_clients.discard(websocket)
-            logger.info("WebSocket client disconnected (%d total)", len(self._ws_clients))
-
-    async def _broadcast(self, message: dict, exclude=None):  # pragma: no cover
-        """Broadcast a signed message to all connected WebSocket clients."""
-        payload_str = json.dumps(message, separators=(",", ":"))
-        if HAS_CRYPTO and self._private_key:
-            nonce = generate_nonce()
-            sig = sign_message(self._private_key, payload_str, nonce)
-            envelope = json.dumps({"nonce": nonce, "sig": sig, "p": message, "ps": payload_str})
-        else:
-            envelope = payload_str
-        for client in list(self._ws_clients):
-            if client == exclude:
-                continue
-            try:
-                await client.send(envelope)
-            except Exception:
-                self._ws_clients.discard(client)
-
-    def _init_src_mtimes(self) -> None:
-        """Snapshot current mtimes for all watched source files."""
-        for watch_dir in self._watch_dirs:
-            try:
-                for path in watch_dir.rglob("*"):
-                    if path.is_file() and path.suffix in _SRC_EXTENSIONS:
-                        self._src_mtimes[path] = path.stat().st_mtime
-            except OSError:
-                pass
-
-    def _check_src_changes(self) -> list[Path]:
-        """Return list of source files whose mtime has changed since last check."""
-        changed: list[Path] = []
-        for watch_dir in self._watch_dirs:
-            try:
-                for path in watch_dir.rglob("*"):
-                    if not path.is_file() or path.suffix not in _SRC_EXTENSIONS:
-                        continue
-                    try:
-                        mtime = path.stat().st_mtime
-                    except OSError:
-                        continue
-                    prev = self._src_mtimes.get(path)
-                    if prev is None:
-                        # New file discovered — record but don't trigger reload
-                        self._src_mtimes[path] = mtime
-                    elif mtime != prev:
-                        self._src_mtimes[path] = mtime
-                        changed.append(path)
-            except OSError:
-                pass
-        return changed
-
-    async def _file_watcher(self):  # pragma: no cover
-        """Poll data contract files for changes and broadcast over WebSocket."""
-        # Initialize mtimes
-        self.contract.check_changes()
-        if self._dev_mode:
-            self._init_src_mtimes()
-        last_broadcast: dict[str, float] = {}
-        debounce_ms = 100  # minimum ms between broadcasts for the same file
-        last_reload: float = 0.0
-        while self._running:
-            await asyncio.sleep(0.5)
-            changed = self.contract.check_changes()
-            # Debounce: skip files that were broadcast too recently
-            now = time.monotonic()
-            changed = [c for c in changed if (now - last_broadcast.get(c, 0)) * 1000 >= debounce_ms]
-            for name in changed:
-                if name == "state":
-                    data = self.contract.get_state()
-                    if data:
-                        # Run through security gate before broadcasting
-                        if self._security_gate:
-                            valid, err, _ = self._security_gate.validate_state(json.dumps(data))
-                            if not valid:
-                                logger.error("SECURITY GATE BLOCKED state update: %s", err)
-                                await self._broadcast(
-                                    {"type": "error", "data": {"message": "State update rejected by security gate"}}
-                                )
-                                last_broadcast["state"] = now
-                                continue
-                        await self._broadcast({"type": "state_updated", "data": data})
-                        last_broadcast["state"] = time.monotonic()
-                elif name == "manifest":
-                    data = self.contract.get_manifest()
-                    if data:
-                        # Strip session token before broadcasting (same as HTTP endpoint)
-                        safe_data = _strip_token(data)
-                        await self._broadcast({"type": "manifest_updated", "data": safe_data})
-                        last_broadcast["manifest"] = time.monotonic()
-                elif name == "actions":
-                    data = self.contract.get_actions()
-                    if data:
-                        await self._broadcast({"type": "actions_updated", "data": data})
-                        last_broadcast["actions"] = time.monotonic()
-
-            # Dev mode: watch source files and broadcast reload
-            if self._dev_mode:
-                src_changed = self._check_src_changes()
-                if src_changed and (now - last_reload) >= 0.5:
-                    logger.info("Dev: source changed (%s) — broadcasting reload", src_changed[0].name)
-                    await self._broadcast({"type": "reload"})
-                    last_reload = time.monotonic()
 
 
 def main():  # pragma: no cover
@@ -609,6 +425,8 @@ __all__ = [
     "DataContract",
     "_strip_token",
     "WebviewHTTPHandler",
+    "WebSocketHandler",
+    "FileWatcher",
     "WebviewServer",
     "main",
 ]

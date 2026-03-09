@@ -1261,9 +1261,11 @@ class TestWebSocketActionSecurityGate:
     def test_ws_action_handler_calls_security_gate(self):
         """Verify the WS action handler source applies SecurityGate.validate_action()."""
         import inspect
-        from webview_server import WebviewServer
 
-        src = inspect.getsource(WebviewServer._handle_ws)
+        from ws_handler import WebSocketHandler
+
+        # Action dispatch lives in WebSocketHandler._dispatch (extracted in Phase 4.2)
+        src = inspect.getsource(WebSocketHandler._dispatch)
         assert "validate_action" in src, "WS handler must call SecurityGate.validate_action()"
         assert "_security_gate" in src, "WS handler must use self._security_gate singleton"
 
@@ -1273,9 +1275,10 @@ class TestWebSocketActionSecurityGate:
     def test_ws_gate_applied_before_append(self):
         """SecurityGate check must precede contract.append_action() in WS handler source."""
         import inspect
-        from webview_server import WebviewServer
 
-        src = inspect.getsource(WebviewServer._handle_ws)
+        from ws_handler import WebSocketHandler
+
+        src = inspect.getsource(WebSocketHandler._dispatch)
         gate_pos = src.find("validate_action")
         append_pos = src.find("append_action")
         assert gate_pos != -1 and append_pos != -1, "Both calls must exist"
@@ -1287,11 +1290,13 @@ class TestWebSocketActionSecurityGate:
     def test_ws_and_http_both_have_rate_limit_and_gate(self):
         """Both HTTP and WS action paths must apply rate limiting and SecurityGate."""
         import inspect
-        from webview_server import WebviewHTTPHandler, WebviewServer
 
-        # Rate limiting and SecurityGate live in _handle_api for HTTP, _handle_ws for WS
+        from webview_server import WebviewHTTPHandler
+        from ws_handler import WebSocketHandler
+
+        # Rate limiting and SecurityGate live in _handle_api for HTTP, _dispatch for WS
         http_src = inspect.getsource(WebviewHTTPHandler._handle_api)
-        ws_src = inspect.getsource(WebviewServer._handle_ws)
+        ws_src = inspect.getsource(WebSocketHandler._dispatch)
         for src, path_name in ((http_src, "HTTP"), (ws_src, "WS")):
             assert "_rate_limiter" in src, f"{path_name} path must apply rate limiting"
             assert "validate_action" in src, f"{path_name} path must call SecurityGate.validate_action()"
@@ -1713,7 +1718,9 @@ class TestWebSocketConnectionLimit:
         """_handle_ws source must check len(self._ws_clients) before accepting."""
         import inspect
 
-        src = inspect.getsource(WebviewServer._handle_ws)
+        from ws_handler import WebSocketHandler
+
+        src = inspect.getsource(WebSocketHandler.handle)
         assert "MAX_WEBSOCKET_CLIENTS" in src, "Handler must reference MAX_WEBSOCKET_CLIENTS"
         assert "at capacity" in src.lower() or "1008" in src, "Must close with 1008 when at capacity"
 
@@ -1721,7 +1728,9 @@ class TestWebSocketConnectionLimit:
         """Connection limit must be checked BEFORE auth (prevent DoS via auth timeout)."""
         import inspect
 
-        src = inspect.getsource(WebviewServer._handle_ws)
+        from ws_handler import WebSocketHandler
+
+        src = inspect.getsource(WebSocketHandler.handle)
         limit_pos = src.find("MAX_WEBSOCKET_CLIENTS")
         auth_pos = src.find("authenticated")
         assert limit_pos != -1, "Must check MAX_WEBSOCKET_CLIENTS"
@@ -1756,7 +1765,9 @@ class TestGenericErrorMessages:
         """State rejection broadcast must NOT contain SecurityGate details."""
         import inspect
 
-        src = inspect.getsource(WebviewServer._file_watcher)
+        from file_watcher import FileWatcher
+
+        src = inspect.getsource(FileWatcher.watch)
         # The broadcast message must be a generic string, not f-string with err
         assert 'f"State rejected: {err}"' not in src, "Must NOT include SecurityGate error details in broadcast"
 
@@ -1765,7 +1776,9 @@ class TestGenericErrorMessages:
         """WS action rejection must NOT contain SecurityGate details."""
         import inspect
 
-        src = inspect.getsource(WebviewServer._handle_ws)
+        from ws_handler import WebSocketHandler
+
+        src = inspect.getsource(WebSocketHandler._dispatch)
         # Check that WS error messages don't leak validation details
         assert 'f"Action rejected: {err}"' not in src, "WS handler must NOT include detailed rejection"
 

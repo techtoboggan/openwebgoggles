@@ -227,10 +227,10 @@ class TestProcessImpersonation:
         would fail if envelope is expected."""
         import inspect
 
-        import webview_server
-
         # Verify the WS handler checks for signature fields before processing
-        ws_handler_src = inspect.getsource(webview_server.WebviewServer._handle_ws)
+        from ws_handler import WebSocketHandler
+
+        ws_handler_src = inspect.getsource(WebSocketHandler.handle)
         # Handler must check for "sig" and "nonce" fields in the message
         assert '"sig"' in ws_handler_src or "'sig'" in ws_handler_src, (
             "_handle_ws must check for 'sig' field in messages"
@@ -319,10 +319,10 @@ class TestNetworkIsolation:
         (visible in logs, referrer headers, browser history)."""
         import inspect
 
-        import webview_server
-
         # Check the SDK connector: should use first-message auth
-        source = inspect.getsource(webview_server.WebviewServer._handle_ws)
+        from ws_handler import WebSocketHandler
+
+        source = inspect.getsource(WebSocketHandler.handle)
         # Legacy query-param auth exists but should be secondary
         assert "first_msg" in source.lower() or "first_msg_raw" in source
 
@@ -689,9 +689,9 @@ class TestWebSocketAuthentication:
         """The WS handler should expect an auth message as the first message."""
         import inspect
 
-        import webview_server
+        from ws_handler import WebSocketHandler
 
-        source = inspect.getsource(webview_server.WebviewServer._handle_ws)
+        source = inspect.getsource(WebSocketHandler.handle)
         assert "first_msg" in source or "auth" in source
 
     @pytest.mark.secure_comms
@@ -700,9 +700,9 @@ class TestWebSocketAuthentication:
         """WS auth should have a timeout to prevent hanging connections."""
         import inspect
 
-        import webview_server
+        from ws_handler import WebSocketHandler
 
-        source = inspect.getsource(webview_server.WebviewServer._handle_ws)
+        source = inspect.getsource(WebSocketHandler.handle)
         assert "timeout" in source
 
     @pytest.mark.secure_comms
@@ -712,9 +712,9 @@ class TestWebSocketAuthentication:
         """Unauthorized WS connections should close with 4001."""
         import inspect
 
-        import webview_server
+        from ws_handler import WebSocketHandler
 
-        source = inspect.getsource(webview_server.WebviewServer._handle_ws)
+        source = inspect.getsource(WebSocketHandler.handle)
         assert "4001" in source
 
     @pytest.mark.secure_comms
@@ -723,9 +723,9 @@ class TestWebSocketAuthentication:
         """Server→browser WS messages should be wrapped in {nonce, sig, p} envelope."""
         import inspect
 
-        import webview_server
+        from ws_handler import WebSocketHandler
 
-        source = inspect.getsource(webview_server.WebviewServer._send_ws_signed)
+        source = inspect.getsource(WebSocketHandler.send_signed)
         assert '"nonce"' in source or "'nonce'" in source
         assert '"sig"' in source or "'sig'" in source
         assert '"p"' in source or "'p'" in source
@@ -806,8 +806,10 @@ class TestCrossCuttingSecurity:
         handler_source = inspect.getsource(webview_server.WebviewHTTPHandler._check_token)
         assert "Bearer" in handler_source
 
-        # Layer 3: WS first-message auth
-        ws_source = inspect.getsource(webview_server.WebviewServer._handle_ws)
+        # Layer 3: WS first-message auth (logic lives in WebSocketHandler.handle)
+        from ws_handler import WebSocketHandler
+
+        ws_source = inspect.getsource(WebSocketHandler.handle)
         assert "auth" in ws_source.lower()
 
         # Layer 4: Ed25519
