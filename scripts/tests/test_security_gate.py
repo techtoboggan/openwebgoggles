@@ -8483,3 +8483,140 @@ class TestTimelineSection:
         ok, err, _ = gate.validate_state(self._make_state(items=["not-an-object"]))
         assert not ok
         assert "object" in err
+
+
+class TestHeatmapSection:
+    """Tests for the 'heatmap' section type (Phase 6.3)."""
+
+    @pytest.fixture
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    def _make_state(self, **kwargs):
+        sec = {
+            "type": "heatmap",
+            "xLabels": ["Mon", "Tue"],
+            "yLabels": ["0h", "6h"],
+            "values": [[0.1, 0.5], [0.8, 0.2]],
+        }
+        sec.update(kwargs)
+        return json.dumps({"data": {"sections": [sec]}})
+
+    def test_basic_heatmap_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state())
+        assert ok, err
+
+    def test_type_allowlisted(self, gate):
+        ok, _, _ = gate.validate_state(self._make_state())
+        assert _
+
+    def test_x_labels_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(xLabels="bad"))
+        assert not ok
+        assert "xLabels" in err
+
+    def test_y_labels_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(yLabels="bad"))
+        assert not ok
+        assert "yLabels" in err
+
+    def test_x_label_must_be_string(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(xLabels=[42]))
+        assert not ok
+        assert "xLabels" in err
+
+    def test_y_label_must_be_string(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(yLabels=[True]))
+        assert not ok
+        assert "yLabels" in err
+
+    def test_values_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(values="bad"))
+        assert not ok
+        assert "values" in err
+
+    def test_values_row_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(values=["notarray"]))
+        assert not ok
+        assert "values[0]" in err
+
+    def test_cell_must_be_number(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(values=[["nan"]]))
+        assert not ok
+        assert "values[0][0]" in err
+
+    def test_cell_bool_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(values=[[True]]))
+        assert not ok
+        assert "values[0][0]" in err
+
+    def test_max_x_labels_exceeded(self, gate):
+        from security_gate import SecurityGate
+
+        ok, err, _ = gate.validate_state(self._make_state(xLabels=["x"] * (SecurityGate.MAX_HEATMAP_LABELS + 1)))
+        assert not ok
+        assert "xLabels" in err
+
+    def test_max_y_labels_exceeded(self, gate):
+        from security_gate import SecurityGate
+
+        ok, err, _ = gate.validate_state(self._make_state(yLabels=["y"] * (SecurityGate.MAX_HEATMAP_LABELS + 1)))
+        assert not ok
+        assert "yLabels" in err
+
+    def test_max_rows_exceeded(self, gate):
+        from security_gate import SecurityGate
+
+        rows = [[0.1]] * (SecurityGate.MAX_HEATMAP_ROWS + 1)
+        ok, err, _ = gate.validate_state(self._make_state(values=rows))
+        assert not ok
+        assert "too many" in err
+
+    def test_color_scale_valid_hex(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(colorScale=["#eaffea", "#ff4444"]))
+        assert ok, err
+
+    def test_color_scale_valid_named(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(colorScale=["blue", "red"]))
+        assert ok, err
+
+    def test_color_scale_must_be_two_elements(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(colorScale=["#eaffea"]))
+        assert not ok
+        assert "colorScale" in err
+
+    def test_color_scale_invalid_color(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(colorScale=["#eaffea", "notacolor"]))
+        assert not ok
+        assert "colorScale" in err
+
+    def test_empty_labels_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(xLabels=[], yLabels=[], values=[]))
+        assert ok, err
+
+    def test_xss_in_xlabel_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(xLabels=["<script>x</script>"]))
+        assert not ok
+
+    def test_full_heatmap_passes(self, gate):
+        ok, err, _ = gate.validate_state(
+            json.dumps(
+                {
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "heatmap",
+                                "title": "Error Rate",
+                                "xLabels": ["Mon", "Tue", "Wed"],
+                                "yLabels": ["0h", "6h", "12h", "18h"],
+                                "values": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9], [0.0, 0.1, 0.2]],
+                                "colorScale": ["#eaffea", "#ff4444"],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        assert ok, err

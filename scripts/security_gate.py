@@ -72,6 +72,7 @@ class SecurityGate:
             "chart",
             "tree",
             "timeline",
+            "heatmap",
         }
     )
     ALLOWED_ACTION_STYLES = frozenset(
@@ -285,6 +286,8 @@ class SecurityGate:
     MAX_TREE_DEPTH = 8
     MAX_TREE_BADGE_LENGTH = 50
     MAX_TIMELINE_ITEMS = 200
+    MAX_HEATMAP_LABELS = 100
+    MAX_HEATMAP_ROWS = 100
 
     # --- className validation (alphanumeric, hyphens, underscores, spaces) ---
     CLASS_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_ -]*$")
@@ -1268,6 +1271,49 @@ class SecurityGate:
                 group = item.get("group", "")
                 if group and (not isinstance(group, str) or len(group) > 100):
                     return False, f"{prefix}.items[{ii}].group: must be string ≤100 chars"
+
+        elif sec_type == "heatmap":
+            x_labels = sec.get("xLabels", [])
+            y_labels = sec.get("yLabels", [])
+            if not isinstance(x_labels, list):
+                return False, f"{prefix}.xLabels must be an array"
+            if not isinstance(y_labels, list):
+                return False, f"{prefix}.yLabels must be an array"
+            if len(x_labels) > self.MAX_HEATMAP_LABELS:
+                return False, f"{prefix}.xLabels: too many labels ({len(x_labels)}, max {self.MAX_HEATMAP_LABELS})"
+            if len(y_labels) > self.MAX_HEATMAP_LABELS:
+                return False, f"{prefix}.yLabels: too many labels ({len(y_labels)}, max {self.MAX_HEATMAP_LABELS})"
+            for li, lbl in enumerate(x_labels):
+                if not isinstance(lbl, str):
+                    return False, f"{prefix}.xLabels[{li}]: must be string"
+            for li, lbl in enumerate(y_labels):
+                if not isinstance(lbl, str):
+                    return False, f"{prefix}.yLabels[{li}]: must be string"
+            values = sec.get("values", [])
+            if not isinstance(values, list):
+                return False, f"{prefix}.values must be an array"
+            if len(values) > self.MAX_HEATMAP_ROWS:
+                return False, f"{prefix}.values: too many rows ({len(values)}, max {self.MAX_HEATMAP_ROWS})"
+            for ri, row in enumerate(values):
+                if not isinstance(row, list):
+                    return False, f"{prefix}.values[{ri}] must be an array"
+                if len(row) > self.MAX_HEATMAP_LABELS:
+                    return False, f"{prefix}.values[{ri}]: too many columns"
+                for ci, cell in enumerate(row):
+                    if isinstance(cell, bool) or not isinstance(cell, int | float):
+                        return False, f"{prefix}.values[{ri}][{ci}]: must be number"
+                    if isinstance(cell, float) and not math.isfinite(cell):
+                        return False, f"{prefix}.values[{ri}][{ci}]: must be finite"
+            # colorScale: optional 2-element array of hex/named colors
+            cs = sec.get("colorScale")
+            if cs is not None:
+                if not isinstance(cs, list) or len(cs) != 2:
+                    return False, f"{prefix}.colorScale must be a 2-element array [minColor, maxColor]"
+                for ci, c in enumerate(cs):
+                    if not isinstance(c, str):
+                        return False, f"{prefix}.colorScale[{ci}]: must be string"
+                    if c not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(c):
+                        return False, f"{prefix}.colorScale[{ci}]: invalid color {c!r}"
 
         elif sec_type == "tree":
             nodes = sec.get("nodes", [])

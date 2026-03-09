@@ -44,6 +44,7 @@
       case "chart":     bodyHtml += OWG.renderChart(sec, si);       break;
       case "tree":      bodyHtml += renderTree(sec, si);            break;
       case "timeline":  bodyHtml += renderTimeline(sec);            break;
+      case "heatmap":   bodyHtml += renderHeatmap(sec);             break;
       default:          bodyHtml += renderForm(sec, si);            break;
     }
 
@@ -573,6 +574,92 @@
   // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
   function _esc(value) {
     return (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/([\\"'\[\](){}|^$+*.?:#>~!])/g, "\\$&");
+  }
+
+  // ─── Heatmap / Matrix ───────────────────────────────────────────────────────
+  function renderHeatmap(sec) {
+    var xLabels = Array.isArray(sec.xLabels) ? sec.xLabels : [];
+    var yLabels = Array.isArray(sec.yLabels) ? sec.yLabels : [];
+    var values = Array.isArray(sec.values) ? sec.values : [];
+    if (!xLabels.length || !yLabels.length) return '<div class="owg-heatmap-empty">No heatmap data</div>';
+
+    // Find min/max for color scale
+    var minVal = Infinity, maxVal = -Infinity;
+    for (var ri = 0; ri < values.length; ri++) {
+      var row = values[ri];
+      if (!Array.isArray(row)) continue;
+      for (var ci = 0; ci < row.length; ci++) {
+        var v = row[ci];
+        if (typeof v === "number" && isFinite(v)) {
+          if (v < minVal) minVal = v;
+          if (v > maxVal) maxVal = v;
+        }
+      }
+    }
+    if (!isFinite(minVal)) { minVal = 0; maxVal = 1; }
+    var range = maxVal - minVal || 1;
+
+    // Parse color scale
+    var cs = Array.isArray(sec.colorScale) && sec.colorScale.length === 2 ? sec.colorScale : null;
+    var minColor = cs ? cs[0] : "#eaffea";
+    var maxColor = cs ? cs[1] : "#ff4444";
+
+    // Parse hex color to [r,g,b]
+    function hexToRgb(hex) {
+      var h = hex.replace("#", "");
+      if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+      return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+    }
+    var r0, g0, b0, r1, g1, b1;
+    // Only parse hex colors (theme names need CSS variables — use defaults for them)
+    if (minColor.charAt(0) === "#" && maxColor.charAt(0) === "#") {
+      var c0 = hexToRgb(minColor), c1 = hexToRgb(maxColor);
+      r0 = c0[0]; g0 = c0[1]; b0 = c0[2];
+      r1 = c1[0]; g1 = c1[1]; b1 = c1[2];
+    } else {
+      r0 = 234; g0 = 255; b0 = 234;  // #eaffea default
+      r1 = 255; g1 = 68; b1 = 68;    // #ff4444 default
+    }
+
+    function cellColor(val) {
+      var t = (val - minVal) / range;
+      var r = Math.round(r0 + (r1 - r0) * t);
+      var g = Math.round(g0 + (g1 - g0) * t);
+      var b = Math.round(b0 + (b1 - b0) * t);
+      return "rgb(" + r + "," + g + "," + b + ")";
+    }
+
+    var cellSize = Math.max(20, Math.min(50, Math.floor(400 / Math.max(xLabels.length, 1))));
+    var labelW = 60;
+    var headerH = 30;
+    var svgW = labelW + xLabels.length * cellSize + 10;
+    var svgH = headerH + yLabels.length * cellSize + 4;
+
+    var svg = '<svg class="owg-heatmap-svg" viewBox="0 0 ' + svgW + " " + svgH + '" role="img" aria-label="Heatmap">';
+
+    // X-axis labels
+    for (var xi = 0; xi < xLabels.length; xi++) {
+      var cx = labelW + xi * cellSize + cellSize / 2;
+      svg += '<text x="' + cx + '" y="' + (headerH - 6) + '" class="owg-hm-label owg-hm-xlabel" text-anchor="middle">' + esc(String(xLabels[xi])) + "</text>";
+    }
+
+    // Rows
+    for (var yi = 0; yi < yLabels.length; yi++) {
+      var rowY = headerH + yi * cellSize;
+      // Y-axis label
+      svg += '<text x="' + (labelW - 4) + '" y="' + (rowY + cellSize / 2 + 4) + '" class="owg-hm-label owg-hm-ylabel" text-anchor="end">' + esc(String(yLabels[yi])) + "</text>";
+      var rowData = Array.isArray(values[yi]) ? values[yi] : [];
+      for (var xi2 = 0; xi2 < xLabels.length; xi2++) {
+        var cellVal = rowData[xi2];
+        var fill = (typeof cellVal === "number" && isFinite(cellVal)) ? cellColor(cellVal) : "#888";
+        var displayVal = (typeof cellVal === "number") ? (Math.round(cellVal * 100) / 100).toString() : "";
+        svg += '<rect x="' + (labelW + xi2 * cellSize + 1) + '" y="' + (rowY + 1) + '" width="' + (cellSize - 2) + '" height="' + (cellSize - 2) + '" rx="2" style="fill:' + escAttr(fill) + '" class="owg-hm-cell">';
+        svg += '<title>' + esc(String(xLabels[xi2])) + " / " + esc(String(yLabels[yi])) + ": " + esc(displayVal) + "</title>";
+        svg += "</rect>";
+      }
+    }
+    svg += "</svg>";
+    return '<div class="owg-heatmap">' + svg + "</div>";
   }
 
   // ─── Timeline / Gantt ───────────────────────────────────────────────────────

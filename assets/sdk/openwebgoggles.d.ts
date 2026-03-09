@@ -98,7 +98,8 @@ export type OWGSectionType =
   | "metric"
   | "chart"
   | "tree"
-  | "timeline";
+  | "timeline"
+  | "heatmap";
 
 export type OWGProgressTaskStatus =
   | "pending"
@@ -222,6 +223,13 @@ export interface OWGSection {
     labels?: string[];
     datasets?: Array<{ label?: string; data: number[]; color?: string }>;
   };
+
+  // heatmap
+  xLabels?: string[];
+  yLabels?: string[];
+  values?: number[][];
+  /** Color scale: [minColor, maxColor], hex or named theme color */
+  colorScale?: [string, string];
 
   // tree
   nodes?: OWGTreeNode[];
