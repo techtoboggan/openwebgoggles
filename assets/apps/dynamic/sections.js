@@ -42,6 +42,7 @@
       case "tabs":      bodyHtml += renderTabs(sec, si);            break;
       case "metric":    bodyHtml += renderMetric(sec, si);          break;
       case "chart":     bodyHtml += OWG.renderChart(sec, si);       break;
+      case "tree":      bodyHtml += renderTree(sec, si);            break;
       default:          bodyHtml += renderForm(sec, si);            break;
     }
 
@@ -573,6 +574,58 @@
     return (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/([\\"'\[\](){}|^$+*.?:#>~!])/g, "\\$&");
   }
 
+  // ─── Tree / Hierarchy ───────────────────────────────────────────────────────
+  function renderTree(sec, si) {
+    var nodes = Array.isArray(sec.nodes) ? sec.nodes : [];
+    var expandAll = !!sec.expandAll;
+    var selectable = !!sec.selectable;
+    var clickActionId = String(sec.clickActionId || "");
+
+    function renderNodes(items, depth) {
+      if (!items || !items.length) return "";
+      var h = '<ul class="owg-tree-list' + (depth === 0 ? " owg-tree-root" : "") + '">';
+      for (var i = 0; i < items.length; i++) {
+        var node = items[i];
+        var hasChildren = Array.isArray(node.children) && node.children.length > 0;
+        var nodeId = "owg-tree-" + si + "-" + depth + "-" + i;
+        var label = node.label != null ? String(node.label) : "";
+        var nid = node.id != null ? String(node.id) : "";
+        h += '<li class="owg-tree-node">';
+        if (hasChildren) {
+          h += '<button class="owg-tree-toggle" aria-expanded="' + (expandAll ? "true" : "false") +
+            '" data-tree-target="' + escAttr(nodeId) + '">' +
+            (expandAll ? "\u25BC" : "\u25B6") + "</button>";
+        } else {
+          h += '<span class="owg-tree-leaf-indent"></span>';
+        }
+        var labelClass = "owg-tree-label" + (selectable && clickActionId ? " owg-tree-selectable" : "");
+        var labelAttrs = ' class="' + escAttr(labelClass) + '"';
+        if (selectable && clickActionId) {
+          labelAttrs += ' data-tree-action="' + escAttr(clickActionId) + '"';
+          if (nid) labelAttrs += ' data-tree-node-id="' + escAttr(nid) + '"';
+          labelAttrs += ' data-tree-node-label="' + escAttr(label) + '"';
+          labelAttrs += ' role="button" tabindex="0"';
+        }
+        h += "<span" + labelAttrs + ">" + esc(label) + "</span>";
+        if (node.badge != null) {
+          var badge = String(node.badge);
+          h += '<span class="owg-tree-badge owg-tree-badge-' + safeClass(badge) + '">' + esc(badge) + "</span>";
+        }
+        if (hasChildren) {
+          h += '<div id="' + escAttr(nodeId) + '" class="owg-tree-children' +
+            (expandAll ? "" : " owg-tree-children-collapsed") + '">';
+          h += renderNodes(node.children, depth + 1);
+          h += "</div>";
+        }
+        h += "</li>";
+      }
+      h += "</ul>";
+      return h;
+    }
+
+    return '<div class="owg-tree">' + renderNodes(nodes, 0) + "</div>";
+  }
+
   // ─── Tab/table event binding (called from app.js bindEvents) ────────────────
   OWG.bindSectionEvents = function (root) {
     // Collapsible section titles
@@ -843,6 +896,43 @@
           };
           reader.readAsDataURL(file);
         });
+      });
+    });
+
+    // Tree toggle buttons — expand/collapse children
+    root.querySelectorAll(".owg-tree-toggle").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var targetId = btn.getAttribute("data-tree-target");
+        var target = targetId ? root.querySelector("#" + _esc(targetId)) : null;
+        if (!target) return;
+        var expanded = btn.getAttribute("aria-expanded") === "true";
+        if (expanded) {
+          target.classList.add("owg-tree-children-collapsed");
+          btn.setAttribute("aria-expanded", "false");
+          btn.textContent = "\u25B6";
+        } else {
+          target.classList.remove("owg-tree-children-collapsed");
+          btn.setAttribute("aria-expanded", "true");
+          btn.textContent = "\u25BC";
+        }
+      });
+    });
+
+    // Tree selectable node labels — fire action on click
+    root.querySelectorAll(".owg-tree-selectable[data-tree-action]").forEach(function (label) {
+      label.addEventListener("click", function () {
+        var actionId = label.getAttribute("data-tree-action");
+        var nodeId = label.getAttribute("data-tree-node-id") || "";
+        var nodeLbl = label.getAttribute("data-tree-node-label") || "";
+        if (typeof OWG.emitAction === "function") {
+          OWG.emitAction(actionId, "action", { nodeId: nodeId, label: nodeLbl }, {});
+        }
+      });
+      label.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          label.click();
+        }
       });
     });
   };

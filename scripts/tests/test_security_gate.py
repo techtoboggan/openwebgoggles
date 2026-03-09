@@ -8172,3 +8172,172 @@ class TestFileFieldValidation:
             )
         )
         assert ok, err
+
+
+class TestTreeSection:
+    """Tests for the 'tree' section type (Phase 6.1)."""
+
+    @pytest.fixture
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    def _make_state(self, **kwargs):
+        sec = {"type": "tree", "nodes": [{"label": "root"}]}
+        sec.update(kwargs)
+        return json.dumps({"data": {"sections": [sec]}})
+
+    def _make_nodes_state(self, nodes):
+        return json.dumps({"data": {"sections": [{"type": "tree", "nodes": nodes}]}})
+
+    def test_basic_tree_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state())
+        assert ok, err
+
+    def test_tree_type_allowlisted(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state())
+        assert ok
+
+    def test_nodes_required_to_be_array(self, gate):
+        state = json.dumps({"data": {"sections": [{"type": "tree", "nodes": "bad"}]}})
+        ok, err, _ = gate.validate_state(state)
+        assert not ok
+        assert "nodes" in err
+
+    def test_empty_nodes_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([]))
+        assert ok, err
+
+    def test_node_label_required(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"id": "x"}]))
+        assert not ok
+        assert "label" in err
+
+    def test_node_label_too_long(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x" * 201}]))
+        assert not ok
+        assert "too long" in err
+
+    def test_node_label_empty_string_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": ""}]))
+        assert not ok
+        assert "label" in err
+
+    def test_node_id_optional(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x", "id": "node1"}]))
+        assert ok, err
+
+    def test_node_id_must_be_string(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x", "id": 42}]))
+        assert not ok
+        assert "id" in err
+
+    def test_node_badge_valid(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "f.py", "badge": "modified"}]))
+        assert ok, err
+
+    def test_node_badge_too_long(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x", "badge": "b" * 51}]))
+        assert not ok
+        assert "badge" in err
+
+    def test_node_badge_non_string_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x", "badge": 123}]))
+        assert not ok
+        assert "badge" in err
+
+    def test_children_recursive(self, gate):
+        nodes = [{"label": "src/", "children": [{"label": "app.py", "badge": "added"}]}]
+        ok, err, _ = gate.validate_state(self._make_nodes_state(nodes))
+        assert ok, err
+
+    def test_children_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x", "children": "bad"}]))
+        assert not ok
+        assert "array" in err
+
+    def test_max_depth_exceeded(self, gate):
+        # Build a 10-level deep tree
+        node = {"label": "leaf"}
+        for _ in range(10):
+            node = {"label": "inner", "children": [node]}
+        ok, err, _ = gate.validate_state(self._make_nodes_state([node]))
+        assert not ok
+        assert "too deep" in err
+
+    def test_max_nodes_exceeded(self, gate):
+        from security_gate import SecurityGate
+
+        nodes = [{"label": f"n{i}"} for i in range(SecurityGate.MAX_TREE_NODES + 1)]
+        ok, err, _ = gate.validate_state(self._make_nodes_state(nodes))
+        assert not ok
+        assert "too many" in err
+
+    def test_expand_all_boolean(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(expandAll=True))
+        assert ok, err
+
+    def test_expand_all_non_boolean_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(expandAll="yes"))
+        assert not ok
+        assert "expandAll" in err
+
+    def test_selectable_boolean(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(selectable=True, clickActionId="select_node"))
+        assert ok, err
+
+    def test_selectable_non_boolean_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(selectable=1))
+        assert not ok
+        assert "selectable" in err
+
+    def test_click_action_id_invalid_format(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(clickActionId="bad id!"))
+        assert not ok
+        assert "clickActionId" in err
+
+    def test_click_action_id_too_long(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(clickActionId="a" * 201))
+        assert not ok
+        assert "clickActionId" in err
+
+    def test_full_tree_passes(self, gate):
+        nodes = [
+            {
+                "label": "src/",
+                "id": "src",
+                "children": [
+                    {"label": "auth.py", "id": "auth", "badge": "modified"},
+                    {"label": "utils.py", "id": "utils", "badge": "added"},
+                ],
+            },
+            {"label": "README.md", "id": "readme"},
+        ]
+        ok, err, _ = gate.validate_state(
+            json.dumps(
+                {
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "tree",
+                                "title": "File Changes",
+                                "nodes": nodes,
+                                "expandAll": False,
+                                "selectable": True,
+                                "clickActionId": "open_file",
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        assert ok, err
+
+    def test_xss_in_label_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "<script>alert(1)</script>"}]))
+        assert not ok
+
+    def test_xss_in_badge_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_nodes_state([{"label": "x", "badge": "<script>x</script>"}]))
+        assert not ok

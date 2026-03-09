@@ -70,6 +70,7 @@ class SecurityGate:
             "tabs",
             "metric",
             "chart",
+            "tree",
         }
     )
     ALLOWED_ACTION_STYLES = frozenset(
@@ -279,6 +280,9 @@ class SecurityGate:
     MAX_CHART_LABELS = 500
     MAX_CHART_WIDTH = 2000
     MAX_CHART_HEIGHT = 1500
+    MAX_TREE_NODES = 500
+    MAX_TREE_DEPTH = 8
+    MAX_TREE_BADGE_LENGTH = 50
 
     # --- className validation (alphanumeric, hyphens, underscores, spaces) ---
     CLASS_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_ -]*$")
@@ -375,8 +379,10 @@ class SecurityGate:
             if not ok:
                 return False, err, {}
 
-        # 3. Check nesting depth
-        if not self._check_depth(state):
+        # 3. Check nesting depth — tree section nodes are validated separately by
+        # _validate_tree_nodes (with their own MAX_TREE_DEPTH limit), so strip them
+        # before the general depth check to avoid false positives on deep trees.
+        if not self._check_depth(self._strip_tree_nodes(state)):
             return False, f"Nesting depth exceeds {self.MAX_NESTING_DEPTH}", {}
 
         # 4. Validate status (normalize aliases first)
@@ -581,6 +587,34 @@ class SecurityGate:
         return True, ""
 
     # --- Internal helpers ---
+
+    def _strip_tree_nodes(self, state: dict) -> dict:
+        """Return state with tree-section nodes stripped for JSON depth checking.
+
+        Tree nodes are validated by _validate_tree_nodes (which has its own
+        MAX_TREE_DEPTH limit). Stripping them here prevents the general depth
+        check from incorrectly rejecting valid deep trees.
+        """
+        data = state.get("data")
+        if not isinstance(data, dict):
+            return state
+        sections = data.get("sections")
+        if not isinstance(sections, list):
+            return state
+        new_sections = []
+        changed = False
+        for sec in sections:
+            if isinstance(sec, dict) and sec.get("type") == "tree" and "nodes" in sec:
+                sec = {k: v for k, v in sec.items() if k != "nodes"}
+                changed = True
+            new_sections.append(sec)
+        if not changed:
+            return state
+        new_data = dict(data)
+        new_data["sections"] = new_sections
+        result = dict(state)
+        result["data"] = new_data
+        return result
 
     def _check_depth(self, obj: Any, depth: int = 0) -> bool:
         if depth > self.MAX_NESTING_DEPTH:
@@ -1204,6 +1238,76 @@ class SecurityGate:
                     if not ok:
                         return False, f"{prefix}.tabs[{ti}]: {err}"
 
+        elif sec_type == "tree":
+            nodes = sec.get("nodes", [])
+            if not isinstance(nodes, list):
+                return False, f"{prefix}.nodes must be an array"
+            total: list[int] = [0]
+            ok, err = self._validate_tree_nodes(nodes, f"{prefix}.nodes", depth=0, total=total)
+            if not ok:
+                return False, err
+            expand_all = sec.get("expandAll", False)
+            if not isinstance(expand_all, bool):
+                return False, f"{prefix}.expandAll must be a boolean"
+            selectable = sec.get("selectable", False)
+            if not isinstance(selectable, bool):
+                return False, f"{prefix}.selectable must be a boolean"
+            click_action_id = sec.get("clickActionId", "")
+            if click_action_id:
+                if not isinstance(click_action_id, str):
+                    return False, f"{prefix}.clickActionId must be a string"
+                if len(click_action_id) > 200:
+                    return False, f"{prefix}.clickActionId too long (max 200)"
+                if not self.KEY_PATTERN.match(click_action_id):
+                    return False, f"{prefix}.clickActionId: invalid format"
+
+        return True, ""
+
+    # --- Tree validation helper ---
+
+    def _validate_tree_node_props(self, node: dict, prefix: str) -> tuple[bool, str]:
+        """Validate the scalar properties of a single tree node object."""
+        label = node.get("label")
+        if not isinstance(label, str) or not label:
+            return False, f"{prefix}.label: required non-empty string"
+        if len(label) > 200:
+            return False, f"{prefix}.label: too long (max 200)"
+        node_id = node.get("id")
+        if node_id is not None:
+            if not isinstance(node_id, str):
+                return False, f"{prefix}.id: must be string"
+            if len(node_id) > 200:
+                return False, f"{prefix}.id: too long (max 200)"
+        badge = node.get("badge")
+        if badge is not None:
+            if not isinstance(badge, str) or len(badge) > self.MAX_TREE_BADGE_LENGTH:
+                return False, f"{prefix}.badge: must be string ≤{self.MAX_TREE_BADGE_LENGTH} chars"
+        return True, ""
+
+    def _validate_tree_nodes(
+        self, nodes: list, prefix: str, depth: int = 0, total: list[int] | None = None
+    ) -> tuple[bool, str]:
+        """Recursively validate tree node list. `total` is a mutable [count] list."""
+        if total is None:
+            total = [0]
+        if depth > self.MAX_TREE_DEPTH:
+            return False, f"{prefix}: tree too deep (max {self.MAX_TREE_DEPTH} levels)"
+        if not isinstance(nodes, list):
+            return False, f"{prefix} must be an array"
+        for ni, node in enumerate(nodes):
+            if not isinstance(node, dict):
+                return False, f"{prefix}[{ni}] must be an object"
+            total[0] += 1
+            if total[0] > self.MAX_TREE_NODES:
+                return False, f"{prefix}: too many tree nodes (max {self.MAX_TREE_NODES})"
+            ok, err = self._validate_tree_node_props(node, f"{prefix}[{ni}]")
+            if not ok:
+                return False, err
+            children = node.get("children")
+            if children is not None:
+                ok, err = self._validate_tree_nodes(children, f"{prefix}[{ni}].children", depth + 1, total)
+                if not ok:
+                    return False, err
         return True, ""
 
     # --- Behaviors validation ---

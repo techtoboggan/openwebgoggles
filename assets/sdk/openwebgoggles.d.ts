@@ -96,7 +96,8 @@ export type OWGSectionType =
   | "table"
   | "tabs"
   | "metric"
-  | "chart";
+  | "chart"
+  | "tree";
 
 export type OWGProgressTaskStatus =
   | "pending"
@@ -140,6 +141,17 @@ export interface OWGTab {
   id: string;
   label: string;
   sections: OWGSection[];
+}
+
+export interface OWGTreeNode {
+  /** Display label (required) */
+  label: string;
+  /** Optional identifier passed back in action payload when clicked */
+  id?: string;
+  /** Short badge shown alongside the label (e.g. "modified", "added") */
+  badge?: string;
+  /** Nested child nodes */
+  children?: OWGTreeNode[];
 }
 
 export interface OWGSection {
@@ -196,6 +208,13 @@ export interface OWGSection {
     labels?: string[];
     datasets?: Array<{ label?: string; data: number[]; color?: string }>;
   };
+
+  // tree
+  nodes?: OWGTreeNode[];
+  /** Expand all tree nodes on initial render (default: false — all collapsed) */
+  expandAll?: boolean;
+  /** Clicking a node fires an action (id sent as nodeId in payload) */
+  clickActionId?: string;
 }
 
 // ---------------------------------------------------------------------------
