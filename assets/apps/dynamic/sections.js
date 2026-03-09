@@ -45,6 +45,7 @@
       case "tree":      bodyHtml += renderTree(sec, si);            break;
       case "timeline":  bodyHtml += renderTimeline(sec);            break;
       case "heatmap":   bodyHtml += renderHeatmap(sec);             break;
+      case "network":   bodyHtml += renderNetwork(sec, si);         break;
       default:          bodyHtml += renderForm(sec, si);            break;
     }
 
@@ -574,6 +575,115 @@
   // ─── Selector-safe query helper (prevents CSS selector injection) ───────────
   function _esc(value) {
     return (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(value) : value.replace(/([\\"'\[\](){}|^$+*.?:#>~!])/g, "\\$&");
+  }
+
+  // ─── Network Diagram ────────────────────────────────────────────────────────
+  function renderNetwork(sec, si) {
+    var nodes = Array.isArray(sec.nodes) ? sec.nodes : [];
+    var edges = Array.isArray(sec.edges) ? sec.edges : [];
+    if (!nodes.length) return '<div class="owg-network-empty">No network nodes</div>';
+
+    var W = 580, H = 360;
+    var nodeR = 22;
+    var iterations = 80;
+    var colorMap = { blue: "#58a6ff", green: "#3fb950", red: "#f85149", yellow: "#d29922", purple: "#a371f7", orange: "#f0883e", cyan: "#39c5cf", pink: "#e85aad" };
+
+    // Initialize node positions in a circle
+    var pos = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var angle = (2 * Math.PI * i) / nodes.length;
+      pos.push({ x: W / 2 + (W / 3) * Math.cos(angle), y: H / 2 + (H / 3) * Math.sin(angle) });
+    }
+
+    // Build adjacency for spring forces
+    var nodeIdxMap = Object.create(null);
+    for (var ni = 0; ni < nodes.length; ni++) nodeIdxMap[nodes[ni].id] = ni;
+
+    // Force-directed layout: repulsion + spring
+    var springLen = 120, repulse = 8000, damping = 0.85;
+    var vx = [], vy = [];
+    for (var vi = 0; vi < nodes.length; vi++) { vx.push(0); vy.push(0); }
+
+    for (var it = 0; it < iterations; it++) {
+      var fx = [], fy = [];
+      for (var fi = 0; fi < nodes.length; fi++) { fx.push(0); fy.push(0); }
+
+      // Repulsion between all pairs
+      for (var a = 0; a < nodes.length; a++) {
+        for (var b = a + 1; b < nodes.length; b++) {
+          var dx = pos[a].x - pos[b].x, dy = pos[a].y - pos[b].y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          var force = repulse / (dist * dist);
+          var nx2 = dx / dist, ny2 = dy / dist;
+          fx[a] += force * nx2; fy[a] += force * ny2;
+          fx[b] -= force * nx2; fy[b] -= force * ny2;
+        }
+      }
+
+      // Spring attraction for edges
+      for (var ei2 = 0; ei2 < edges.length; ei2++) {
+        var srcIdx = nodeIdxMap[edges[ei2].from], dstIdx = nodeIdxMap[edges[ei2].to];
+        if (srcIdx == null || dstIdx == null) continue;
+        var dx2 = pos[dstIdx].x - pos[srcIdx].x, dy2 = pos[dstIdx].y - pos[srcIdx].y;
+        var dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+        var springF = (dist2 - springLen) * 0.05;
+        var nxs = dx2 / dist2, nys = dy2 / dist2;
+        fx[srcIdx] += springF * nxs; fy[srcIdx] += springF * nys;
+        fx[dstIdx] -= springF * nxs; fy[dstIdx] -= springF * nys;
+      }
+
+      // Center gravity
+      for (var gi = 0; gi < nodes.length; gi++) {
+        fx[gi] += (W / 2 - pos[gi].x) * 0.01;
+        fy[gi] += (H / 2 - pos[gi].y) * 0.01;
+      }
+
+      // Integrate
+      for (var ii = 0; ii < nodes.length; ii++) {
+        vx[ii] = (vx[ii] + fx[ii]) * damping;
+        vy[ii] = (vy[ii] + fy[ii]) * damping;
+        pos[ii].x = Math.max(nodeR + 5, Math.min(W - nodeR - 5, pos[ii].x + vx[ii]));
+        pos[ii].y = Math.max(nodeR + 5, Math.min(H - nodeR - 5, pos[ii].y + vy[ii]));
+      }
+    }
+
+    var uid = "owg-net-" + si;
+    var svg = '<svg id="' + escAttr(uid) + '" class="owg-network-svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Network diagram">';
+
+    // Arrow marker
+    svg += '<defs><marker id="' + escAttr(uid) + '-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">' +
+      '<polygon points="0 0, 8 3, 0 6" class="owg-net-arrowhead"/></marker></defs>';
+
+    // Edges
+    for (var edi = 0; edi < edges.length; edi++) {
+      var edge = edges[edi];
+      var si2 = nodeIdxMap[edge.from], di = nodeIdxMap[edge.to];
+      if (si2 == null || di == null) continue;
+      var sx = pos[si2].x, sy = pos[si2].y, dx3 = pos[di].x, dy3 = pos[di].y;
+      // Shorten line to node radius
+      var dlen = Math.sqrt((dx3-sx)*(dx3-sx)+(dy3-sy)*(dy3-sy)) || 1;
+      var ex = dx3 - (dx3-sx)/dlen*(nodeR+2), ey = dy3 - (dy3-sy)/dlen*(nodeR+2);
+      svg += '<line x1="' + sx + '" y1="' + sy + '" x2="' + ex + '" y2="' + ey + '" class="owg-net-edge" marker-end="url(#' + escAttr(uid) + '-arrow)"/>';
+      if (edge.label) {
+        var mx = (sx + dx3) / 2, my = (sy + dy3) / 2;
+        svg += '<text x="' + mx + '" y="' + (my - 4) + '" class="owg-net-edge-label" text-anchor="middle">' + esc(String(edge.label)) + "</text>";
+      }
+    }
+
+    // Nodes
+    for (var ni2 = 0; ni2 < nodes.length; ni2++) {
+      var node = nodes[ni2];
+      var px = pos[ni2].x, py = pos[ni2].y;
+      var fill = colorMap[node.color] || (node.color && node.color.charAt(0) === "#" ? node.color : "var(--blue)");
+      svg += '<circle cx="' + px + '" cy="' + py + '" r="' + nodeR + '" class="owg-net-node" style="fill:' + escAttr(fill) + '">';
+      if (node.id) svg += "<title>" + esc(String(node.id)) + "</title>";
+      svg += "</circle>";
+      var displayLabel = node.label != null ? String(node.label) : String(node.id || "");
+      svg += '<text x="' + px + '" y="' + (py + 4) + '" class="owg-net-label" text-anchor="middle">' + esc(displayLabel) + "</text>";
+    }
+
+    svg += "</svg>";
+    return '<div class="owg-network">' + svg + "</div>";
   }
 
   // ─── Heatmap / Matrix ───────────────────────────────────────────────────────

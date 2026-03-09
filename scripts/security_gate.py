@@ -73,6 +73,7 @@ class SecurityGate:
             "tree",
             "timeline",
             "heatmap",
+            "network",
         }
     )
     ALLOWED_ACTION_STYLES = frozenset(
@@ -288,6 +289,8 @@ class SecurityGate:
     MAX_TIMELINE_ITEMS = 200
     MAX_HEATMAP_LABELS = 100
     MAX_HEATMAP_ROWS = 100
+    MAX_NETWORK_NODES = 200
+    MAX_NETWORK_EDGES = 500
 
     # --- className validation (alphanumeric, hyphens, underscores, spaces) ---
     CLASS_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_ -]*$")
@@ -1314,6 +1317,49 @@ class SecurityGate:
                         return False, f"{prefix}.colorScale[{ci}]: must be string"
                     if c not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(c):
                         return False, f"{prefix}.colorScale[{ci}]: invalid color {c!r}"
+
+        elif sec_type == "network":
+            net_nodes = sec.get("nodes", [])
+            if not isinstance(net_nodes, list):
+                return False, f"{prefix}.nodes must be an array"
+            if len(net_nodes) > self.MAX_NETWORK_NODES:
+                return False, f"{prefix}: too many network nodes ({len(net_nodes)}, max {self.MAX_NETWORK_NODES})"
+            node_ids: set[str] = set()
+            for ni, node in enumerate(net_nodes):
+                if not isinstance(node, dict):
+                    return False, f"{prefix}.nodes[{ni}] must be an object"
+                nid = node.get("id")
+                if not isinstance(nid, str) or not nid:
+                    return False, f"{prefix}.nodes[{ni}].id: required non-empty string"
+                if len(nid) > 200:
+                    return False, f"{prefix}.nodes[{ni}].id: too long (max 200)"
+                nlabel = node.get("label")
+                if nlabel is not None and (not isinstance(nlabel, str) or len(nlabel) > 200):
+                    return False, f"{prefix}.nodes[{ni}].label: must be string ≤200 chars"
+                ncolor = node.get("color", "")
+                if ncolor:
+                    if not isinstance(ncolor, str):
+                        return False, f"{prefix}.nodes[{ni}].color: must be string"
+                    if ncolor not in self.ALLOWED_THEME_COLORS and not self.COLOR_PATTERN.match(ncolor):
+                        return False, f"{prefix}.nodes[{ni}].color: invalid color {ncolor!r}"
+                node_ids.add(nid)
+            edges = sec.get("edges", [])
+            if not isinstance(edges, list):
+                return False, f"{prefix}.edges must be an array"
+            if len(edges) > self.MAX_NETWORK_EDGES:
+                return False, f"{prefix}: too many network edges ({len(edges)}, max {self.MAX_NETWORK_EDGES})"
+            for ei, edge in enumerate(edges):
+                if not isinstance(edge, dict):
+                    return False, f"{prefix}.edges[{ei}] must be an object"
+                src = edge.get("from")
+                dst = edge.get("to")
+                if not isinstance(src, str) or not src:
+                    return False, f"{prefix}.edges[{ei}].from: required non-empty string"
+                if not isinstance(dst, str) or not dst:
+                    return False, f"{prefix}.edges[{ei}].to: required non-empty string"
+                elabel = edge.get("label", "")
+                if elabel and (not isinstance(elabel, str) or len(elabel) > 200):
+                    return False, f"{prefix}.edges[{ei}].label: must be string ≤200 chars"
 
         elif sec_type == "tree":
             nodes = sec.get("nodes", [])

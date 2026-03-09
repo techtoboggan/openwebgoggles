@@ -299,6 +299,17 @@
     .owg-copy-btn:hover { color: var(--text); border-color: var(--text2); }
     .message-box-copyable { position: relative; }
 
+    /* ─── Network Diagram ─── */
+    .owg-network { overflow-x: auto; }
+    .owg-network-svg { width: 100%; max-width: 580px; display: block; font-family: inherit; }
+    .owg-network-empty { color: var(--text2); font-size: 13px; padding: 8px 0; }
+    .owg-net-edge { stroke: var(--border); stroke-width: 1.5; fill: none; }
+    .owg-net-edge-label { fill: var(--text2); font-size: 10px; }
+    .owg-net-arrowhead { fill: var(--border); }
+    .owg-net-node { opacity: 0.9; stroke: var(--bg2); stroke-width: 2; }
+    .owg-net-node:hover { opacity: 1; }
+    .owg-net-label { fill: #fff; font-size: 11px; font-weight: 600; pointer-events: none; }
+
     /* ─── Heatmap / Matrix ─── */
     .owg-heatmap { overflow-x: auto; }
     .owg-heatmap-svg { width: 100%; display: block; font-family: inherit; }

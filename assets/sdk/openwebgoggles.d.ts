@@ -99,7 +99,8 @@ export type OWGSectionType =
   | "chart"
   | "tree"
   | "timeline"
-  | "heatmap";
+  | "heatmap"
+  | "network";
 
 export type OWGProgressTaskStatus =
   | "pending"
@@ -156,6 +157,15 @@ export interface OWGTimelineItem {
   color?: string;
   /** Optional group label for visual grouping */
   group?: string;
+}
+
+export interface OWGNetworkNode {
+  /** Node identifier (required) */
+  id: string;
+  /** Display label (defaults to id if omitted) */
+  label?: string;
+  /** Node fill color: named theme color or hex (#rrggbb) */
+  color?: string;
 }
 
 export interface OWGTreeNode {
@@ -224,6 +234,9 @@ export interface OWGSection {
     datasets?: Array<{ label?: string; data: number[]; color?: string }>;
   };
 
+  // network
+  edges?: Array<{ from: string; to: string; label?: string }>;
+
   // heatmap
   xLabels?: string[];
   yLabels?: string[];
@@ -231,8 +244,8 @@ export interface OWGSection {
   /** Color scale: [minColor, maxColor], hex or named theme color */
   colorScale?: [string, string];
 
-  // tree
-  nodes?: OWGTreeNode[];
+  // tree (type: "tree") / network (type: "network") — same key, different element shape
+  nodes?: OWGTreeNode[] | OWGNetworkNode[];
   /** Expand all tree nodes on initial render (default: false — all collapsed) */
   expandAll?: boolean;
   /** Clicking a node fires an action (id sent as nodeId in payload) */

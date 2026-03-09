@@ -8620,3 +8620,150 @@ class TestHeatmapSection:
             )
         )
         assert ok, err
+
+
+class TestNetworkSection:
+    """Tests for the 'network' section type (Phase 6.4)."""
+
+    @pytest.fixture
+    def gate(self):
+        from security_gate import SecurityGate
+
+        return SecurityGate()
+
+    def _make_state(self, **kwargs):
+        sec = {
+            "type": "network",
+            "nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+            "edges": [{"from": "a", "to": "b"}],
+        }
+        sec.update(kwargs)
+        return json.dumps({"data": {"sections": [sec]}})
+
+    def test_basic_network_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state())
+        assert ok, err
+
+    def test_type_allowlisted(self, gate):
+        ok, _, _ = gate.validate_state(self._make_state())
+        assert ok
+
+    def test_empty_nodes_passes(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[], edges=[]))
+        assert ok, err
+
+    def test_nodes_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes="bad"))
+        assert not ok
+        assert "nodes" in err
+
+    def test_node_id_required(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"label": "A"}]))
+        assert not ok
+        assert "id" in err
+
+    def test_node_id_empty_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": ""}]))
+        assert not ok
+        assert "id" in err
+
+    def test_node_id_too_long(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": "x" * 201}]))
+        assert not ok
+        assert "id" in err
+
+    def test_node_label_optional(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": "x"}]))
+        assert ok, err
+
+    def test_node_label_too_long(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": "x", "label": "l" * 201}]))
+        assert not ok
+        assert "label" in err
+
+    def test_node_color_named_valid(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": "x", "color": "blue"}]))
+        assert ok, err
+
+    def test_node_color_hex_valid(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": "x", "color": "#3fb950"}]))
+        assert ok, err
+
+    def test_node_color_invalid(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": "x", "color": "notacolor"}]))
+        assert not ok
+        assert "color" in err
+
+    def test_edges_must_be_array(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(edges="bad"))
+        assert not ok
+        assert "edges" in err
+
+    def test_edge_from_required(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(edges=[{"to": "b"}]))
+        assert not ok
+        assert "from" in err
+
+    def test_edge_to_required(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(edges=[{"from": "a"}]))
+        assert not ok
+        assert "to" in err
+
+    def test_edge_label_valid(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(edges=[{"from": "a", "to": "b", "label": "reads"}]))
+        assert ok, err
+
+    def test_edge_label_too_long(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(edges=[{"from": "a", "to": "b", "label": "x" * 201}]))
+        assert not ok
+        assert "label" in err
+
+    def test_max_nodes_exceeded(self, gate):
+        from security_gate import SecurityGate
+
+        nodes = [{"id": f"n{i}"} for i in range(SecurityGate.MAX_NETWORK_NODES + 1)]
+        ok, err, _ = gate.validate_state(self._make_state(nodes=nodes))
+        assert not ok
+        assert "too many" in err
+
+    def test_max_edges_exceeded(self, gate):
+        from security_gate import SecurityGate
+
+        edges = [{"from": "a", "to": "b"}] * (SecurityGate.MAX_NETWORK_EDGES + 1)
+        ok, err, _ = gate.validate_state(self._make_state(edges=edges))
+        assert not ok
+        assert "too many" in err
+
+    def test_xss_in_node_id_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(nodes=[{"id": "<script>x</script>"}]))
+        assert not ok
+
+    def test_xss_in_edge_label_rejected(self, gate):
+        ok, err, _ = gate.validate_state(self._make_state(edges=[{"from": "a", "to": "b", "label": "<script>"}]))
+        assert not ok
+
+    def test_full_network_passes(self, gate):
+        ok, err, _ = gate.validate_state(
+            json.dumps(
+                {
+                    "data": {
+                        "sections": [
+                            {
+                                "type": "network",
+                                "title": "Service Deps",
+                                "nodes": [
+                                    {"id": "api", "label": "API", "color": "blue"},
+                                    {"id": "db", "label": "DB", "color": "green"},
+                                    {"id": "cache", "label": "Cache", "color": "yellow"},
+                                ],
+                                "edges": [
+                                    {"from": "api", "to": "db", "label": "reads"},
+                                    {"from": "api", "to": "cache", "label": "writes"},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        assert ok, err

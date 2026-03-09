@@ -2835,6 +2835,8 @@ class TestInputChannelRegistry:
         ("MAX_TIMELINE_ITEMS", 200, "SecurityGate", "Timeline items per section"),
         ("MAX_HEATMAP_LABELS", 100, "SecurityGate", "Heatmap axis labels"),
         ("MAX_HEATMAP_ROWS", 100, "SecurityGate", "Heatmap rows"),
+        ("MAX_NETWORK_NODES", 200, "SecurityGate", "Network diagram nodes"),
+        ("MAX_NETWORK_EDGES", 500, "SecurityGate", "Network diagram edges"),
         ("MAX_ACTIONS", 50, "SecurityGate", "Actions per state"),
         ("MAX_WS_MESSAGE_SIZE", 1_048_576, "WebviewServer", "WebSocket message bytes"),
         ("MAX_WEBSOCKET_CLIENTS", 50, "WebviewServer", "Concurrent WS connections"),
