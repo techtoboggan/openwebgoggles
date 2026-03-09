@@ -769,6 +769,99 @@ def _parse_scaffold_args(argv: list[str]) -> tuple[str, Path | None, bool]:
     return args.app_name, args.output_dir, args.force
 
 
+def _cmd_dev(
+    app_name: str,
+    data_dir: Path | None = None,
+    http_port: int = 18420,
+    ws_port: int = 18421,
+    watch_dirs: list[str] | None = None,
+) -> int:
+    """Start the webview server in dev mode with hot-reload.
+
+    Watches the app's source directory (and any additional --watch-dir paths)
+    for ``.js``, ``.css``, and ``.html`` changes, then broadcasts a ``reload``
+    message to all connected browsers.
+    """
+    import subprocess
+
+    # Resolve data dir
+    resolved_data_dir = data_dir or (Path(".openwebgoggles"))
+
+    # Locate SDK
+    sdk = _find_sdk_file()
+    if sdk is None:
+        print("Error: openwebgoggles-sdk.js not found. Run from the repo root or install the package.", file=sys.stderr)
+        return 1
+
+    # Locate the app directory to watch
+    apps_dir = resolved_data_dir / "apps"
+    app_dir = apps_dir / app_name
+    default_watch = [str(app_dir)] if app_dir.is_dir() else []
+    all_watch_dirs = default_watch + (watch_dirs or [])
+
+    cmd: list[str] = [
+        sys.executable,
+        str(Path(__file__).resolve().parent / "webview_server.py"),
+        "--data-dir",
+        str(resolved_data_dir),
+        "--http-port",
+        str(http_port),
+        "--ws-port",
+        str(ws_port),
+        "--sdk-path",
+        str(sdk),
+        "--app",
+        app_name,
+        "--dev",
+    ]
+    for wd in all_watch_dirs:
+        cmd += ["--watch-dir", wd]
+
+    print(f"Starting dev server for '{app_name}' on http://127.0.0.1:{http_port}")
+    if all_watch_dirs:
+        print(f"Watching: {', '.join(all_watch_dirs)}")
+    print("Press Ctrl+C to stop.\n")
+
+    try:
+        proc = subprocess.run(cmd, check=False)  # noqa: S603
+        return proc.returncode
+    except KeyboardInterrupt:
+        return 0
+
+
+def _parse_dev_args(argv: list[str]) -> tuple[str, Path | None, int, int, list[str]]:
+    """Parse arguments for the dev subcommand.
+
+    Returns:
+        Tuple of (app_name, data_dir, http_port, ws_port, watch_dirs).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="openwebgoggles dev",
+        description="Start webview server in dev mode with hot-reload.",
+    )
+    parser.add_argument("app_name", help="App name to serve (must exist in data-dir/apps/)")
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        type=Path,
+        help="Path to .openwebgoggles/ directory (default: .openwebgoggles in cwd)",
+    )
+    parser.add_argument("--http-port", type=int, default=18420, help="HTTP port (default: 18420)")
+    parser.add_argument("--ws-port", type=int, default=18421, help="WebSocket port (default: 18421)")
+    parser.add_argument(
+        "--watch-dir",
+        action="append",
+        dest="watch_dirs",
+        default=None,
+        metavar="DIR",
+        help="Extra directory to watch (can be repeated)",
+    )
+    args = parser.parse_args(argv)
+    return args.app_name, args.data_dir, args.http_port, args.ws_port, args.watch_dirs or []
+
+
 def _print_usage() -> None:
     """Print top-level usage."""
     print("Usage: openwebgoggles <command> [options]\n")
@@ -780,5 +873,6 @@ def _print_usage() -> None:
     print("  doctor        Diagnose setup and environment")
     print("  logs          Show server log output")
     print("  scaffold      Create a new custom app from template")
+    print("  dev           Start webview server in dev mode with hot-reload")
     print()
     print("Run 'openwebgoggles <command>' for command-specific help.")

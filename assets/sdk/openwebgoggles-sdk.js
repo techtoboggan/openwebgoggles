@@ -654,6 +654,11 @@
         break;
       case "heartbeat_ack":
         break;
+      case "reload":
+        if (typeof window !== "undefined" && window.location) {
+          window.location.reload();
+        }
+        break;
       case "error":
         this._emit("error", msg);
         break;

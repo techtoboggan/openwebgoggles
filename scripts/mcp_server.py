@@ -110,6 +110,7 @@ try:
         _cmd_doctor,
         _cmd_logs,  # noqa: F401
         _cmd_restart,
+        _cmd_dev,  # noqa: F401
         _cmd_scaffold,  # noqa: F401
         _cmd_status,
         _find_server_key,
@@ -117,6 +118,7 @@ try:
         _init_claude_desktop,
         _init_opencode,
         _init_usage,
+        _parse_dev_args,  # noqa: F401
         _parse_logs_args,  # noqa: F401
         _parse_scaffold_args,  # noqa: F401
         _print_usage,
@@ -132,6 +134,7 @@ except ImportError:
         _DEPRECATED_PERMISSIONS,
         _EDITORS,
         _SERVER_NAME_ALIASES,
+        _cmd_dev,
         _cmd_doctor,
         _cmd_logs,
         _cmd_restart,
@@ -142,6 +145,7 @@ except ImportError:
         _init_claude_desktop,
         _init_opencode,
         _init_usage,
+        _parse_dev_args,
         _parse_logs_args,
         _parse_scaffold_args,
         _print_usage,
@@ -1902,24 +1906,16 @@ _INIT_DISPATCH = {
 }
 
 
-def main():
-    """Entry point for the openwebgoggles console script.
+def _dispatch_subcommand(cmd: str | None) -> bool:
+    """Handle subcommands that exit before starting the MCP server.
 
-    Usage:
-        openwebgoggles                          # Run MCP server (stdio transport)
-        openwebgoggles init <editor> [dir]      # Bootstrap for an editor
-        openwebgoggles restart [dir]            # Restart running MCP server
-        openwebgoggles status [dir]             # Show server status
-        openwebgoggles doctor [dir]             # Diagnose setup
-        openwebgoggles logs [--lines N] [-f]    # Show server log
-        openwebgoggles scaffold <app> [-o DIR]  # Create custom app scaffold
+    Returns True if a subcommand was handled (caller should return), False
+    if no subcommand matched and the MCP server should start.
     """
-    cmd = sys.argv[1] if len(sys.argv) > 1 else None
-
     if cmd == "init":
         if len(sys.argv) < 3 or sys.argv[2] not in _INIT_DISPATCH:
             _init_usage()
-            return
+            return True
         editor = sys.argv[2]
         remaining = sys.argv[3:]
         global_mode = "--global" in remaining
@@ -1934,26 +1930,26 @@ def main():
             _init_claude(target, global_mode=True)
         else:
             _INIT_DISPATCH[editor](target)
-        return
+        return True
 
     if cmd == "restart":
         _cmd_restart()
-        return
+        return True
 
     if cmd == "status":
         _cmd_status()
-        return
+        return True
 
     if cmd == "doctor":
         _cmd_doctor()
-        return
+        return True
 
     if cmd == "logs":
         from cli import _cmd_logs, _parse_logs_args
 
         n_lines, follow = _parse_logs_args(sys.argv[2:])
         _cmd_logs(lines=n_lines, tail=follow)
-        return
+        return True
 
     if cmd == "scaffold":
         from cli import _cmd_scaffold, _parse_scaffold_args
@@ -1961,12 +1957,35 @@ def main():
         app_name, out_dir, force = _parse_scaffold_args(sys.argv[2:])
         sys.exit(_cmd_scaffold(app_name, output_dir=out_dir, force=force))
 
-    if cmd in ("help", "--help", "-h"):
-        _print_usage()
-        return
+    if cmd == "dev":
+        from cli import _cmd_dev, _parse_dev_args
 
-    if cmd is not None and cmd.startswith("-"):
+        app_name, data_dir, http_port, ws_port, watch_dirs = _parse_dev_args(sys.argv[2:])
+        sys.exit(_cmd_dev(app_name, data_dir=data_dir, http_port=http_port, ws_port=ws_port, watch_dirs=watch_dirs))
+
+    if cmd in ("help", "--help", "-h") or (cmd is not None and cmd.startswith("-")):
         _print_usage()
+        return True
+
+    return False
+
+
+def main():
+    """Entry point for the openwebgoggles console script.
+
+    Usage:
+        openwebgoggles                          # Run MCP server (stdio transport)
+        openwebgoggles init <editor> [dir]      # Bootstrap for an editor
+        openwebgoggles restart [dir]            # Restart running MCP server
+        openwebgoggles status [dir]             # Show server status
+        openwebgoggles doctor [dir]             # Diagnose setup
+        openwebgoggles logs [--lines N] [-f]    # Show server log
+        openwebgoggles scaffold <app> [-o DIR]  # Create custom app scaffold
+        openwebgoggles dev <app> [--watch-dir D] # Start dev server with hot-reload
+    """
+    cmd = sys.argv[1] if len(sys.argv) > 1 else None
+
+    if _dispatch_subcommand(cmd):
         return
 
     # Default: run MCP server (stdio transport)

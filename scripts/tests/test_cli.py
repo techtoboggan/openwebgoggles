@@ -19,7 +19,14 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from cli import _cmd_scaffold, _find_sdk_file, _find_template_dir, _parse_scaffold_args
+from cli import (
+    _cmd_dev,
+    _cmd_scaffold,
+    _find_sdk_file,
+    _find_template_dir,
+    _parse_dev_args,
+    _parse_scaffold_args,
+)
 from mcp_server import (
     _CLAUDE_SETTINGS,
     _DEPRECATED_PERMISSIONS,
@@ -1419,3 +1426,141 @@ class TestScaffoldMainDispatch:
         _print_usage()
         out = capsys.readouterr().out
         assert "scaffold" in out
+
+
+# ---------------------------------------------------------------------------
+# _parse_dev_args
+# ---------------------------------------------------------------------------
+
+
+class TestParseDevArgs:
+    def test_app_name_required(self):
+        with pytest.raises(SystemExit):
+            _parse_dev_args([])
+
+    def test_positional_app_name(self):
+        app, data_dir, http, ws, wds = _parse_dev_args(["myapp"])
+        assert app == "myapp"
+        assert data_dir is None
+        assert http == 18420
+        assert ws == 18421
+        assert wds == []
+
+    def test_custom_ports(self):
+        app, _, http, ws, _ = _parse_dev_args(["myapp", "--http-port", "9000", "--ws-port", "9001"])
+        assert http == 9000
+        assert ws == 9001
+
+    def test_data_dir(self, tmp_path):
+        app, data_dir, _, _, _ = _parse_dev_args(["myapp", "--data-dir", str(tmp_path)])
+        assert data_dir == tmp_path
+
+    def test_watch_dir_single(self, tmp_path):
+        _, _, _, _, wds = _parse_dev_args(["myapp", "--watch-dir", str(tmp_path)])
+        assert wds == [str(tmp_path)]
+
+    def test_watch_dir_multiple(self, tmp_path):
+        d1 = str(tmp_path / "a")
+        d2 = str(tmp_path / "b")
+        _, _, _, _, wds = _parse_dev_args(["myapp", "--watch-dir", d1, "--watch-dir", d2])
+        assert wds == [d1, d2]
+
+
+# ---------------------------------------------------------------------------
+# _cmd_dev
+# ---------------------------------------------------------------------------
+
+
+class TestCmdDev:
+    def test_sdk_not_found_returns_1(self, capsys):
+        with mock.patch("cli._find_sdk_file", return_value=None):
+            rc = _cmd_dev("myapp")
+        assert rc == 1
+        out = capsys.readouterr()
+        assert "not found" in out.err
+
+    def test_launches_subprocess_with_dev_flag(self, tmp_path, capsys):
+        fake_sdk = tmp_path / "sdk.js"
+        fake_sdk.touch()
+        fake_result = mock.Mock()
+        fake_result.returncode = 0
+        with mock.patch("cli._find_sdk_file", return_value=fake_sdk):
+            with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
+                rc = _cmd_dev("myapp", data_dir=tmp_path)
+        assert rc == 0
+        call_args = mock_run.call_args[0][0]
+        assert "--dev" in call_args
+        assert "--app" in call_args
+        assert "myapp" in call_args
+
+    def test_watch_dirs_passed_to_subprocess(self, tmp_path, capsys):
+        fake_sdk = tmp_path / "sdk.js"
+        fake_sdk.touch()
+        watch = str(tmp_path / "src")
+        fake_result = mock.Mock()
+        fake_result.returncode = 0
+        with mock.patch("cli._find_sdk_file", return_value=fake_sdk):
+            with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
+                rc = _cmd_dev("myapp", data_dir=tmp_path, watch_dirs=[watch])
+        assert rc == 0
+        call_args = mock_run.call_args[0][0]
+        assert "--watch-dir" in call_args
+        assert watch in call_args
+
+    def test_app_dir_auto_watched_when_exists(self, tmp_path, capsys):
+        fake_sdk = tmp_path / "sdk.js"
+        fake_sdk.touch()
+        app_dir = tmp_path / "apps" / "myapp"
+        app_dir.mkdir(parents=True)
+        fake_result = mock.Mock()
+        fake_result.returncode = 0
+        with mock.patch("cli._find_sdk_file", return_value=fake_sdk):
+            with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
+                _cmd_dev("myapp", data_dir=tmp_path)
+        call_args = mock_run.call_args[0][0]
+        assert "--watch-dir" in call_args
+        assert str(app_dir) in call_args
+
+    def test_keyboard_interrupt_returns_0(self, tmp_path, capsys):
+        fake_sdk = tmp_path / "sdk.js"
+        fake_sdk.touch()
+        with mock.patch("cli._find_sdk_file", return_value=fake_sdk):
+            with mock.patch("subprocess.run", side_effect=KeyboardInterrupt):
+                rc = _cmd_dev("myapp", data_dir=tmp_path)
+        assert rc == 0
+
+    def test_prints_startup_message(self, tmp_path, capsys):
+        fake_sdk = tmp_path / "sdk.js"
+        fake_sdk.touch()
+        fake_result = mock.Mock()
+        fake_result.returncode = 0
+        with mock.patch("cli._find_sdk_file", return_value=fake_sdk):
+            with mock.patch("subprocess.run", return_value=fake_result):
+                _cmd_dev("myapp", data_dir=tmp_path)
+        out = capsys.readouterr().out
+        assert "myapp" in out
+        assert "18420" in out
+
+
+# ---------------------------------------------------------------------------
+# dev dispatch via main()
+# ---------------------------------------------------------------------------
+
+
+class TestDevMainDispatch:
+    def test_dev_dispatched_from_main(self, tmp_path, capsys):
+        fake_result = mock.Mock()
+        fake_result.returncode = 0
+        fake_sdk = tmp_path / "sdk.js"
+        fake_sdk.touch()
+        with mock.patch("sys.argv", ["openwebgoggles", "dev", "myapp", "--data-dir", str(tmp_path)]):
+            with mock.patch("cli._find_sdk_file", return_value=fake_sdk):
+                with mock.patch("subprocess.run", return_value=fake_result):
+                    with pytest.raises(SystemExit) as exc_info:
+                        main()
+        assert exc_info.value.code == 0
+
+    def test_dev_in_usage_help(self, capsys):
+        _print_usage()
+        out = capsys.readouterr().out
+        assert "dev" in out

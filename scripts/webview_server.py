@@ -102,15 +102,30 @@ except ImportError:
     from http_handler import WebviewHTTPHandler  # noqa: I001,F811
 
 
+_SRC_EXTENSIONS: frozenset[str] = frozenset({".js", ".css", ".html"})
+
+
 class WebviewServer:
     """Main server orchestrating HTTP, WebSocket, and file watching."""
 
-    def __init__(self, data_dir: str, http_port: int, ws_port: int, sdk_path: str, apps_dir: str | None = None):
+    def __init__(
+        self,
+        data_dir: str,
+        http_port: int,
+        ws_port: int,
+        sdk_path: str,
+        apps_dir: str | None = None,
+        dev_mode: bool = False,
+        watch_dirs: list[str] | None = None,
+    ):
         self.data_dir = Path(data_dir)
         self.apps_dir = Path(apps_dir) if apps_dir else self.data_dir / "apps"
         self.http_port = http_port
         self.ws_port = ws_port
         self.sdk_path = Path(sdk_path)
+        self._dev_mode: bool = dev_mode
+        self._watch_dirs: list[Path] = [Path(d) for d in (watch_dirs or [])]
+        self._src_mtimes: dict[Path, float] = {}
         self.contract = DataContract(data_dir)
         self._running = True
         self._ws_clients: set = set()
@@ -406,12 +421,48 @@ class WebviewServer:
             except Exception:
                 self._ws_clients.discard(client)
 
+    def _init_src_mtimes(self) -> None:
+        """Snapshot current mtimes for all watched source files."""
+        for watch_dir in self._watch_dirs:
+            try:
+                for path in watch_dir.rglob("*"):
+                    if path.is_file() and path.suffix in _SRC_EXTENSIONS:
+                        self._src_mtimes[path] = path.stat().st_mtime
+            except OSError:
+                pass
+
+    def _check_src_changes(self) -> list[Path]:
+        """Return list of source files whose mtime has changed since last check."""
+        changed: list[Path] = []
+        for watch_dir in self._watch_dirs:
+            try:
+                for path in watch_dir.rglob("*"):
+                    if not path.is_file() or path.suffix not in _SRC_EXTENSIONS:
+                        continue
+                    try:
+                        mtime = path.stat().st_mtime
+                    except OSError:
+                        continue
+                    prev = self._src_mtimes.get(path)
+                    if prev is None:
+                        # New file discovered — record but don't trigger reload
+                        self._src_mtimes[path] = mtime
+                    elif mtime != prev:
+                        self._src_mtimes[path] = mtime
+                        changed.append(path)
+            except OSError:
+                pass
+        return changed
+
     async def _file_watcher(self):  # pragma: no cover
         """Poll data contract files for changes and broadcast over WebSocket."""
         # Initialize mtimes
         self.contract.check_changes()
+        if self._dev_mode:
+            self._init_src_mtimes()
         last_broadcast: dict[str, float] = {}
         debounce_ms = 100  # minimum ms between broadcasts for the same file
+        last_reload: float = 0.0
         while self._running:
             await asyncio.sleep(0.5)
             changed = self.contract.check_changes()
@@ -447,6 +498,14 @@ class WebviewServer:
                         await self._broadcast({"type": "actions_updated", "data": data})
                         last_broadcast["actions"] = time.monotonic()
 
+            # Dev mode: watch source files and broadcast reload
+            if self._dev_mode:
+                src_changed = self._check_src_changes()
+                if src_changed and (now - last_reload) >= 0.5:
+                    logger.info("Dev: source changed (%s) — broadcasting reload", src_changed[0].name)
+                    await self._broadcast({"type": "reload"})
+                    last_reload = time.monotonic()
+
 
 def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="OpenWebGoggles Server")
@@ -460,6 +519,20 @@ def main():  # pragma: no cover
     parser.add_argument("--log-file", default=None, help="Path to log file (enables rotating file output)")
     parser.add_argument(
         "--log-format", default="text", choices=["text", "json"], help="Log format: text (default) or json"
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        default=False,
+        help="Enable dev mode: watch source files and broadcast reload on change",
+    )
+    parser.add_argument(
+        "--watch-dir",
+        action="append",
+        dest="watch_dirs",
+        default=None,
+        metavar="DIR",
+        help="Additional directory to watch for source changes (can be repeated)",
     )
     args = parser.parse_args()
 
@@ -496,6 +569,8 @@ def main():  # pragma: no cover
         ws_port=args.ws_port,
         sdk_path=args.sdk_path,
         apps_dir=args.apps_dir,
+        dev_mode=args.dev,
+        watch_dirs=args.watch_dirs,
     )
 
     loop = asyncio.new_event_loop()
