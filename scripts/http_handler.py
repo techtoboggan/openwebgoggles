@@ -16,8 +16,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from data_contract import DataContract, _strip_token  # noqa: I001
-from rate_limiter import RateLimiter  # noqa: I001
+try:
+    from .data_contract import DataContract, _strip_token
+    from .rate_limiter import RateLimiter
+except ImportError:
+    from data_contract import DataContract, _strip_token  # noqa: I001
+    from rate_limiter import RateLimiter  # noqa: I001
 
 try:
     try:

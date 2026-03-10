@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-03-10
+
+### Fixed
+
+- **Import crash on installed package** — `session.py` and `http_handler.py` used bare intra-package imports (`from exceptions import ...`, `from data_contract import ...`, `from rate_limiter import ...`) that work when running from the source tree but fail when installed via pip/pipx. Changed to the standard `try: from .X import / except ImportError: from X import` pattern used by all other modules.
+
+### Added
+
+- **Python 3.14 support** — Added to CI matrix and PyPI classifiers. No code changes required beyond the import fix above.
+
+---
+
 ## [0.16.0] - 2026-03-10
 
 ### Added

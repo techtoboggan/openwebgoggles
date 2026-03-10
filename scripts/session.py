@@ -25,7 +25,10 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from exceptions import AssetError, LockError, MergeError, SessionError
+try:
+    from .exceptions import AssetError, LockError, MergeError, SessionError
+except ImportError:
+    from exceptions import AssetError, LockError, MergeError, SessionError  # noqa: I001
 
 logger = logging.getLogger("openwebgoggles")
 
