@@ -216,6 +216,8 @@ Version monitor uses two-tier detection: cheap mtime poll (30s) → full METADAT
    - Creates the GitHub Release
    - `publish.yml` triggers on the new release → PyPI updated
    - `npm-publish.yml` triggers on the new release → npm updated
+   - `docker-publish.yml` triggers on the new release → GHCR updated
+   - `homebrew-update.yml` triggers on the new release → opens PR on techtoboggan/homebrew-tap
 
 **Manual override** (still works):
 
