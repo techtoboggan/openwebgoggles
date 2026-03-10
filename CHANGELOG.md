@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-03-10
+
+### Added
+
+**Phase 6 — Advanced Visualization Section Types**
+
+- **`tree` section type** — Hierarchical node/child display with expand/collapse; `MAX_TREE_NODES` (500) and `MAX_NESTING_DEPTH` (10) guards; `_strip_tree_nodes()` + `_validate_tree_nodes()` in SecurityGate
+- **`timeline` section type** — Gantt-style timeline with labelled event spans; date/datetime validation; color validation
+- **`heatmap` section type** — Matrix display with configurable color scale, row/column labels, cell tooltips
+- **`network` section type** — Graph diagram (nodes + edges) with optional `label`, `type`, and `weight` on edges
+
+**Phase 5 — Distribution & Ecosystem**
+
+- **Homebrew formula** — `Formula/openwebgoggles.rb`; auto-updated by `homebrew-update.yml` workflow on each GitHub Release
+- **Docker image** — `Dockerfile` + multi-arch GHCR publish via `docker-publish.yml`; `openwebgoggles serve` as entrypoint
+- **Automated release pipeline** — `release.yml` creates GitHub Release from CHANGELOG.md on `v*` tags; `publish.yml` triggers PyPI push automatically
+- **Cross-client compatibility matrix** — `scripts/tests/test_browser_e2e.py` compatibility scenarios; documented in `docs/compatibility.md`
+- **ESM/npm SDK** — `assets/sdk/openwebgoggles-sdk.mjs` + `openwebgoggles.d.ts` TypeScript declarations; `assets/sdk/package.json` for npm publish
+- **Architecture diagrams** — Mermaid sequence/component/flow diagrams in `docs/architecture.md`
+
+**Phase 4 — Reliability & Operations**
+
+- **Typed exception hierarchy** — `scripts/exceptions.py`: `OWGError → SessionError / LockError`, `StateValidationError / MergeError`, `AssetError`, `AuthError`; all bare `RuntimeError`/`ValueError` replaced
+- **Structured logging** — `JSONFormatter` with ISO timestamps, request IDs, and log rotation via `scripts/log_config.py`; `openwebgoggles logs` CLI command
+- **`webview_server.py` module split** — Extracted `WebSocketHandler` → `ws_handler.py`, `FileWatcher` → `file_watcher.py`, `WebviewHTTPHandler` → `http_handler.py`
+
+**Phase 3 — Developer Experience**
+
+- **Hot-reload dev server** — `openwebgoggles dev` watches source files and pushes live updates to the browser without restarting the session
+- **Scaffold command** — `openwebgoggles scaffold <app-name>` generates a working custom app template in `assets/apps/`
+- **File upload field** — `type: "file"` with MIME-type allowlist, max size, `accept` attribute, and SecurityGate validation
+
+### Fixed
+
+- **WebSocket dispatch resilience** — Unhandled exceptions in `_dispatch()` are now logged and the connection kept open instead of silently terminating; unknown message types logged as warnings
+
+### Changed
+
+- SecurityGate now validates tree nodes separately via `_validate_tree_nodes()` / `_validate_tree_node_props()` before depth check to preserve `MAX_NESTING_DEPTH` invariant
+
+### Internal
+
+- **ESLint CI job** — `js-lint` job in `ci.yml` runs `eslint` on `assets/apps/dynamic/` and `assets/sdk/openwebgoggles-sdk.js` with security-focused rules (`no-eval`, `no-implied-eval`, `no-new-func`, `no-undef`)
+- **Test coverage** — Added 22 direct unit tests for `FileWatcher.init_src_mtimes/check_src_changes` and `monitor.py` helper functions; overall coverage 93%
+- **QA Protocol** — `AGENTS.md` § "QA Protocol" documents 5-phase anti-false-positive checklist with mandatory verification questions
+
+---
+
 ## [0.15.0] - 2026-03-08
 
 ### Added
