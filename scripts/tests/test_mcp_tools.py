@@ -1797,3 +1797,184 @@ class TestWebviewCloseXSS:
             loop.close()
 
         assert result.get("status") == "ok"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# monitor.py helper functions — direct unit tests
+# _version_monitor tests above always mock these; test the implementations here.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestMonitorHelpers:
+    """Unit tests for monitor.py helper functions."""
+
+    def test_get_installed_version_info_returns_tuple(self):
+        """Always returns a (str, Path|None) tuple — never raises."""
+        from monitor import _get_installed_version_info
+
+        version, path = _get_installed_version_info()
+        assert isinstance(version, str)
+        assert path is None or hasattr(path, "name")
+
+    def test_get_installed_version_info_not_installed(self):
+        """Returns ('unknown', None) when package is not found."""
+        import importlib.metadata
+
+        from monitor import _get_installed_version_info
+
+        with mock.patch(
+            "importlib.metadata.distribution",
+            side_effect=importlib.metadata.PackageNotFoundError,
+        ):
+            version, path = _get_installed_version_info()
+
+        assert version == "unknown"
+        assert path is None
+
+    def test_get_site_packages_dirs_returns_list(self):
+        """Always returns a list (possibly empty)."""
+        from monitor import _get_site_packages_dirs
+
+        dirs = _get_site_packages_dirs()
+        assert isinstance(dirs, list)
+
+    def test_get_site_packages_dirs_filters_correctly(self, tmp_path):
+        """Only paths named 'site-packages' that exist are included."""
+        import sys
+
+        from monitor import _get_site_packages_dirs
+
+        site_dir = tmp_path / "site-packages"
+        site_dir.mkdir()
+        other_dir = tmp_path / "lib"
+        other_dir.mkdir()
+        nonexistent = tmp_path / "site-packages-nope"
+
+        with mock.patch.object(sys, "path", [str(site_dir), str(other_dir), str(nonexistent)]):
+            dirs = _get_site_packages_dirs()
+
+        assert site_dir in dirs
+        assert other_dir not in dirs
+
+    def test_read_version_fresh_from_dist_info_hint(self, tmp_path):
+        """Reads version from METADATA file at the hint path."""
+        from monitor import _read_version_fresh
+
+        dist_info = tmp_path / "openwebgoggles-1.2.3.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text("Metadata-Version: 2.1\nVersion: 1.2.3\nName: openwebgoggles\n")
+
+        assert _read_version_fresh(dist_info) == "1.2.3"
+
+    def test_read_version_fresh_hint_missing_falls_to_scan(self, tmp_path):
+        """Falls through to site-packages scan when hint METADATA doesn't exist."""
+        import sys
+
+        from monitor import _read_version_fresh
+
+        hint = tmp_path / "missing-dist-info"  # does not exist
+
+        site_dir = tmp_path / "site-packages"
+        site_dir.mkdir()
+        dist_info = site_dir / "openwebgoggles-7.7.7.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text("Version: 7.7.7\n")
+
+        with mock.patch.object(sys, "path", [str(site_dir)]):
+            assert _read_version_fresh(hint) == "7.7.7"
+
+    def test_read_version_fresh_scans_site_packages(self, tmp_path):
+        """Finds version by scanning site-packages when hint is None."""
+        import sys
+
+        from monitor import _read_version_fresh
+
+        site_dir = tmp_path / "site-packages"
+        site_dir.mkdir()
+        dist_info = site_dir / "openwebgoggles-9.9.9.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text("Version: 9.9.9\n")
+
+        with mock.patch.object(sys, "path", [str(site_dir)]):
+            assert _read_version_fresh(None) == "9.9.9"
+
+    def test_read_version_fresh_fallback_importlib(self, tmp_path):
+        """Falls back to importlib when no dist-info files found on disk."""
+        import sys
+
+        from monitor import _read_version_fresh
+
+        with mock.patch.object(sys, "path", []):
+            with mock.patch("importlib.metadata.distribution") as mock_dist:
+                mock_dist.return_value.metadata = {"Version": "3.3.3"}
+                result = _read_version_fresh(None)
+
+        assert result == "3.3.3"
+
+    def test_read_version_fresh_unknown_when_all_fail(self):
+        """Returns 'unknown' when every strategy fails."""
+        import importlib.metadata
+        import sys
+
+        from monitor import _read_version_fresh
+
+        with mock.patch.object(sys, "path", []):
+            with mock.patch(
+                "importlib.metadata.distribution",
+                side_effect=importlib.metadata.PackageNotFoundError,
+            ):
+                result = _read_version_fresh(None)
+
+        assert result == "unknown"
+
+    def test_task_done_callback_logs_exception(self):
+        """Background task crashes are logged, not silently swallowed."""
+        from monitor import _task_done_callback
+
+        task = mock.MagicMock()
+        task.cancelled.return_value = False
+        exc = ValueError("test crash")
+        task.exception.return_value = exc
+        task.get_name.return_value = "test_task"
+
+        with mock.patch("monitor.logger") as mock_log:
+            _task_done_callback(task)
+
+        mock_log.error.assert_called_once()
+
+    def test_task_done_callback_ignores_cancelled(self):
+        """Cancelled tasks produce no log output."""
+        from monitor import _task_done_callback
+
+        task = mock.MagicMock()
+        task.cancelled.return_value = True
+
+        with mock.patch("monitor.logger") as mock_log:
+            _task_done_callback(task)
+
+        mock_log.error.assert_not_called()
+
+    def test_read_version_fresh_skips_unreadable_metadata(self, tmp_path):
+        """OSError reading a METADATA file does not crash — moves to next."""
+        import importlib.metadata
+        import sys
+
+        from monitor import _read_version_fresh
+
+        site_dir = tmp_path / "site-packages"
+        site_dir.mkdir()
+        dist_info = site_dir / "openwebgoggles-2.0.0.dist-info"
+        dist_info.mkdir()
+        # METADATA exists but is unreadable
+        metadata = dist_info / "METADATA"
+        metadata.write_text("Version: 2.0.0\n")
+
+        with mock.patch("pathlib.Path.read_text", side_effect=OSError("permission denied")):
+            with mock.patch.object(sys, "path", [str(site_dir)]):
+                with mock.patch(
+                    "importlib.metadata.distribution",
+                    side_effect=importlib.metadata.PackageNotFoundError,
+                ):
+                    result = _read_version_fresh(None)
+
+        assert result == "unknown"  # all strategies failed gracefully

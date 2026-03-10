@@ -3358,3 +3358,152 @@ class TestSdkFallbackFileServing:
         auth = {"authorization": "Bearer secret_token_abc"}
         w = await send_request(h, "GET", "/../../etc/passwd", headers=auth)
         assert w.status_code == 403, "Traversal through SDK fallback must be blocked"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FileWatcher.init_src_mtimes / check_src_changes — direct unit tests
+# These methods are synchronous helpers that live inside the async watch() loop
+# (pragma: no cover) but are fully testable in isolation.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFileWatcherSrcDetection:
+    """Unit tests for FileWatcher source-file mtime tracking."""
+
+    @staticmethod
+    def _make_watcher(watch_dirs):
+        from file_watcher import FileWatcher
+        from unittest.mock import AsyncMock, MagicMock
+
+        contract = MagicMock()
+        gate = MagicMock()
+        broadcast = AsyncMock()
+        return FileWatcher(contract, gate, broadcast, dev_mode=True, watch_dirs=watch_dirs)
+
+    def test_init_src_mtimes_records_js_files(self, tmp_path):
+        js = tmp_path / "app.js"
+        js.write_text("// test")
+        css = tmp_path / "style.css"
+        css.write_text("body {}")
+        html = tmp_path / "index.html"
+        html.write_text("<html></html>")
+
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()
+
+        assert js in w._src_mtimes
+        assert css in w._src_mtimes
+        assert html in w._src_mtimes
+
+    def test_init_src_mtimes_ignores_non_src_extensions(self, tmp_path):
+        py = tmp_path / "server.py"
+        py.write_text("# python")
+        txt = tmp_path / "readme.txt"
+        txt.write_text("readme")
+        json_file = tmp_path / "data.json"
+        json_file.write_text("{}")
+
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()
+
+        assert py not in w._src_mtimes
+        assert txt not in w._src_mtimes
+        assert json_file not in w._src_mtimes
+
+    def test_init_src_mtimes_missing_dir_is_silent(self, tmp_path):
+        w = self._make_watcher([tmp_path / "nonexistent"])
+        w.init_src_mtimes()  # must not raise
+        assert w._src_mtimes == {}
+
+    def test_check_src_changes_detects_modification(self, tmp_path):
+        js = tmp_path / "app.js"
+        js.write_text("// original")
+
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()
+
+        # Force a stale recorded mtime to simulate a file change
+        w._src_mtimes[js] = 0.0
+
+        changed = w.check_src_changes()
+        assert js in changed
+
+    def test_check_src_changes_no_change_returns_empty(self, tmp_path):
+        js = tmp_path / "app.js"
+        js.write_text("// original")
+
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()
+
+        changed = w.check_src_changes()
+        assert changed == []
+
+    def test_check_src_changes_new_file_recorded_but_not_reported(self, tmp_path):
+        """A file discovered for the first time is tracked but not in 'changed'."""
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()  # empty dir
+
+        js = tmp_path / "new.js"
+        js.write_text("// new")
+
+        changed = w.check_src_changes()
+        assert js not in changed  # first encounter — not a change
+        assert js in w._src_mtimes  # but now tracked
+
+    def test_check_src_changes_deleted_file_skipped(self, tmp_path):
+        """Files deleted between init and check should not appear in changed."""
+        js = tmp_path / "app.js"
+        js.write_text("// test")
+
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()
+        js.unlink()
+
+        changed = w.check_src_changes()
+        assert js not in changed
+
+    def test_check_src_changes_multiple_watch_dirs(self, tmp_path):
+        dir1 = tmp_path / "d1"
+        dir1.mkdir()
+        dir2 = tmp_path / "d2"
+        dir2.mkdir()
+
+        js1 = dir1 / "a.js"
+        js1.write_text("// a")
+        js2 = dir2 / "b.js"
+        js2.write_text("// b")
+
+        w = self._make_watcher([dir1, dir2])
+        w.init_src_mtimes()
+
+        w._src_mtimes[js1] = 0.0
+        w._src_mtimes[js2] = 0.0
+
+        changed = w.check_src_changes()
+        assert js1 in changed
+        assert js2 in changed
+
+    def test_check_src_changes_subdirectory_files(self, tmp_path):
+        """Files in subdirectories should also be tracked."""
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        js = sub / "nested.js"
+        js.write_text("// nested")
+
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()
+
+        assert js in w._src_mtimes
+
+    def test_check_src_changes_updated_mtime_stored(self, tmp_path):
+        """After detecting a change the new mtime is stored, not re-reported next call."""
+        js = tmp_path / "app.js"
+        js.write_text("// v1")
+
+        w = self._make_watcher([tmp_path])
+        w.init_src_mtimes()
+        w._src_mtimes[js] = 0.0
+
+        w.check_src_changes()  # detect the change
+        changed_again = w.check_src_changes()  # now mtime is current — no change
+        assert js not in changed_again
