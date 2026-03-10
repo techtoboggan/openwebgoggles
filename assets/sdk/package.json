@@ -1,0 +1,41 @@
+{
+  "name": "openwebgoggles",
+  "version": "0.15.0",
+  "description": "Browser-based human-in-the-loop UIs for AI coding agents — JS SDK",
+  "license": "Apache-2.0",
+  "author": "Techtoboggan",
+  "homepage": "https://github.com/techtoboggan/openwebgoggles",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/techtoboggan/openwebgoggles.git",
+    "directory": "assets/sdk"
+  },
+  "keywords": [
+    "webview",
+    "hitl",
+    "human-in-the-loop",
+    "mcp",
+    "agent",
+    "openwebgoggles"
+  ],
+  "main": "./openwebgoggles-sdk.js",
+  "module": "./openwebgoggles-sdk.mjs",
+  "types": "./openwebgoggles.d.ts",
+  "exports": {
+    ".": {
+      "import": "./openwebgoggles-sdk.mjs",
+      "require": "./openwebgoggles-sdk.js",
+      "types": "./openwebgoggles.d.ts"
+    }
+  },
+  "files": [
+    "openwebgoggles-sdk.js",
+    "openwebgoggles-sdk.mjs",
+    "openwebgoggles.d.ts",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=16"
+  }
+}

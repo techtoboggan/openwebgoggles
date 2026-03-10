@@ -207,7 +207,7 @@ Version monitor uses two-tier detection: cheap mtime poll (30s) → full METADAT
 
 **Automated flow (preferred):**
 
-1. Bump version in `pyproject.toml`
+1. Bump version in `pyproject.toml` **and** `assets/sdk/package.json` (keep in sync)
 2. Update `CHANGELOG.md` — add a `## [X.Y.Z] - YYYY-MM-DD` section
 3. Commit and push to main
 4. `git tag v0.X.Y && git push origin v0.X.Y`
@@ -215,6 +215,7 @@ Version monitor uses two-tier detection: cheap mtime poll (30s) → full METADAT
    - Extracts the `## [X.Y.Z]` section from `CHANGELOG.md` as release notes
    - Creates the GitHub Release
    - `publish.yml` triggers on the new release → PyPI updated
+   - `npm-publish.yml` triggers on the new release → npm updated
 
 **Manual override** (still works):
 
