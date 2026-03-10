@@ -1,0 +1,56 @@
+# Version control
+.git
+.gitignore
+
+# Python cache / build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# Development environments
+.venv/
+venv/
+env/
+
+# Test outputs and cache
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# Data directories (user-mounted at runtime)
+.openwebgoggles/
+.openwebgoggles-dev/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Pre-commit
+.pre-commit-cache/
+
+# Docs (not needed in image)
+docs/
+
+# CI/CD (not needed in image)
+.github/
+
+# Node (SDK package artifacts)
+assets/sdk/node_modules/
+assets/sdk/package-lock.json
+assets/sdk/yarn.lock
+
+# macOS
+.DS_Store
+
+# Playwright test output
+test-results/
+playwright-report/

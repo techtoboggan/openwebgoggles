@@ -1,0 +1,72 @@
+name: Build and Publish Docker Image
+
+# Builds a multi-arch image (linux/amd64 + linux/arm64) and pushes to GHCR.
+# Triggers on GitHub Release (same as PyPI + npm publish).
+#
+# Image tags produced:
+#   ghcr.io/<owner>/openwebgoggles:latest
+#   ghcr.io/<owner>/openwebgoggles:<version>   (e.g. 0.15.0)
+#   ghcr.io/<owner>/openwebgoggles:v<version>  (e.g. v0.15.0)
+
+on:
+  release:
+    types: [published]
+  # Also allow manual dispatch for testing
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write  # needed to push to GHCR
+
+jobs:
+  build-and-push:
+    name: Build and push Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Extract version from tag or ref
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Tag: ${TAG}, Version: ${VERSION}"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU (for multi-arch build)
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392  # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5730b3f7f74e4acbf4c63ee2e4bef4dbbf70741  # v3
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbea8a09e96b66a29e33c26e5d8e  # v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/openwebgoggles
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
+            type=raw,value=latest,enable=${{ !contains(steps.version.outputs.tag, '-') }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bff5c11cdc37c6e9de  # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            PYTHON_VERSION=3.12
