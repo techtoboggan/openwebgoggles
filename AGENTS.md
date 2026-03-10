@@ -229,6 +229,82 @@ Version monitor uses two-tier detection: cheap mtime poll (30s) → full METADAT
 
 The publish workflow verifies `pyproject.toml` version matches the git tag before building.
 
+## QA Protocol
+
+Follow this protocol exactly when doing code review. A past agent flagged 4 "critical bugs" that were all false positives caused by partial file reads and threading reasoning applied to asyncio code.
+
+### Phase 1 — Automated tools first
+
+Run these before opening any file. Do not manually re-report what these already catch.
+
+```bash
+python -m pytest scripts/tests/ -m "not slow" --cov=scripts --cov-fail-under=90
+ruff check scripts/ && ruff format --check scripts/
+bandit -r scripts/ --exclude scripts/.venv,scripts/tests/ -ll
+pip-audit
+npx eslint@8 assets/apps/dynamic/ --ext .js assets/sdk/openwebgoggles-sdk.js
+```
+
+### Phase 2 — Before reading any code
+
+State the precise question you are answering. "Is the WebSocket client removed from `_ws_clients` when an exception occurs?" is a question. "Review ws_handler.py for bugs" is not. No question = no finding.
+
+### Phase 3 — Full execution path tracing (mandatory)
+
+**3a. Read the entire function.** `finally` blocks appear 60–100 lines after the `return` that triggered the concern. Reading lines 114–165 of a 246-line function is not reading the function.
+
+**3b. Find every `try/finally` before flagging a resource leak.** A `finally` runs on every exit — `return`, `raise`, normal fall-through. If the resource is closed in `finally`, it is closed on all paths, including the bare `return` you just saw.
+
+**3c. Distinguish asyncio from threading before flagging a race.** In asyncio, context switches only happen at `await`. A synchronous function with no `await` runs atomically — no interleaving, no race. Applying mutex/lock reasoning to such code is wrong.
+
+**3d. Check explanatory comments.** This codebase leaves comments at non-obvious decisions (e.g. `# Close stderr pipe to prevent buffer deadlock`). If a comment explains why the pattern is correct, your finding must explain why the comment is wrong.
+
+**3e. Search the test suite.** `grep -rn "keyword" scripts/tests/`. If passing tests cover the behavior, explain why they are insufficient — don't just restate the concern.
+
+### Phase 4 — Verification pass (every finding)
+
+Answer all five before writing up a finding. Missing any = not ready to report.
+
+| # | Question |
+|---|----------|
+| V1 | What is the exact line and mechanism? ("The writer may not close" is not sufficient.) |
+| V2 | What is the complete call path from entry to the buggy exit? |
+| V3 | What exact input/condition triggers it? |
+| V4 | Does a `finally`, context manager, or documented cleanup path handle this? (State the lines you read.) |
+| V5 | What is the concrete observable consequence? (fd exhaustion, deadlock, corrupted state — not "a leak might occur") |
+
+### Phase 5 — Severity
+
+| Severity | Requires |
+|----------|----------|
+| Critical | RCE, auth bypass, data exfiltration |
+| High | DoS, privilege escalation, server crash |
+| Medium | Functional breakage under specific conditions |
+| Low | Code quality, minor edge cases |
+| **False Positive** | **Handled by code the reviewer did not fully read** |
+
+### Required finding format
+
+```
+## Finding #N: [title]
+Severity: [Critical/High/Medium/Low]
+File+lines: scripts/foo.py:114–203 (full function confirmed read)
+Trigger: [exact condition]
+Path: entry → line X → line Y → [exit]
+Cleanup checked: [Yes — finally at lines 180–186 / No — none found after reading full function]
+Tests checked: [Yes — no coverage / Yes — tests pass but wrong because ...]
+Consequence: [concrete description]
+Why existing code does not handle this: [specific explanation]
+```
+
+### Anti-patterns
+
+- Reading a partial line range and concluding "no cleanup exists"
+- Applying race-condition reasoning to `async def` functions without `await` at the concern point
+- Flagging patterns that have an explanatory comment answering the concern
+- Re-reporting what ruff/bandit/pytest already catch
+- High-confidence language for findings based on <50% of the relevant function
+
 ## Common Pitfalls
 
 - **Ruff UP038**: `isinstance(x, int | float)` not `(int, float)` — Python 3.10+ union syntax
