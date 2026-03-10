@@ -1,0 +1,25 @@
+{
+  "env": {
+    "browser": true,
+    "amd": true,
+    "commonjs": true,
+    "es2015": true
+  },
+  "globals": {
+    "OWG": "readonly",
+    "OpenWebGoggles": "readonly",
+    "DOMPurify": "readonly",
+    "marked": "readonly"
+  },
+  "rules": {
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error",
+    "no-undef": "error",
+    "no-console": "off"
+  },
+  "ignorePatterns": [
+    "assets/sdk/purify.min.js",
+    "assets/sdk/openwebgoggles-sdk.mjs"
+  ]
+}

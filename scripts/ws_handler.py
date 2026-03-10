@@ -191,7 +191,10 @@ class WebSocketHandler:
                         logger.warning("WS: Rejected unsigned message (type=%s) — signed envelope required", msg_type)
                         continue
 
-                await self._dispatch(msg, websocket)
+                try:
+                    await self._dispatch(msg, websocket)
+                except Exception:
+                    logger.exception("WS: Unhandled error in _dispatch — keeping connection open")
 
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -238,3 +241,6 @@ class WebSocketHandler:
             state = self._contract.get_state()
             if state:
                 await self.send_signed(websocket, {"type": "state_updated", "data": state})
+
+        else:
+            logger.warning("WS: Unknown message type %r — ignoring", msg_type)

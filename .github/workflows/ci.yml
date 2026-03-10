@@ -84,3 +84,22 @@ jobs:
         run: |
           pip install detect-secrets
           detect-secrets scan --baseline .secrets.baseline
+
+  js-lint:
+    name: Lint JavaScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e  # v4
+        with:
+          node-version: "20"
+
+      - name: Install ESLint
+        run: npm install --global eslint@8
+
+      - name: Lint dynamic app JS
+        run: eslint assets/apps/dynamic/ --ext .js
+
+      - name: Lint SDK JS
+        run: eslint assets/sdk/openwebgoggles-sdk.js
