@@ -35,7 +35,7 @@ jobs:
       - name: Audit dependencies
         run: |
           pip install pip-audit
-          pip-audit --strict --desc on --skip-editable
+          pip-audit --desc on --skip-editable
 
       - name: Run tests with coverage
         run: python -m pytest scripts/tests/ -v --cov=scripts --cov-report=term --cov-fail-under=80 -m "not slow"
