@@ -91,6 +91,14 @@ except ImportError:
     )
 
 # ---------------------------------------------------------------------------
+# Data contract utilities — imported from data_contract.py
+# ---------------------------------------------------------------------------
+try:
+    from data_contract import SessionArchive  # noqa: I001, E402
+except ImportError:
+    from scripts.data_contract import SessionArchive  # type: ignore[no-redef]  # noqa: E402, I001
+
+# ---------------------------------------------------------------------------
 # Monitor utilities — imported from monitor.py
 # ---------------------------------------------------------------------------
 try:
@@ -839,6 +847,8 @@ class AppModeState:
         self.actions: list[dict[str, Any]] = []
         self._state_lock = threading.Lock()
         self._actions_lock = threading.Lock()
+        self.persist_enabled: bool = False
+        self.session_id: str = str(uuid.uuid4())
 
     def write_state(self, state: dict[str, Any]) -> None:
         with self._state_lock:
@@ -1057,6 +1067,31 @@ def _get_app_state() -> AppModeState:
     if _app_mode_state is None:
         _app_mode_state = AppModeState()
     return _app_mode_state
+
+
+def _get_session_archive() -> SessionArchive:
+    """Get a SessionArchive for persisting session snapshots."""
+    data_dir = os.environ.get("OWG_DATA_DIR", "")
+    if not data_dir:
+        data_dir = str(Path.home() / ".local" / "share" / "openwebgoggles")
+    return SessionArchive(data_dir)
+
+
+def _persist_session(
+    session_id: str,
+    state: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    mode: str = "browser",
+) -> None:
+    """Save a session snapshot to disk (fire-and-forget)."""
+    try:
+        archive = _get_session_archive()
+        actions = result.get("actions", [])
+        archive.save(session_id, state=state, actions=actions, mode=mode)
+        logger.info("Session %s persisted (%s mode)", session_id[:8], mode)
+    except Exception:
+        logger.warning("Failed to persist session %s", session_id[:8], exc_info=True)
 
 
 def _get_bundled_html() -> str:
@@ -1386,6 +1421,7 @@ async def openwebgoggles(
     timeout: int = 300,
     app: str = "dynamic",
     preset: str | None = None,
+    persist: bool = False,
     ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Show an interactive UI panel and wait for the user to respond.
@@ -1411,6 +1447,7 @@ async def openwebgoggles(
       - message_className (str, optional): CSS class(es) to add to the message box
       - status (str, optional): Badge text (e.g. "pending_review", "waiting_input")
       - theme (str, optional): UI color scheme — "dark" (default), "light", or "system" (follows OS)
+      - persist (bool, optional): Save session state on completion for later restore via openwebgoggles_restore()
       - custom_css (str, optional): Custom CSS injected as a <style> tag (validated for safety)
       - data (dict): UI layout with optional "sections" array. Each section has:
           - type: "form" | "items" | "text" | "actions" | "progress" | "log" | "diff" | "table" | "tabs" | "metric" | "chart"
@@ -1546,6 +1583,7 @@ async def openwebgoggles(
         app_state = _get_app_state()
         app_state.clear_actions()
         app_state.write_state(state)
+        app_state.persist_enabled = persist
         title = state.get("title", "Webview")
         return CallToolResult(
             content=[
@@ -1577,6 +1615,11 @@ async def openwebgoggles(
     )
     if result is None:
         return {"error": f"Timed out after {timeout}s waiting for user action."}
+
+    # Persist final state + actions if requested
+    if persist:
+        _persist_session(session.session_id, state, result, mode="browser")
+
     return result
 
 
@@ -1759,6 +1802,13 @@ async def openwebgoggles_close(message: str = "Session complete.") -> dict[str, 
         _host_fetched_ui_resource = False
         _reset_mode()
         if _app_mode_state is not None:
+            if _app_mode_state.persist_enabled:
+                _persist_session(
+                    _app_mode_state.session_id,
+                    _app_mode_state.state,
+                    {"actions": _app_mode_state.read_actions()},
+                    mode="app",
+                )
             _app_mode_state.clear()
         _stop_any_running_server()
         return {"status": "ok", "message": "Webview closed."}
@@ -1780,6 +1830,53 @@ async def openwebgoggles_close(message: str = "Session complete.") -> dict[str, 
         _session = None
         _stop_any_running_server()
         return {"status": "ok", "message": "Webview closed."}
+
+
+# ---------------------------------------------------------------------------
+# Session persistence tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+@_track_tool_call
+async def openwebgoggles_sessions(max_results: int = 20) -> dict[str, Any]:
+    """List persisted session snapshots.
+
+    Returns metadata for previously saved sessions (newest first).
+    Sessions are saved when persist=True is passed to the openwebgoggles() tool.
+
+    Each entry includes: session_id, title, mode, created_at, saved_at.
+    Use session_id with openwebgoggles_restore() to reload a previous session's state.
+    """
+    archive = _get_session_archive()
+    sessions = archive.list_sessions(max_results=max_results)
+    return {"count": len(sessions), "sessions": sessions}
+
+
+@mcp.tool()
+@_track_tool_call
+async def openwebgoggles_restore(session_id: str) -> dict[str, Any]:
+    """Restore a previously persisted session snapshot.
+
+    Loads the state and actions from a saved session. The returned state
+    can be passed directly to openwebgoggles() to resume the UI.
+
+    Args:
+        session_id: The session ID from openwebgoggles_sessions().
+    """
+    archive = _get_session_archive()
+    snapshot = archive.get(session_id)
+    if snapshot is None:
+        return {"error": f"Session not found: {session_id}"}
+    return {
+        "session_id": snapshot.get("session_id"),
+        "title": snapshot.get("title"),
+        "mode": snapshot.get("mode"),
+        "created_at": snapshot.get("created_at"),
+        "saved_at": snapshot.get("saved_at"),
+        "state": snapshot.get("state", {}),
+        "actions": snapshot.get("actions", []),
+    }
 
 
 # ---------------------------------------------------------------------------

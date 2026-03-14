@@ -101,3 +101,120 @@ def _strip_token(data: dict) -> dict:
     if "session" in safe and "token" in safe["session"]:
         del safe["session"]["token"]
     return safe
+
+
+# ---------------------------------------------------------------------------
+# Session persistence archive
+# ---------------------------------------------------------------------------
+
+# Maximum number of session snapshots to retain
+MAX_PERSISTED_SESSIONS = 100
+
+
+class SessionArchive:
+    """Manages persisted session snapshots in a ``sessions/`` subdirectory.
+
+    Each snapshot is a JSON file named ``<session_id>.json`` containing the
+    final state, actions taken, and metadata.
+    """
+
+    def __init__(self, data_dir: str | Path):
+        self.archive_dir = Path(data_dir) / "sessions"
+
+    def save(
+        self,
+        session_id: str,
+        *,
+        state: dict | None = None,
+        actions: list | None = None,
+        title: str | None = None,
+        mode: str = "browser",
+        created_at: str | None = None,
+    ) -> Path:
+        """Persist a session snapshot to disk.
+
+        Returns the path of the written file.
+        """
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+
+        snapshot = {
+            "session_id": session_id,
+            "title": title or (state or {}).get("title", "Untitled"),
+            "mode": mode,
+            "created_at": created_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "state": state or {},
+            "actions": actions or [],
+        }
+
+        path = self.archive_dir / f"{session_id}.json"
+        content = json.dumps(snapshot, indent=2)
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, content.encode())
+        finally:
+            os.close(fd)
+
+        # Enforce retention limit — remove oldest sessions beyond MAX
+        self._enforce_retention()
+        return path
+
+    def list_sessions(self, max_results: int = 50) -> list[dict]:
+        """Return metadata of saved sessions, newest first."""
+        if not self.archive_dir.is_dir():
+            return []
+
+        sessions = []
+        for p in self.archive_dir.iterdir():
+            if p.suffix != ".json":
+                continue
+            try:
+                data = json.loads(p.read_text())
+                sessions.append(
+                    {
+                        "session_id": data.get("session_id", p.stem),
+                        "title": data.get("title", "Untitled"),
+                        "mode": data.get("mode", "unknown"),
+                        "created_at": data.get("created_at", ""),
+                        "saved_at": data.get("saved_at", ""),
+                    }
+                )
+            except (json.JSONDecodeError, OSError):
+                continue
+
+        # Sort by saved_at descending
+        sessions.sort(key=lambda s: s.get("saved_at", ""), reverse=True)
+        return sessions[:max_results]
+
+    def get(self, session_id: str) -> dict | None:
+        """Load a persisted session snapshot by ID."""
+        path = self.archive_dir / f"{session_id}.json"
+        if not path.is_file():
+            return None
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def delete(self, session_id: str) -> bool:
+        """Delete a session snapshot. Returns True if deleted."""
+        path = self.archive_dir / f"{session_id}.json"
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+
+    def _enforce_retention(self) -> None:
+        """Remove oldest sessions when count exceeds MAX_PERSISTED_SESSIONS."""
+        if not self.archive_dir.is_dir():
+            return
+
+        snapshots = sorted(
+            (p for p in self.archive_dir.iterdir() if p.suffix == ".json"),
+            key=lambda p: p.stat().st_mtime,
+        )
+
+        while len(snapshots) > MAX_PERSISTED_SESSIONS:
+            oldest = snapshots.pop(0)
+            oldest.unlink(missing_ok=True)
