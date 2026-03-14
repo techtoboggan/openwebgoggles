@@ -536,6 +536,28 @@ class WebviewSession:
                 if sdk_file.suffix == ".js":
                     shutil.copy2(sdk_file, dest / sdk_file.name)
 
+        # Playground app needs the dynamic app's rendering modules
+        if app_name == "playground":
+            dynamic_dir = assets_dir / "apps" / "dynamic"
+            if dynamic_dir.is_dir():
+                for module in ("utils.js", "sections.js", "charts.js", "validation.js", "behaviors.js"):
+                    src_file = dynamic_dir / module
+                    if src_file.is_file():
+                        shutil.copy2(src_file, dest / module)
+                # Extract CSS from dynamic index.html for playground preview
+                self._extract_dynamic_css(dynamic_dir / "index.html", dest / "dynamic-styles.css")
+
+    @staticmethod
+    def _extract_dynamic_css(index_html: Path, dest_css: Path) -> None:
+        """Extract <style> content from dynamic/index.html into a standalone CSS file."""
+        import re as _re
+
+        text = index_html.read_text(encoding="utf-8")
+        # Extract content between first <style> and </style>
+        match = _re.search(r"<style>(.*?)</style>", text, _re.DOTALL)
+        if match:
+            dest_css.write_text(match.group(1).strip(), encoding="utf-8")
+
     def _write_manifest(self, app_name: str) -> None:
         """Write manifest.json with session metadata."""
         manifest = {

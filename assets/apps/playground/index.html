@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenWebGoggles Playground</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+      --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
+      --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+      --radius: 6px;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 14px; }
+
+    /* ─── Playground layout ─── */
+    .pg-layout { display: flex; height: 100vh; }
+    .pg-editor { width: 420px; min-width: 300px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--bg); }
+    .pg-preview { flex: 1; overflow: auto; background: var(--bg); }
+
+    .pg-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .pg-toolbar-left { display: flex; align-items: center; gap: 8px; }
+    .pg-toolbar-title { font-weight: 600; font-size: 14px; }
+    .pg-toolbar-right { display: flex; align-items: center; gap: 6px; }
+
+    .pg-preset-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .pg-preset-btn { padding: 3px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg3); color: var(--text2); cursor: pointer; font-family: inherit; }
+    .pg-preset-btn:hover { color: var(--text); border-color: var(--text3); }
+
+    .pg-editor-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+    .pg-textarea { flex: 1; width: 100%; resize: none; background: var(--bg); color: var(--text); border: none; outline: none; padding: 12px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; tab-size: 2; }
+    .pg-textarea::placeholder { color: var(--text3); }
+
+    .pg-status { padding: 6px 12px; font-size: 11px; border-top: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+    .pg-status-ok { color: var(--green); }
+    .pg-status-err { color: var(--red); }
+
+    .pg-resize { width: 4px; cursor: col-resize; background: transparent; flex-shrink: 0; position: relative; z-index: 10; }
+    .pg-resize:hover, .pg-resize.active { background: var(--blue); }
+
+    /* ─── Preview panel header ─── */
+    .pg-preview-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+    .pg-preview-title { font-weight: 500; font-size: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; }
+    .pg-preview-actions { display: flex; gap: 6px; }
+    .pg-btn { padding: 4px 10px; font-size: 11px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg3); color: var(--text2); cursor: pointer; font-family: inherit; }
+    .pg-btn:hover { color: var(--text); border-color: var(--text3); }
+    .pg-btn-primary { background: var(--blue); color: #000; border-color: var(--blue); }
+
+    /* ─── Preview content (mirrors dynamic app styles) ─── */
+    .pg-preview-content { padding: 20px; max-width: 860px; margin: 0 auto; }
+    .pg-empty { color: var(--text3); text-align: center; padding: 60px 20px; }
+    .pg-empty-hint { margin-top: 8px; font-size: 12px; }
+  </style>
+  <!-- Dynamic app's full CSS (for rendering sections) -->
+  <link rel="stylesheet" href="dynamic-styles.css" />
+</head>
+<body>
+  <div class="pg-layout">
+    <div class="pg-editor" id="pg-editor">
+      <div class="pg-toolbar">
+        <div class="pg-toolbar-left">
+          <span class="pg-toolbar-title">Playground</span>
+        </div>
+        <div class="pg-toolbar-right">
+          <button class="pg-btn" id="btn-format" title="Format JSON (Ctrl+Shift+F)">Format</button>
+          <button class="pg-btn" id="btn-copy" title="Copy to clipboard">Copy</button>
+        </div>
+      </div>
+      <div class="pg-preset-bar" id="preset-bar"></div>
+      <div class="pg-editor-area">
+        <textarea class="pg-textarea" id="editor" spellcheck="false" placeholder="Paste or type state JSON here..."></textarea>
+      </div>
+      <div class="pg-status" id="status">
+        <span class="pg-status-ok">Ready</span>
+      </div>
+    </div>
+    <div class="pg-resize" id="resize-handle"></div>
+    <div class="pg-preview">
+      <div class="pg-preview-header">
+        <span class="pg-preview-title">Preview</span>
+        <div class="pg-preview-actions">
+          <button class="pg-btn" id="btn-theme" title="Toggle theme">Theme</button>
+        </div>
+      </div>
+      <div class="pg-preview-content" id="preview">
+        <div class="pg-empty">
+          <div>Select a preset or paste state JSON to get started</div>
+          <div class="pg-empty-hint">The preview updates as you type</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Shared vendor libs (copied by session._copy_app from SDK dir) -->
+  <script src="marked.min.js"></script>
+  <script src="purify.min.js"></script>
+  <!-- Dynamic app rendering modules (copied alongside by playground setup) -->
+  <script src="utils.js"></script>
+  <script src="sections.js"></script>
+  <script src="charts.js"></script>
+  <script src="validation.js"></script>
+  <script src="behaviors.js"></script>
+  <!-- Playground logic -->
+  <script src="app.js"></script>
+</body>
+</html>

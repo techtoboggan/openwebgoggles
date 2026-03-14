@@ -862,6 +862,147 @@ def _parse_dev_args(argv: list[str]) -> tuple[str, Path | None, int, int, list[s
     return args.app_name, args.data_dir, args.http_port, args.ws_port, args.watch_dirs or []
 
 
+def _cmd_playground(
+    http_port: int = 18430,
+    ws_port: int = 18431,
+    no_open: bool = False,
+) -> int:
+    """Start the interactive playground for testing UI states.
+
+    Launches a split-pane editor where you can paste or edit state JSON
+    and see the rendered UI in real time.  Includes preset buttons for
+    common patterns (confirm, form, table, progress, etc.).
+    """
+    import subprocess
+    import webbrowser
+
+    data_dir = Path(".openwebgoggles-playground")
+
+    sdk = _find_sdk_file()
+    if sdk is None:
+        print("Error: openwebgoggles-sdk.js not found. Run from the repo root or install the package.", file=sys.stderr)
+        return 1
+
+    # Locate the playground app source
+    apps_dir = _find_playground_apps_dir()
+    if apps_dir is None:
+        print("Error: playground app not found in assets/apps/.", file=sys.stderr)
+        return 1
+
+    playground_src = apps_dir / "playground"
+    watch_dirs = [str(playground_src)]
+    # Also watch the dynamic app source (rendering modules)
+    dynamic_src = apps_dir / "dynamic"
+    if dynamic_src.is_dir():
+        watch_dirs.append(str(dynamic_src))
+
+    # Copy rendering modules from dynamic app into playground dir
+    _setup_playground_deps(apps_dir)
+
+    cmd: list[str] = [
+        sys.executable,
+        str(Path(__file__).resolve().parent / "webview_server.py"),
+        "--data-dir",
+        str(data_dir),
+        "--http-port",
+        str(http_port),
+        "--ws-port",
+        str(ws_port),
+        "--sdk-path",
+        str(sdk),
+        "--apps-dir",
+        str(apps_dir),
+        "--app",
+        "playground",
+        "--dev",
+    ]
+    for wd in watch_dirs:
+        cmd += ["--watch-dir", wd]
+
+    url = f"http://127.0.0.1:{http_port}"
+    print(f"Starting playground on {url}")
+    print("Press Ctrl+C to stop.\n")
+
+    if not no_open:
+        # Open browser after a brief delay to let the server start
+        import threading
+
+        def _open_browser():
+            time.sleep(1.5)
+            webbrowser.open(url)
+
+        threading.Thread(target=_open_browser, daemon=True).start()
+
+    try:
+        proc = subprocess.run(cmd, check=False)  # noqa: S603
+        return proc.returncode
+    except KeyboardInterrupt:
+        return 0
+
+
+def _setup_playground_deps(apps_dir: Path) -> None:
+    """Copy dynamic app rendering modules + CSS into the playground app directory."""
+    import re
+
+    playground_dir = apps_dir / "playground"
+    dynamic_dir = apps_dir / "dynamic"
+    if not dynamic_dir.is_dir():
+        return
+
+    # Copy rendering JS modules
+    for module in ("utils.js", "sections.js", "charts.js", "validation.js", "behaviors.js"):
+        src = dynamic_dir / module
+        if src.is_file():
+            shutil.copy2(src, playground_dir / module)
+
+    # Extract CSS from dynamic index.html
+    index_html = dynamic_dir / "index.html"
+    if index_html.is_file():
+        text = index_html.read_text(encoding="utf-8")
+        match = re.search(r"<style>(.*?)</style>", text, re.DOTALL)
+        if match:
+            (playground_dir / "dynamic-styles.css").write_text(match.group(1).strip(), encoding="utf-8")
+
+
+def _find_playground_apps_dir() -> Path | None:
+    """Locate the apps directory containing the playground app."""
+    # Dev mode: running from repo root
+    repo_root = Path(__file__).resolve().parent.parent
+    dev_path = repo_root / "assets" / "apps"
+    if (dev_path / "playground").is_dir():
+        return dev_path
+
+    # Installed package
+    try:
+        pkg_root = Path(importlib.metadata.distribution("openwebgoggles").locate_file(""))
+        pkg_path = pkg_root / "assets" / "apps"
+        if (pkg_path / "playground").is_dir():
+            return pkg_path
+    except importlib.metadata.PackageNotFoundError:
+        pass
+
+    return None
+
+
+def _parse_playground_args(argv: list[str]) -> tuple[int, int, bool]:
+    """Parse arguments for the playground subcommand.
+
+    Returns:
+        Tuple of (http_port, ws_port, no_open).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="openwebgoggles playground",
+        description="Start interactive playground for testing UI states.",
+    )
+    parser.add_argument("--http-port", type=int, default=18430, help="HTTP port (default: 18430)")
+    parser.add_argument("--ws-port", type=int, default=18431, help="WebSocket port (default: 18431)")
+    parser.add_argument("--no-open", action="store_true", help="Don't auto-open browser")
+    args = parser.parse_args(argv)
+    return args.http_port, args.ws_port, args.no_open
+
+
 def _print_usage() -> None:
     """Print top-level usage."""
     print("Usage: openwebgoggles <command> [options]\n")
@@ -874,5 +1015,6 @@ def _print_usage() -> None:
     print("  logs          Show server log output")
     print("  scaffold      Create a new custom app from template")
     print("  dev           Start webview server in dev mode with hot-reload")
+    print("  playground    Start interactive playground for testing UI states")
     print()
     print("Run 'openwebgoggles <command>' for command-specific help.")

@@ -1964,6 +1964,12 @@ def _dispatch_subcommand(cmd: str | None) -> bool:
         app_name, data_dir, http_port, ws_port, watch_dirs = _parse_dev_args(sys.argv[2:])
         sys.exit(_cmd_dev(app_name, data_dir=data_dir, http_port=http_port, ws_port=ws_port, watch_dirs=watch_dirs))
 
+    if cmd == "playground":
+        from cli import _cmd_playground, _parse_playground_args
+
+        http_port, ws_port, no_open = _parse_playground_args(sys.argv[2:])
+        sys.exit(_cmd_playground(http_port=http_port, ws_port=ws_port, no_open=no_open))
+
     if cmd in ("help", "--help", "-h") or (cmd is not None and cmd.startswith("-")):
         _print_usage()
         return True
@@ -1983,6 +1989,7 @@ def main():
         openwebgoggles logs [--lines N] [-f]    # Show server log
         openwebgoggles scaffold <app> [-o DIR]  # Create custom app scaffold
         openwebgoggles dev <app> [--watch-dir D] # Start dev server with hot-reload
+        openwebgoggles playground [--no-open]   # Interactive state playground
     """
     cmd = sys.argv[1] if len(sys.argv) > 1 else None
 
