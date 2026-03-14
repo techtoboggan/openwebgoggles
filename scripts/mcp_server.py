@@ -1410,6 +1410,7 @@ async def openwebgoggles(
       - message_format (str, optional): Set to "markdown" to render message as markdown
       - message_className (str, optional): CSS class(es) to add to the message box
       - status (str, optional): Badge text (e.g. "pending_review", "waiting_input")
+      - theme (str, optional): UI color scheme — "dark" (default), "light", or "system" (follows OS)
       - custom_css (str, optional): Custom CSS injected as a <style> tag (validated for safety)
       - data (dict): UI layout with optional "sections" array. Each section has:
           - type: "form" | "items" | "text" | "actions" | "progress" | "log" | "diff" | "table" | "tabs" | "metric" | "chart"

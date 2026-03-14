@@ -26,6 +26,39 @@ import unicodedata
 from typing import Any
 
 
+def _edit_distance(a: str, b: str) -> int:
+    """Compute Levenshtein edit distance between two strings."""
+    if len(a) > len(b):
+        a, b = b, a
+    prev = list(range(len(a) + 1))
+    for j in range(1, len(b) + 1):
+        curr = [j] + [0] * len(a)
+        for i in range(1, len(a) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            curr[i] = min(curr[i - 1] + 1, prev[i] + 1, prev[i - 1] + cost)
+        prev = curr
+    return prev[len(a)]
+
+
+def _suggest(value: str, allowed: frozenset[str], max_suggestions: int = 3) -> str:
+    """Return a 'did you mean?' suggestion string for an invalid value."""
+    if not value or not allowed:
+        return ""
+    lower = value.lower()
+    # Score by edit distance — suggest if within 3 edits or 50% of length
+    scored = []
+    for a in allowed:
+        dist = _edit_distance(lower, a.lower())
+        threshold = max(3, len(lower) // 2)
+        if dist <= threshold:
+            scored.append((dist, a))
+    scored.sort()
+    candidates = [a for _, a in scored[:max_suggestions]]
+    if candidates:
+        return f" Did you mean: {', '.join(repr(c) for c in candidates)}?"
+    return ""
+
+
 class SecurityGate:
     """Validates state payloads before they reach the browser."""
 
@@ -124,6 +157,13 @@ class SecurityGate:
             "markdown",
             "plain",
             "text",
+        }
+    )
+    ALLOWED_THEMES = frozenset(
+        {
+            "dark",
+            "light",
+            "system",
         }
     )
 
@@ -374,11 +414,17 @@ class SecurityGate:
                 "pages",
                 "activePage",
                 "showNav",
+                "theme",
             }
         )
         unknown = set(state.keys()) - ALLOWED_TOP_KEYS
         if unknown:
-            return False, f"Unknown top-level keys: {', '.join(sorted(unknown))}", {}
+            suggestions = "".join(_suggest(k, ALLOWED_TOP_KEYS) for k in sorted(unknown))
+            return (
+                False,
+                f"Unknown top-level keys: {', '.join(sorted(unknown))}.{suggestions} Valid keys: {', '.join(sorted(ALLOWED_TOP_KEYS))}",
+                {},
+            )
 
         # 2c. Validate message_className if present
         msg_cls = state.get("message_className", "")
@@ -410,6 +456,12 @@ class SecurityGate:
         show_nav = state.get("showNav")
         if show_nav is not None and not isinstance(show_nav, bool):
             return False, "showNav must be a boolean", {}
+
+        # 4d. Validate theme
+        theme = state.get("theme")
+        if theme is not None:
+            if not isinstance(theme, str) or theme not in self.ALLOWED_THEMES:
+                return False, f"Invalid theme: {theme!r}. Must be one of: {', '.join(sorted(self.ALLOWED_THEMES))}", {}
 
         # 5. Scan all strings for XSS patterns (including custom_css — CSS validation
         # catches CSS-specific attacks, but XSS patterns like <script> must also be caught)
@@ -521,7 +573,8 @@ class SecurityGate:
         if not isinstance(action_type, str):
             return False, "Action must have a type string"
         if action_type not in self.ALLOWED_ACTION_TYPES:
-            return False, f"Invalid action type: {action_type!r}"
+            hint = _suggest(action_type, self.ALLOWED_ACTION_TYPES)
+            return False, f"Invalid action type: {action_type!r}.{hint}"
 
         # Value size limit
         value = action.get("value")
@@ -688,7 +741,8 @@ class SecurityGate:
                 return False, f"sections[{i}] must be an object"
             sec_type = sec.get("type", "form")
             if sec_type not in self.ALLOWED_SECTION_TYPES:
-                return False, f"sections[{i}].type: invalid type {sec_type!r}"
+                hint = _suggest(sec_type, self.ALLOWED_SECTION_TYPES)
+                return False, f"sections[{i}].type: invalid type {sec_type!r}.{hint}"
 
             # Validate section format
             sec_fmt = sec.get("format", "")
@@ -730,7 +784,8 @@ class SecurityGate:
                         continue
                     field_type = f.get("type", "text")
                     if field_type not in self.ALLOWED_FIELD_TYPES:
-                        return False, f"sections[{i}].fields[{j}].type: invalid {field_type!r}"
+                        hint = _suggest(field_type, self.ALLOWED_FIELD_TYPES)
+                        return False, f"sections[{i}].fields[{j}].type: invalid {field_type!r}.{hint}"
                     key = f.get("key", "")
                     if key and not self.KEY_PATTERN.match(key):
                         return (
@@ -829,10 +884,12 @@ class SecurityGate:
                 return False, f"{prefix}.actions[{i}].id too long"
             atype = a.get("type", "")
             if atype and atype not in self.ALLOWED_ACTION_TYPES:
-                return False, f"{prefix}.actions[{i}].type: invalid {atype!r}"
+                hint = _suggest(atype, self.ALLOWED_ACTION_TYPES)
+                return False, f"{prefix}.actions[{i}].type: invalid {atype!r}.{hint}"
             astyle = a.get("style", "")
             if astyle and astyle not in self.ALLOWED_ACTION_STYLES:
-                return False, f"{prefix}.actions[{i}].style: invalid {astyle!r}"
+                hint = _suggest(astyle, self.ALLOWED_ACTION_STYLES)
+                return False, f"{prefix}.actions[{i}].style: invalid {astyle!r}.{hint}"
             # navigateTo — client-side page navigation (no agent round-trip)
             nav_to = a.get("navigateTo", "")
             if nav_to:

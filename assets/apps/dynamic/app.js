@@ -131,6 +131,18 @@
       els.hdrBadge.textContent = "";
     }
 
+    // Apply theme (dark is default, light via data-theme="light", system follows OS)
+    var theme = state.theme || "dark";
+    if (theme === "system") {
+      var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.body.removeAttribute("data-theme");
+      if (!prefersDark) document.body.setAttribute("data-theme", "light");
+    } else if (theme === "light") {
+      document.body.setAttribute("data-theme", "light");
+    } else {
+      document.body.removeAttribute("data-theme");
+    }
+
     // Inject custom CSS
     U.injectCustomCSS(state.custom_css || "");
 
