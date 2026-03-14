@@ -82,7 +82,7 @@ def bundle_html(assets_dir: Path | None = None) -> str:
     html = html.replace("</body>", f"{script_block}\n</body>")
 
     # Hide header in embedded mode (host provides its own chrome)
-    html = html.replace("<header>", '<header style="display:none">')
+    html = html.replace("<header", '<header style="display:none"', 1)
 
     # In embedded mode, remove min-height:100vh so iframe can size naturally
     html = html.replace("min-height: 100vh", "min-height: auto")

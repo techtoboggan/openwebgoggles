@@ -60,7 +60,7 @@ class TestBundleHTML:
     def test_header_hidden(self):
         """The <header> element is hidden via inline style for embedded mode."""
         result = bundle_html()
-        assert '<header style="display:none">' in result
+        assert '<header style="display:none"' in result
 
     def test_min_height_replaced(self):
         """min-height: 100vh is replaced with min-height: auto for iframe sizing."""

@@ -6,16 +6,18 @@
   <title>OpenWebGoggles</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Focus visible indicator for keyboard navigation (WCAG 2.4.7) */
+    :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     :root {
       --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
-      --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
+      --text: #e6edf3; --text2: #8b949e; --text3: #848d97;
       --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
       --radius: 6px;
     }
     /* Light theme (activated by data-theme="light" on body) */
     [data-theme="light"] {
       --bg: #ffffff; --bg2: #f6f8fa; --bg3: #e1e4e8; --border: #d0d7de;
-      --text: #1f2328; --text2: #636c76; --text3: #8b949e;
+      --text: #1f2328; --text2: #5b636e; --text3: #656d76;
       --green: #1a7f37; --red: #cf222e; --yellow: #9a6700; --blue: #0969da;
     }
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 14px; }
@@ -23,7 +25,7 @@
 
     header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
     .header-left { display: flex; align-items: center; gap: 10px; }
-    .header-title { font-weight: 600; font-size: 15px; }
+    .header-title { font-weight: 600; font-size: 15px; margin: 0; }
     .header-right { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text3); font-family: monospace; }
     .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text3); }
     .conn-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
@@ -90,10 +92,15 @@
     .btn:disabled { opacity: .4; cursor: default; }
     .btn-primary  { background: var(--blue); color: #000; border-color: var(--blue); }
     .btn-success  { background: var(--green); color: #000; border-color: var(--green); }
-    .btn-danger   { background: var(--red); color: #fff; border-color: var(--red); }
+    .btn-danger   { background: var(--red); color: #000; border-color: var(--red); }
     .btn-warning  { background: var(--yellow); color: #000; border-color: var(--yellow); }
     .btn-ghost    { background: transparent; color: var(--text2); font-size: 12px; padding: 4px 10px; }
     .btn-sm       { padding: 3px 10px; font-size: 12px; }
+    /* Light theme: dark semantic colors need white text for WCAG AA contrast */
+    [data-theme="light"] .btn-primary { color: #fff; }
+    [data-theme="light"] .btn-success { color: #fff; }
+    [data-theme="light"] .btn-danger  { color: #fff; }
+    [data-theme="light"] .btn-warning { color: #fff; }
 
     /* Actions bar */
     .actions-bar { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
@@ -198,6 +205,10 @@
     .ansi-bold { font-weight: 700; }
     .ansi-dim { opacity: 0.6; }
     [data-theme="light"] .log-container { background: #f6f8fa; }
+    [data-theme="light"] .ansi-red { color: #cf222e; }
+    [data-theme="light"] .ansi-green { color: #1a7f37; }
+    [data-theme="light"] .ansi-yellow { color: #9a6700; }
+    [data-theme="light"] .ansi-blue { color: #0969da; }
 
     /* ─── Diff section ─── */
     .diff-container { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; line-height: 1.5; }
@@ -308,7 +319,7 @@
     .owg-net-arrowhead { fill: var(--border); }
     .owg-net-node { opacity: 0.9; stroke: var(--bg2); stroke-width: 2; }
     .owg-net-node:hover { opacity: 1; }
-    .owg-net-label { fill: #fff; font-size: 11px; font-weight: 600; pointer-events: none; }
+    .owg-net-label { fill: #000; font-size: 11px; font-weight: 600; pointer-events: none; }
 
     /* ─── Heatmap / Matrix ─── */
     .owg-heatmap { overflow-x: auto; }
@@ -347,19 +358,19 @@
   </style>
 </head>
 <body>
-  <div id="app">
-    <header>
+  <div id="app" role="application" aria-label="OpenWebGoggles">
+    <header role="banner">
       <div class="header-left">
-        <span class="header-title" id="hdr-title">OpenCode</span>
-        <span class="badge badge-neutral" id="hdr-badge"></span>
+        <h1 class="header-title" id="hdr-title">OpenCode</h1>
+        <span class="badge badge-neutral" id="hdr-badge" role="status" aria-live="polite"></span>
       </div>
       <div class="header-right">
-        <span id="hdr-session"></span>
-        <span class="conn-dot" id="conn-dot"></span>
+        <span id="hdr-session" aria-label="Session ID"></span>
+        <span class="conn-dot" id="conn-dot" role="status" aria-label="Connection status"></span>
       </div>
     </header>
-    <div id="loading"><p>Connecting...</p></div>
-    <div id="content" class="hidden"></div>
+    <div id="loading" role="alert" aria-live="assertive"><p>Connecting...</p></div>
+    <main id="content" class="hidden" role="main"></main>
   </div>
   <script src="openwebgoggles-sdk.js"></script>
   <script src="marked.min.js"></script>
