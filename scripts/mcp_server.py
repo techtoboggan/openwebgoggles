@@ -94,6 +94,22 @@ except ImportError:
 except Exception:
     logger.error("SecurityGate failed to initialize — state validation disabled", exc_info=True)
 
+# Webhook notifications — fires non-blocking HTTP POST when HITL decisions are pending
+_webhook = None
+try:
+    try:
+        from .webhook import WebhookNotifier
+    except ImportError:
+        from webhook import WebhookNotifier  # noqa: I001
+
+    _webhook = WebhookNotifier()
+    if _webhook.enabled:
+        logger.info("Webhook notifications enabled: %s", _webhook._provider)
+except ImportError:
+    logger.debug("Webhook module not available")
+except Exception:
+    logger.warning("Webhook initialization failed", exc_info=True)
+
 
 # ---------------------------------------------------------------------------
 # Session utilities — imported from session.py
@@ -1812,6 +1828,16 @@ async def openwebgoggles(
         app_state.write_state(state)
         slot.persist_enabled = persist
         title = state.get("title", "Webview")
+
+        # Webhook notification (non-blocking)
+        if _webhook and _webhook.enabled:
+            _webhook.notify(
+                title=title,
+                status=state.get("status", "waiting_input"),
+                url="mcp-app://embedded",
+                session=session,
+            )
+
         return CallToolResult(
             content=[
                 TextContent(
@@ -1831,6 +1857,15 @@ async def openwebgoggles(
     await ws.ensure_started(app)
     ws.clear_actions()
     ws.write_state(state)
+
+    # Webhook notification (non-blocking)
+    if _webhook and _webhook.enabled:
+        _webhook.notify(
+            title=state.get("title", ""),
+            status=state.get("status", "waiting_input"),
+            url=ws.url,
+            session=session,
+        )
 
     async def _progress(elapsed: float, total: float) -> None:
         if ctx:
