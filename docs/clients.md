@@ -104,6 +104,12 @@ openwebgoggles init claude-desktop
 
 # OpenCode
 openwebgoggles init opencode
+
+# Cursor
+openwebgoggles init cursor
+
+# Windsurf
+openwebgoggles init windsurf
 ```
 
 ---

@@ -1,0 +1,15 @@
+# Smithery MCP Registry configuration
+# https://smithery.ai/docs/config
+#
+# To publish: smithery publish openwebgoggles
+# The registry auto-discovers this file from the repo root.
+
+startCommand:
+  type: stdio
+  configSchema:
+    # No configuration required — openwebgoggles is zero-config
+    type: object
+    properties: {}
+  commandFunction:
+    # The entry point is the `openwebgoggles` CLI binary
+    - openwebgoggles
