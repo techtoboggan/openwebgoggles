@@ -326,11 +326,21 @@ export type OWGEventName =
   | "connected"
   | "disconnected"
   | "state_updated"
+  | "state_patched"
   | "manifest_updated"
   | "actions_updated"
   | "actions_cleared"
   | "close"
   | "error";
+
+export type OWGPatchOpType = "set" | "append" | "merge";
+
+export interface OWGPatchOp {
+  op: OWGPatchOpType;
+  /** Dot-separated path to the target field (e.g. "data.sections.0.lines") */
+  path: string;
+  value: unknown;
+}
 
 export type OWGUnsubscribeFn = () => void;
 

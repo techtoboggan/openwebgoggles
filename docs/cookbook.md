@@ -252,6 +252,187 @@ result = openwebgoggles({
 
 ---
 
+## 11. Delta Streaming (Append Mode)
+
+Stream new data incrementally without replacing the entire state. Ideal for logs, table rows, and real-time feeds.
+
+```python
+# Initial state with a log section
+openwebgoggles({
+    "title": "Build Output",
+    "data": {"sections": [
+        {"type": "log", "title": "Output", "lines": ["$ npm install"]}
+    ]}
+})
+
+# Append new lines — only the new data is sent over WebSocket
+openwebgoggles_update({
+    "data": {"sections": [{"lines": [
+        "\033[32m✓\033[0m 847 packages installed",
+        "$ npm run build",
+    ]}]}
+}, append=True)
+
+# Append more lines later
+openwebgoggles_update({
+    "data": {"sections": [{"lines": [
+        "\033[32m✓\033[0m Build complete (2.3s)",
+    ]}]}
+}, append=True)
+```
+
+Unlike `merge=True` which replaces lists, `append=True` **adds to** existing lists. The browser receives a compact patch (`{"op": "append", "path": "data.sections.0.lines", "value": [...]}`) and updates incrementally.
+
+---
+
+## 12. Multi-Session (Side-by-Side Panels)
+
+Run multiple concurrent UI panels. Each named session gets its own browser tab.
+
+```python
+# Open a build dashboard in one tab
+openwebgoggles({
+    "title": "Build Pipeline",
+    "data": {"sections": [
+        {"type": "progress", "tasks": [...], "percentage": 0}
+    ]}
+}, session_name="build")
+
+# Open a test results panel in another tab
+openwebgoggles({
+    "title": "Test Results",
+    "data": {"sections": [
+        {"type": "table", "columns": [...], "rows": [...]}
+    ]}
+}, session_name="tests")
+
+# Update each independently
+openwebgoggles_update({"percentage": 50}, merge=True, session_name="build")
+openwebgoggles_update({"data": {"sections": [{"rows": [new_row]}]}}, append=True, session_name="tests")
+
+# Close one without affecting the other
+openwebgoggles_close(session_name="build")
+```
+
+---
+
+## 13. Save & Restore Sessions
+
+Persist session state across restarts. Useful for long-running workflows.
+
+```python
+# Save current session state
+openwebgoggles_save(name="deployment-review")
+
+# ... restart, crash, or come back later ...
+
+# Restore the saved session (re-opens browser tab with previous state)
+openwebgoggles_restore(name="deployment-review")
+```
+
+---
+
+## 14. Tree / Hierarchy View
+
+Show hierarchical data with expand/collapse.
+
+```python
+openwebgoggles({
+    "title": "Project Structure",
+    "data": {"sections": [{
+        "type": "tree",
+        "title": "Changed Files",
+        "nodes": [
+            {"label": "src/", "children": [
+                {"label": "auth.py", "badge": "modified"},
+                {"label": "utils.py", "badge": "added"},
+                {"label": "api/", "children": [
+                    {"label": "routes.py", "badge": "modified"},
+                ]}
+            ]},
+            {"label": "tests/", "children": [
+                {"label": "test_auth.py", "badge": "added"},
+            ]}
+        ],
+        "expandAll": False,
+    }]}
+})
+```
+
+---
+
+## 15. Timeline / Gantt View
+
+Visualize time-based data.
+
+```python
+openwebgoggles({
+    "title": "Sprint Plan",
+    "data": {"sections": [{
+        "type": "timeline",
+        "title": "Q1 Milestones",
+        "items": [
+            {"label": "Auth Refactor", "start": "2026-03-01", "end": "2026-03-10", "color": "blue"},
+            {"label": "API v2", "start": "2026-03-05", "end": "2026-03-20", "color": "green"},
+            {"label": "Load Testing", "start": "2026-03-15", "end": "2026-03-25", "color": "orange"},
+        ]
+    }]}
+})
+```
+
+---
+
+## 16. Heatmap
+
+Show matrix data with color-coded cells.
+
+```python
+openwebgoggles({
+    "title": "Error Rate by Hour/Day",
+    "data": {"sections": [{
+        "type": "heatmap",
+        "xLabels": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+        "yLabels": ["00:00", "06:00", "12:00", "18:00"],
+        "values": [
+            [0.1, 0.2, 0.3, 0.1, 0.05],
+            [0.05, 0.1, 0.15, 0.1, 0.05],
+            [0.3, 0.5, 0.8, 0.4, 0.2],
+            [0.2, 0.3, 0.4, 0.3, 0.15],
+        ],
+        "colorScale": ["#eaffea", "#ff4444"],
+    }]}
+})
+```
+
+---
+
+## 17. Network Diagram
+
+Visualize relationships between services or components.
+
+```python
+openwebgoggles({
+    "title": "Service Dependencies",
+    "data": {"sections": [{
+        "type": "network",
+        "nodes": [
+            {"id": "api", "label": "API Gateway"},
+            {"id": "auth", "label": "Auth Service"},
+            {"id": "db", "label": "PostgreSQL"},
+            {"id": "cache", "label": "Redis"},
+        ],
+        "edges": [
+            {"from": "api", "to": "auth", "label": "validates"},
+            {"from": "api", "to": "cache", "label": "reads"},
+            {"from": "auth", "to": "db", "label": "queries"},
+            {"from": "cache", "to": "db", "label": "populates"},
+        ]
+    }]}
+})
+```
+
+---
+
 ## Result Helpers
 
 ```python

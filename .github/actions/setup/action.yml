@@ -1,0 +1,47 @@
+name: "Setup OpenWebGoggles"
+description: "Install and configure OpenWebGoggles for CI-based human-in-the-loop workflows"
+branding:
+  icon: "eye"
+  color: "blue"
+
+inputs:
+  python-version:
+    description: "Python version to use"
+    required: false
+    default: "3.12"
+  version:
+    description: "OpenWebGoggles version to install (default: latest)"
+    required: false
+    default: ""
+
+outputs:
+  binary-path:
+    description: "Path to the openwebgoggles binary"
+    value: ${{ steps.install.outputs.binary_path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install OpenWebGoggles
+      id: install
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          pip install "openwebgoggles==${{ inputs.version }}"
+        else
+          pip install openwebgoggles
+        fi
+        BINARY_PATH=$(which openwebgoggles)
+        echo "binary_path=${BINARY_PATH}" >> "$GITHUB_OUTPUT"
+        echo "Installed: $(openwebgoggles --version 2>&1 || echo 'ok')"
+
+    - name: Configure for Claude Code
+      shell: bash
+      run: |
+        openwebgoggles init claude 2>/dev/null || true
+        echo "OpenWebGoggles configured for MCP"
