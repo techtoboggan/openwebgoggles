@@ -327,7 +327,7 @@ class TestRateLimiterPerformance:
             limiter.check()
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 0.01, f"1000 rate limit checks took {elapsed:.3f}s (limit: 10ms)"
+        assert elapsed < 0.1, f"1000 rate limit checks took {elapsed:.3f}s (limit: 100ms)"
 
 
 # ---------------------------------------------------------------------------

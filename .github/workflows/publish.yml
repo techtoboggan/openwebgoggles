@@ -16,6 +16,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Resolve ref
         id: ref
@@ -56,14 +58,32 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Generate SLSA subject hashes
+        id: hash
+        run: |
+          cd dist
+          echo "hashes=$(sha256sum * | base64 -w0)" >> "$GITHUB_OUTPUT"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
         with:
           name: dist
           path: dist/
 
-  publish:
+  # SLSA provenance — generates a signed attestation for the build artifacts
+  provenance:
     needs: build
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.build.outputs.hashes }}
+      upload-assets: true
+
+  publish:
+    needs: [build, provenance]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -77,3 +97,24 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # release/v1
+
+  # Upload attestation to the GitHub Release for transparency
+  release-attestation:
+    needs: [build, provenance]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    steps:
+      - name: Download provenance
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Attach dist to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+        shell: bash
