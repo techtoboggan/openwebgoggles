@@ -21,14 +21,14 @@ def version_monitor_env():
     old_state = {
         "_reload_pending": mcp_server._reload_pending,
         "_active_tool_calls": mcp_server._active_tool_calls,
-        "_session": mcp_server._session,
+        "_session_manager": mcp_server._session_manager,
         "_stale_version_msg": mcp_server._stale_version_msg,
         "_signal_reload_requested": mcp_server._signal_reload_requested,
     }
 
     mcp_server._reload_pending = False
     mcp_server._active_tool_calls = 0
-    mcp_server._session = None
+    mcp_server._session_manager = mcp_server.SessionManager()
     mcp_server._stale_version_msg = ""
     mcp_server._signal_reload_requested = False
 

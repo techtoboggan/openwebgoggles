@@ -155,7 +155,10 @@ def dist_info_path_lost(ctx, mock_dist_info):
 def session_active(ctx, version_monitor_env):
     mock_session = mock.MagicMock()
     mock_session.close = mock.AsyncMock()
-    version_monitor_env._session = mock_session
+    slot = mcp_server.SessionSlot("default")
+    slot.browser_session = mock_session
+    slot.mode = "browser"
+    version_monitor_env._session_manager._slots["default"] = slot
     ctx.mock_session = mock_session
     ctx.env = version_monitor_env
 
@@ -288,7 +291,7 @@ def assert_session_closed(ctx):
 
 @then("the session reference should be cleared")
 def assert_session_cleared(ctx):
-    assert ctx.env._session is None
+    assert ctx.env._session_manager.count == 0
 
 
 # --- Helper functions ---

@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import mcp_server
 from exceptions import AssetError, LockError, MergeError, SessionError
-from mcp_server import WebviewSession, _get_data_dir, _get_session
+from mcp_server import SessionManager, WebviewSession, _get_browser_session, _get_data_dir
 
 
 # ---------------------------------------------------------------------------
@@ -665,30 +665,34 @@ class TestDataContractMethods:
 
 
 # ---------------------------------------------------------------------------
-# _get_session (module-level helper)
+# _get_browser_session (module-level helper)
 # ---------------------------------------------------------------------------
 
 
-class TestGetSession:
+class TestGetBrowserSession:
     async def test_creates_session(self):
-        old_session = mcp_server._session
-        mcp_server._session = None
+        old_manager = mcp_server._session_manager
+        mcp_server._session_manager = SessionManager()
         try:
-            session = await _get_session()
-            assert isinstance(session, WebviewSession)
-            assert mcp_server._session is session
+            ws = await _get_browser_session("default")
+            assert isinstance(ws, WebviewSession)
+            slot = await mcp_server._session_manager.get("default")
+            assert slot is not None
+            assert slot.browser_session is ws
         finally:
-            mcp_server._session = old_session
+            mcp_server._session_manager = old_manager
 
     async def test_returns_existing_session(self):
-        old_session = mcp_server._session
+        old_manager = mcp_server._session_manager
+        mcp_server._session_manager = SessionManager()
         mock_session = WebviewSession(open_browser=False)
-        mcp_server._session = mock_session
+        slot = await mcp_server._session_manager.get_or_create("default")
+        slot.browser_session = mock_session
         try:
-            session = await _get_session()
-            assert session is mock_session
+            ws = await _get_browser_session("default")
+            assert ws is mock_session
         finally:
-            mcp_server._session = old_session
+            mcp_server._session_manager = old_manager
 
 
 # ---------------------------------------------------------------------------

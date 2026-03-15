@@ -2856,6 +2856,8 @@ class TestInputChannelRegistry:
         ("MAX_BODY_SIZE", 1_048_576, "WebviewHTTPHandler", "HTTP request body bytes"),
         ("MAX_HTTP_CONNECTIONS", 50, "WebviewHTTPHandler", "Concurrent HTTP connections"),
         ("MAX_NONCE_COUNT", 100_000, "NonceTracker", "Tracked nonces"),
+        ("MAX_CONCURRENT_SESSIONS", 10, "mcp_server", "Concurrent named sessions"),
+        ("MAX_MERGE_DEPTH", 20, "mcp_server", "Deep merge recursion depth"),
     ]
 
     @pytest.mark.parametrize(
@@ -2869,15 +2871,18 @@ class TestInputChannelRegistry:
 
         from crypto_utils import NonceTracker
 
+        import mcp_server as _mcp_mod
+
         source_map = {
             "SecurityGate": SecurityGate,
             "WebviewServer": WebviewServer,
             "WebviewHTTPHandler": WebviewHTTPHandler,
             "NonceTracker": NonceTracker,
+            "mcp_server": _mcp_mod,
         }
-        cls = source_map[source]
-        assert hasattr(cls, constant), f"Missing limit constant {source}.{constant} for: {desc}"
-        actual = getattr(cls, constant)
+        obj = source_map[source]
+        assert hasattr(obj, constant), f"Missing limit constant {source}.{constant} for: {desc}"
+        actual = getattr(obj, constant)
         assert actual == expected, f"{source}.{constant} = {actual}, expected {expected} for: {desc}"
 
     def test_no_unregistered_max_constants(self):
@@ -2886,6 +2891,8 @@ class TestInputChannelRegistry:
 
         from crypto_utils import NonceTracker
 
+        import mcp_server as _mcp_mod
+
         registered = {(c[0], c[2]) for c in self.INPUT_CHANNELS}
         classes = {
             "SecurityGate": SecurityGate,
@@ -2893,11 +2900,21 @@ class TestInputChannelRegistry:
             "WebviewHTTPHandler": WebviewHTTPHandler,
             "NonceTracker": NonceTracker,
         }
+        # Also scan module-level MAX_* constants in mcp_server
+        modules = {"mcp_server": _mcp_mod}
         unregistered = []
         for cls_name, cls in classes.items():
             for attr in dir(cls):
                 if attr.startswith("MAX_") and (attr, cls_name) not in registered:
                     unregistered.append(f"{cls_name}.{attr} = {getattr(cls, attr)}")
+        for mod_name, mod in modules.items():
+            for attr in dir(mod):
+                if (
+                    attr.startswith("MAX_")
+                    and isinstance(getattr(mod, attr, None), int)
+                    and (attr, mod_name) not in registered
+                ):
+                    unregistered.append(f"{mod_name}.{attr} = {getattr(mod, attr)}")
         assert not unregistered, "Unregistered MAX_* constants found — add them to INPUT_CHANNELS:\n" + "\n".join(
             f"  {u}" for u in unregistered
         )

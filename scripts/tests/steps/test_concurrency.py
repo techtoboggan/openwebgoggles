@@ -123,9 +123,13 @@ def tool_call_in_progress(ctx, version_monitor_env):
 
 @when("webview_close is called concurrently")
 def close_called_concurrently(ctx):
-    old_session = mcp_server._session
+    old_manager = mcp_server._session_manager
     try:
-        mcp_server._session = ctx.session
+        mcp_server._session_manager = mcp_server.SessionManager()
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = ctx.session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
 
         loop = asyncio.new_event_loop()
         try:
@@ -148,7 +152,7 @@ def close_called_concurrently(ctx):
         finally:
             loop.close()
     finally:
-        mcp_server._session = old_session
+        mcp_server._session_manager = old_manager
         mcp_server._active_tool_calls = 0
 
 
@@ -215,9 +219,13 @@ def assert_final_state(ctx):
 
 @when("webview_close and webview_status race")
 def close_and_status_race(ctx):
-    old_session = mcp_server._session
+    old_manager = mcp_server._session_manager
     try:
-        mcp_server._session = ctx.session
+        mcp_server._session_manager = mcp_server.SessionManager()
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = ctx.session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
 
         loop = asyncio.new_event_loop()
         try:
@@ -233,7 +241,7 @@ def close_and_status_race(ctx):
         finally:
             loop.close()
     finally:
-        mcp_server._session = old_session
+        mcp_server._session_manager = old_manager
 
 
 @then("webview_status should return no active session or active session")
@@ -242,9 +250,11 @@ def assert_status_valid(ctx):
     if isinstance(result, Exception):
         pytest.fail(f"webview_status raised: {result}")
     assert isinstance(result, dict), f"Expected dict, got {type(result)}"
-    # Either active=True (status ran first) or active=False (close ran first)
-    assert "active" in result, f"Expected 'active' key in {result}"
-    assert isinstance(result["active"], bool), f"Expected bool for 'active', got {type(result['active'])}"
+    # Multi-session format: {active_count: N, sessions: [...]}
+    assert "active_count" in result, f"Expected 'active_count' key in {result}"
+    assert isinstance(result["active_count"], int), (
+        f"Expected int for 'active_count', got {type(result['active_count'])}"
+    )
 
 
 # Reuse "no exception should propagate" — define with a unique function name

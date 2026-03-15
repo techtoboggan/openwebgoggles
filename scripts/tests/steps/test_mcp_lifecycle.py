@@ -148,7 +148,10 @@ def lifespan_active(ctx, version_monitor_env):
     # Create a mock session to verify close() is called on shutdown
     mock_session = mock.MagicMock()
     mock_session.close = mock.AsyncMock()
-    version_monitor_env._session = mock_session
+    slot = mcp_server.SessionSlot("default")
+    slot.browser_session = mock_session
+    slot.mode = "browser"
+    version_monitor_env._session_manager._slots["default"] = slot
     ctx.session_mock = mock_session
 
     loop = asyncio.new_event_loop()
@@ -199,7 +202,10 @@ def session_close_raises(ctx, version_monitor_env):
     ctx.env = version_monitor_env
     mock_session = mock.MagicMock()
     mock_session.close = mock.AsyncMock(side_effect=RuntimeError("close failed"))
-    version_monitor_env._session = mock_session
+    slot = mcp_server.SessionSlot("default")
+    slot.browser_session = mock_session
+    slot.mode = "browser"
+    version_monitor_env._session_manager._slots["default"] = slot
     ctx.mock_session = mock_session
 
     loop = asyncio.new_event_loop()
@@ -215,7 +221,7 @@ def session_close_raises(ctx, version_monitor_env):
                                 async with mcp_server.lifespan(mock_server):
                                     pass
                                 # After lifespan exits, session should be cleaned up
-                                ctx.session_after = mcp_server._session
+                                ctx.session_manager_count_after = mcp_server._session_manager.count
 
         loop.run_until_complete(_test())
     finally:
@@ -231,4 +237,4 @@ def assert_exception_suppressed(ctx):
 
 @then("the session reference should be cleared")
 def assert_session_cleared(ctx):
-    assert ctx.session_after is None
+    assert ctx.session_manager_count_after == 0

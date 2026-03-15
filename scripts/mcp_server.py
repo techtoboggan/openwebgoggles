@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil  # noqa: F401 — kept for test patching: mock.patch("mcp_server.shutil.which")
 import signal
 import sys
@@ -396,25 +397,148 @@ def _expand_preset(preset: str, state: dict[str, Any]) -> dict[str, Any]:
 # MCP Server — exposes tools backed by WebviewSession
 # ---------------------------------------------------------------------------
 
-_session: WebviewSession | None = None
-_session_lock: asyncio.Lock | None = None
 _atexit_registered: bool = False
 
+# ---------------------------------------------------------------------------
+# Multi-session support — SessionManager + SessionSlot
+# ---------------------------------------------------------------------------
 
-def _get_session_lock() -> asyncio.Lock:
-    global _session_lock
-    if _session_lock is None:
-        _session_lock = asyncio.Lock()
-    return _session_lock
+MAX_CONCURRENT_SESSIONS = 10
+
+_SESSION_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
-async def _get_session() -> WebviewSession:
-    """Get or create the global WebviewSession."""
-    global _session
-    async with _get_session_lock():
-        if _session is None:
-            _session = WebviewSession(open_browser=True)
-        return _session
+def _is_valid_session_name(name: str) -> bool:
+    """Validate session name: alphanumeric, hyphens, underscores, 1-64 chars."""
+    return bool(_SESSION_NAME_RE.match(name))
+
+
+class SessionSlot:
+    """Bundles per-session state for both browser and app modes."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.browser_session: WebviewSession | None = None
+        self.app_state: AppModeState | None = None
+        self.mode: str | None = None  # "app" | "browser" | None
+        self.persist_enabled: bool = False
+        self.created_at: float = time.monotonic()
+
+
+class SessionManager:
+    """Manages multiple named session slots for concurrent agent workflows."""
+
+    def __init__(self) -> None:
+        self._slots: dict[str, SessionSlot] = {}
+        self._lock: asyncio.Lock | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    async def get_or_create(self, name: str = "default") -> SessionSlot:
+        """Get existing slot or create a new one. Enforces MAX_CONCURRENT_SESSIONS."""
+        async with self._get_lock():
+            if name in self._slots:
+                return self._slots[name]
+            if len(self._slots) >= MAX_CONCURRENT_SESSIONS:
+                raise ValueError(
+                    f"Maximum concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. "
+                    f"Close a session first with openwebgoggles_close(session=...)."
+                )
+            if not _is_valid_session_name(name):
+                raise ValueError(
+                    f"Invalid session name: {name!r}. Use 1-64 alphanumeric chars, hyphens, or underscores."
+                )
+            slot = SessionSlot(name)
+            self._slots[name] = slot
+            return slot
+
+    async def get(self, name: str) -> SessionSlot | None:
+        """Get slot by name, or None."""
+        async with self._get_lock():
+            return self._slots.get(name)
+
+    async def remove(self, name: str) -> SessionSlot | None:
+        """Remove and return a slot."""
+        async with self._get_lock():
+            return self._slots.pop(name, None)
+
+    async def close_all(self, message: str = "Session complete.") -> int:
+        """Close all sessions. Returns count of closed sessions."""
+        async with self._get_lock():
+            names = list(self._slots.keys())
+        count = 0
+        for name in names:
+            slot = await self.remove(name)
+            if slot:
+                await _close_slot(slot, message)
+                count += 1
+        return count
+
+    async def list_active(self) -> list[dict[str, Any]]:
+        """Return status info for all active sessions."""
+        async with self._get_lock():
+            slots = list(self._slots.values())
+        result = []
+        for slot in slots:
+            info: dict[str, Any] = {"name": slot.name, "mode": slot.mode}
+            if slot.browser_session and slot.browser_session._started:
+                info["active"] = True
+                info["alive"] = slot.browser_session.is_alive()
+                info["url"] = slot.browser_session.url
+                info["session_id"] = slot.browser_session.session_id
+            elif slot.app_state:
+                info["active"] = bool(slot.app_state.state)
+                info["version"] = slot.app_state.state_version
+            else:
+                info["active"] = False
+            result.append(info)
+        return result
+
+    @property
+    def count(self) -> int:
+        return len(self._slots)
+
+
+_session_manager = SessionManager()
+
+
+async def _close_slot(slot: SessionSlot, message: str = "Session complete.") -> None:
+    """Close a single session slot (both modes)."""
+    if slot.app_state is not None:
+        if slot.persist_enabled:
+            _persist_session(
+                slot.app_state.session_id,
+                slot.app_state.state,
+                {"actions": slot.app_state.read_actions()},
+                mode="app",
+            )
+        slot.app_state.clear()
+    if slot.browser_session is not None and slot.browser_session._started:
+        try:
+            await slot.browser_session.close(message=message)
+        except Exception:
+            logger.warning("Error closing session %s", slot.name, exc_info=True)
+
+
+async def _get_browser_session(name: str = "default", app: str = "dynamic") -> WebviewSession:
+    """Get or create a browser-mode WebviewSession for a named slot."""
+    slot = await _session_manager.get_or_create(name)
+    if slot.browser_session is None:
+        data_dir = _get_data_dir() / "sessions" / name if name != "default" else None
+        slot.browser_session = WebviewSession(work_dir=data_dir, open_browser=True)
+    slot.mode = "browser"
+    return slot.browser_session
+
+
+def _get_slot_app_state(slot: SessionSlot) -> "AppModeState":
+    """Get or create the AppModeState for a slot."""
+    if slot.app_state is None:
+        slot.app_state = AppModeState()
+    slot.mode = "app"
+    return slot.app_state
 
 
 # ---------------------------------------------------------------------------
@@ -643,15 +767,8 @@ async def _version_monitor() -> None:  # noqa: C901 — TODO: decompose version 
             _reload_pending = True
             _mark_stale(startup_version, current_version)
 
-            # Close webview session gracefully so a restart gets a clean slate
-            global _session
-            async with _get_session_lock():
-                if _session is not None:
-                    try:
-                        await _session.close(message="Server needs restart (package updated).")
-                    except Exception:
-                        pass
-                    _session = None
+            # Close all sessions gracefully so a restart gets a clean slate
+            await _session_manager.close_all(message="Server needs restart (package updated).")
 
             # Stop monitoring — we've already flagged the staleness
             return
@@ -698,15 +815,8 @@ async def _signal_reload_monitor() -> None:
                     break
             await asyncio.sleep(1)
 
-        # Close webview session gracefully
-        global _session
-        async with _get_session_lock():
-            if _session is not None:
-                try:
-                    await _session.close(message="Server reloading (restart requested).")
-                except Exception:
-                    pass
-                _session = None
+        # Close all sessions gracefully
+        await _session_manager.close_all(message="Server reloading (restart requested).")
 
         _mark_stale("current", "reload-requested")
 
@@ -802,16 +912,9 @@ async def lifespan(server: FastMCP):
     except asyncio.CancelledError:
         pass
 
-    # Clean up PID file and webview session
+    # Clean up PID file and all sessions
     _cleanup_mcp_pid()
-
-    global _session
-    if _session is not None:
-        try:
-            await _session.close(message="MCP server shutting down.")
-        except Exception:
-            pass
-        _session = None
+    await _session_manager.close_all(message="MCP server shutting down.")
 
 
 # ---------------------------------------------------------------------------
@@ -901,8 +1004,6 @@ class AppModeState:
             self.state_version = int(time.time() * 1000)
         self.clear_actions()
 
-
-_app_mode_state: AppModeState | None = None
 
 _DIAG_LOG = _get_data_dir() / "mode-diag.log"
 
@@ -1017,6 +1118,15 @@ def _stop_any_running_server() -> None:
         cwd / ".openwebgoggles-dev",
         Path.home() / ".openwebgoggles",
     ]
+    # Also check per-session data dirs
+    sessions_dir = _get_data_dir() / "sessions"
+    if sessions_dir.is_dir():
+        try:
+            for entry in sessions_dir.iterdir():
+                if entry.is_dir():
+                    data_dirs.append(entry)
+        except OSError:
+            pass
     for data_dir in data_dirs:
         pid_file = data_dir / ".server.pid"
         if not pid_file.exists():
@@ -1061,12 +1171,18 @@ def _is_app_mode() -> bool:
     return _cached_mode == "app" or _host_fetched_ui_resource
 
 
-def _get_app_state() -> AppModeState:
-    """Get or create the app-mode state singleton."""
-    global _app_mode_state  # noqa: PLW0603
-    if _app_mode_state is None:
-        _app_mode_state = AppModeState()
-    return _app_mode_state
+def _get_app_state(name: str = "default") -> AppModeState:
+    """Get or create the app-mode state for a named session slot.
+
+    Synchronous wrapper — creates the slot if needed (for backward compat
+    with code that calls _get_app_state() outside async context).
+    """
+    # Synchronous access: peek directly at slots dict (safe for reads in single-threaded asyncio)
+    slot = _session_manager._slots.get(name)
+    if slot is None:
+        slot = SessionSlot(name)
+        _session_manager._slots[name] = slot
+    return _get_slot_app_state(slot)
 
 
 def _get_session_archive() -> SessionArchive:
@@ -1374,6 +1490,7 @@ async def _owg_action(
     action_type: str,
     value: Any = None,
     context: dict[str, Any] | None = None,
+    session: str = "default",
 ) -> dict[str, Any]:
     """Receive a user action from the MCP App iframe.
 
@@ -1404,7 +1521,7 @@ async def _owg_action(
         if not valid:
             return {"error": f"Action rejected by security gate: {err}"}
 
-    app_state = _get_app_state()
+    app_state = _get_app_state(session)
     app_state.add_action(action)
     return {"received": True}
 
@@ -1422,6 +1539,7 @@ async def openwebgoggles(
     app: str = "dynamic",
     preset: str | None = None,
     persist: bool = False,
+    session: str = "default",
     ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Show an interactive UI panel and wait for the user to respond.
@@ -1580,10 +1698,11 @@ async def openwebgoggles(
     # The host renders an iframe AFTER the tool returns, so we must NOT
     # block here.  User actions arrive via _owg_action → openwebgoggles_read().
     if mode == "app":
-        app_state = _get_app_state()
+        slot = await _session_manager.get_or_create(session)
+        app_state = _get_slot_app_state(slot)
         app_state.clear_actions()
         app_state.write_state(state)
-        app_state.persist_enabled = persist
+        slot.persist_enabled = persist
         title = state.get("title", "Webview")
         return CallToolResult(
             content=[
@@ -1600,16 +1719,16 @@ async def openwebgoggles(
         )
 
     # ── Browser mode: start subprocess, block until user acts ──────────
-    session = await _get_session()
-    await session.ensure_started(app)
-    session.clear_actions()
-    session.write_state(state)
+    ws = await _get_browser_session(session, app)
+    await ws.ensure_started(app)
+    ws.clear_actions()
+    ws.write_state(state)
 
     async def _progress(elapsed: float, total: float) -> None:
         if ctx:
             await ctx.report_progress(elapsed, total)
 
-    result = await session.wait_for_action(
+    result = await ws.wait_for_action(
         timeout=timeout,
         on_progress=_progress if ctx else None,
     )
@@ -1618,14 +1737,14 @@ async def openwebgoggles(
 
     # Persist final state + actions if requested
     if persist:
-        _persist_session(session.session_id, state, result, mode="browser")
+        _persist_session(ws.session_id, state, result, mode="browser")
 
     return result
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def openwebgoggles_read(clear: bool = False) -> dict[str, Any]:
+async def openwebgoggles_read(clear: bool = False, session: str = "default") -> dict[str, Any]:
     """Read the current user actions from the OpenWebGoggles panel.
 
     Poll this after openwebgoggles() returns (MCP Apps / Claude Desktop) to
@@ -1639,7 +1758,7 @@ async def openwebgoggles_read(clear: bool = False) -> dict[str, Any]:
 
     # ── App mode: read from in-memory queue ────────────────────────────
     if mode == "app":
-        app_state = _get_app_state()
+        app_state = _get_app_state(session)
         if clear:
             # Atomic read+clear prevents losing actions submitted between read and clear
             actions = app_state.read_and_clear_actions()
@@ -1648,13 +1767,13 @@ async def openwebgoggles_read(clear: bool = False) -> dict[str, Any]:
         return {"version": len(actions), "actions": actions}
 
     # ── Browser mode ───────────────────────────────────────────────────
-    session = await _get_session()
-    if not session._started:
+    slot = await _session_manager.get(session)
+    if slot is None or slot.browser_session is None or not slot.browser_session._started:
         return {"version": 0, "actions": []}
 
-    actions = session.read_actions()
+    actions = slot.browser_session.read_actions()
     if clear and actions.get("actions"):
-        session.clear_actions()
+        slot.browser_session.clear_actions()
 
     return actions
 
@@ -1666,6 +1785,7 @@ async def openwebgoggles_update(
     merge: bool = False,
     preset: str | None = None,
     app: str = "dynamic",
+    session: str = "default",
     ctx: Context = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Push a live UI update to the open OpenWebGoggles panel without blocking.
@@ -1711,7 +1831,7 @@ async def openwebgoggles_update(
 
     # ── App mode: update in-memory state, return structuredContent ─────
     if mode == "app":
-        app_state = _get_app_state()
+        app_state = _get_app_state(session)
         if merge:
             try:
                 merged = app_state.merge_state(state, validator=validator)
@@ -1728,9 +1848,9 @@ async def openwebgoggles_update(
         )
 
     # ── Browser mode ───────────────────────────────────────────────────
-    session = await _get_session()
+    ws = await _get_browser_session(session, app)
     try:
-        await session.ensure_started(app)
+        await ws.ensure_started(app)
     except Exception:
         logger.warning("Failed to start webview", exc_info=True)
         return {"error": "Failed to start webview server"}
@@ -1738,98 +1858,88 @@ async def openwebgoggles_update(
     # Do NOT clear actions — preserve pending user actions
     if merge:
         try:
-            merged = session.merge_state(state, validator=validator)
+            merged = ws.merge_state(state, validator=validator)
         except ValueError as e:
             return {"error": str(e)}
         return {"updated": True, "version": merged.get("version", 0)}
 
-    session.write_state(state)
-    return {"updated": True, "version": session._state_version}
+    ws.write_state(state)
+    return {"updated": True, "version": ws._state_version}
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def openwebgoggles_status() -> dict[str, Any]:
+async def openwebgoggles_status(session: str | None = None) -> dict[str, Any]:
     """Check whether an OpenWebGoggles human-in-the-loop session is active.
 
     Returns the session state without modifying anything. Use before calling
     openwebgoggles_read() or openwebgoggles_update() to verify a panel is open.
     """
-    mode = _resolve_mode(None)
-
-    # ── App mode ───────────────────────────────────────────────────────
-    if mode == "app":
-        app_state = _get_app_state()
-        return {
-            "active": bool(app_state.state),
-            "mode": "mcp_apps",
-            "version": app_state.state_version,
-        }
-
-    # ── Browser mode ───────────────────────────────────────────────────
-    async with _get_session_lock():
-        if _session is None or not _session._started:
-            return {"active": False, "mode": "browser"}
+    # ── Specific session query ──────────────────────────────────────────
+    if session is not None:
+        mode = _resolve_mode(None)
+        if mode == "app":
+            app_state = _get_app_state(session)
+            return {
+                "active": bool(app_state.state),
+                "mode": "mcp_apps",
+                "session": session,
+                "version": app_state.state_version,
+            }
+        slot = await _session_manager.get(session)
+        if slot is None or slot.browser_session is None or not slot.browser_session._started:
+            return {"active": False, "mode": "browser", "session": session}
         return {
             "active": True,
             "mode": "browser",
-            "alive": _session.is_alive(),
-            "url": _session.url,
-            "session_id": _session.session_id,
+            "session": session,
+            "alive": slot.browser_session.is_alive(),
+            "url": slot.browser_session.url,
+            "session_id": slot.browser_session.session_id,
         }
+
+    # ── All sessions ────────────────────────────────────────────────────
+    sessions = await _session_manager.list_active()
+    return {
+        "active_count": len(sessions),
+        "max_sessions": MAX_CONCURRENT_SESSIONS,
+        "sessions": sessions,
+    }
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def openwebgoggles_close(message: str = "Session complete.") -> dict[str, Any]:
+async def openwebgoggles_close(
+    message: str = "Session complete.",
+    session: str | None = None,
+) -> dict[str, Any]:
     """Close the OpenWebGoggles panel and end the human-in-the-loop session.
 
     Shows a farewell message to the user before closing. Blocks until the
     browser window is confirmed closed. Idempotent — safe to call even if
     no session is active. Always call this when the HITL workflow is complete.
     """
-    global _session, _app_mode_state, _host_fetched_ui_resource
+    global _host_fetched_ui_resource
     # Validate close message for XSS before passing to browser
     if _security_gate and message:
         xss_warnings = _security_gate._scan_xss(message, "webview_close.message")
         if xss_warnings:
             return {"error": f"Close message rejected by security gate: {xss_warnings[0]}"}
 
-    mode = _resolve_mode(None)
+    # ── Close a specific named session ──────────────────────────────────
+    if session is not None:
+        slot = await _session_manager.remove(session)
+        if slot is None:
+            return {"status": "ok", "message": f"No active session: {session}"}
+        await _close_slot(slot, message)
+        return {"status": "ok", "message": f"Session '{session}' closed."}
 
-    # ── App mode: clear in-memory state and reset mode ─────────────────
-    if mode == "app":
-        _host_fetched_ui_resource = False
-        _reset_mode()
-        if _app_mode_state is not None:
-            if _app_mode_state.persist_enabled:
-                _persist_session(
-                    _app_mode_state.session_id,
-                    _app_mode_state.state,
-                    {"actions": _app_mode_state.read_actions()},
-                    mode="app",
-                )
-            _app_mode_state.clear()
-        _stop_any_running_server()
-        return {"status": "ok", "message": "Webview closed."}
-
-    # ── Browser mode ───────────────────────────────────────────────────
+    # ── Close ALL sessions (backward compatible default) ────────────────
+    _host_fetched_ui_resource = False
     _reset_mode()
-    async with _get_session_lock():
-        if _session is None or not _session._started:
-            _stop_any_running_server()
-            return {"status": "ok", "message": "No active session."}
-
-        try:
-            await _session.close(message=message)
-        except Exception:
-            logger.warning("Error closing session", exc_info=True)
-            _stop_any_running_server()
-            return {"error": "Failed to close session"}
-
-        _session = None
-        _stop_any_running_server()
-        return {"status": "ok", "message": "Webview closed."}
+    count = await _session_manager.close_all(message)
+    _stop_any_running_server()
+    return {"status": "ok", "message": f"Closed {count} session(s)."}
 
 
 # ---------------------------------------------------------------------------

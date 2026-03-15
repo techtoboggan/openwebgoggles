@@ -41,26 +41,26 @@ from mcp_server import (
 def _reset_app_mode():
     """Reset app mode globals before each test."""
     old_host = mcp_server._host_fetched_ui_resource
-    old_state = mcp_server._app_mode_state
     old_pending = mcp_server._reload_pending
     old_active = mcp_server._active_tool_calls
     old_gate = mcp_server._security_gate
     old_cached_mode = mcp_server._cached_mode
+    old_manager = mcp_server._session_manager
 
     mcp_server._host_fetched_ui_resource = False
-    mcp_server._app_mode_state = None
     mcp_server._reload_pending = False
     mcp_server._active_tool_calls = 0
     mcp_server._cached_mode = None
+    mcp_server._session_manager = mcp_server.SessionManager()
 
     yield
 
     mcp_server._host_fetched_ui_resource = old_host
-    mcp_server._app_mode_state = old_state
     mcp_server._reload_pending = old_pending
     mcp_server._active_tool_calls = old_active
     mcp_server._security_gate = old_gate
     mcp_server._cached_mode = old_cached_mode
+    mcp_server._session_manager = old_manager
 
 
 def _enable_app_mode():
@@ -576,7 +576,7 @@ class TestWebviewStatusAppMode:
         mcp_server._security_gate = None
         app_state = _get_app_state()
         app_state.write_state({"title": "Live"})
-        result = await openwebgoggles_status()
+        result = await openwebgoggles_status(session="default")
         assert result["active"] is True
         assert result["mode"] == "mcp_apps"
         assert result["version"] >= 1
@@ -585,7 +585,7 @@ class TestWebviewStatusAppMode:
         """webview_status reports active=False when no state has been written."""
         _enable_app_mode()
         mcp_server._security_gate = None
-        _get_app_state()  # create singleton but don't write state
-        result = await openwebgoggles_status()
+        _get_app_state()  # create slot but don't write state
+        result = await openwebgoggles_status(session="default")
         assert result["active"] is False
         assert result["mode"] == "mcp_apps"

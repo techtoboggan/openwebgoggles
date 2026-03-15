@@ -202,11 +202,15 @@ def session_with_security_gate(ctx, tmp_path):
 
 @when("webview_update is called with merge containing dangerous CSS")
 def call_merge_with_dangerous_css(ctx):
-    old_session = mcp_server._session
+    old_manager = mcp_server._session_manager
     old_gate = mcp_server._security_gate
 
     try:
-        mcp_server._session = ctx.session
+        mcp_server._session_manager = mcp_server.SessionManager()
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = ctx.session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
 
         # Ensure security gate is active for this test
         try:
@@ -232,7 +236,7 @@ def call_merge_with_dangerous_css(ctx):
         finally:
             loop.close()
     finally:
-        mcp_server._session = old_session
+        mcp_server._session_manager = old_manager
         mcp_server._security_gate = old_gate
 
 
@@ -286,12 +290,16 @@ def assert_error_names_preset(ctx):
 
 @when("webview_close is called with a script tag in the message")
 def call_close_with_xss(ctx):
-    old_session = mcp_server._session
+    old_manager = mcp_server._session_manager
     old_gate = mcp_server._security_gate
 
     try:
-        mcp_server._session = ctx.session
-        mcp_server._session._started = True
+        mcp_server._session_manager = mcp_server.SessionManager()
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = ctx.session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
+        slot.browser_session._started = True
 
         try:
             try:
@@ -314,7 +322,7 @@ def call_close_with_xss(ctx):
         finally:
             loop.close()
     finally:
-        mcp_server._session = old_session
+        mcp_server._session_manager = old_manager
         mcp_server._security_gate = old_gate
 
 

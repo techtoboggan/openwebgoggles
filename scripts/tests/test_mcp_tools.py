@@ -41,11 +41,14 @@ def _ensure_browser_mode():
     """Ensure browser mode for all tests in this file."""
     old_cached_mode = mcp_server._cached_mode
     old_host_fetched = mcp_server._host_fetched_ui_resource
+    old_manager = mcp_server._session_manager
     mcp_server._cached_mode = None
     mcp_server._host_fetched_ui_resource = False
+    mcp_server._session_manager = mcp_server.SessionManager()
     yield
     mcp_server._cached_mode = old_cached_mode
     mcp_server._host_fetched_ui_resource = old_host_fetched
+    mcp_server._session_manager = old_manager
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +75,15 @@ def _make_mock_session(**kwargs):
     return session
 
 
+def _inject_slot(mock_session, name="default"):
+    """Inject a mock session into the session manager for testing."""
+    slot = mcp_server.SessionSlot(name)
+    slot.browser_session = mock_session
+    slot.mode = "browser"
+    mcp_server._session_manager._slots[name] = slot
+    return slot
+
+
 # ---------------------------------------------------------------------------
 # webview tool
 # ---------------------------------------------------------------------------
@@ -85,7 +97,7 @@ class TestWebviewTool:
             "actions": [{"action_id": "ok", "type": "approve"}],
         }
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state={"title": "Test"}, timeout=30, ctx=None)
 
         # Browser mode returns the wait_for_action result directly (plain dict)
@@ -100,7 +112,7 @@ class TestWebviewTool:
         mock_session = _make_mock_session()
         mock_session.wait_for_action.return_value = None  # timeout
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state={"title": "Test"}, timeout=1, ctx=None)
 
         assert "error" in result
@@ -111,7 +123,7 @@ class TestWebviewTool:
         mock_session = _make_mock_session()
         mock_session.wait_for_action.return_value = {"actions": []}
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             await openwebgoggles(state={"title": "Test"}, timeout=30, ctx=None)
 
         mock_session.ensure_started.assert_called_once()
@@ -122,7 +134,7 @@ class TestWebviewTool:
         mock_session = _make_mock_session()
         mock_session.wait_for_action.return_value = {"actions": [{"id": "confirm"}]}
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             await openwebgoggles(
                 state={"title": "Confirm?", "message": "Are you sure?"},
                 preset="confirm",
@@ -136,7 +148,7 @@ class TestWebviewTool:
 
     async def test_preset_error(self):
         """webview returns error when preset expansion fails."""
-        with mock.patch("mcp_server._get_session"):
+        with mock.patch("mcp_server._get_browser_session"):
             result = await openwebgoggles(
                 state={"title": "Test"},
                 preset="nonexistent_preset",
@@ -155,7 +167,7 @@ class TestWebviewTool:
         mock_gate.validate_state.return_value = (False, "XSS detected", [])
         mcp_server._security_gate = mock_gate
         try:
-            with mock.patch("mcp_server._get_session", return_value=mock_session):
+            with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
                 result = await openwebgoggles(state={"title": "<script>alert(1)</script>"}, timeout=1, ctx=None)
             assert "error" in result
             assert "validation failed" in result["error"]
@@ -167,7 +179,7 @@ class TestWebviewTool:
         mock_session = _make_mock_session()
         mock_session.ensure_started = mock.AsyncMock(side_effect=RuntimeError("bind failed"))
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             with pytest.raises(RuntimeError, match="bind failed"):
                 await openwebgoggles(state={"title": "Test"}, timeout=1, ctx=None)
 
@@ -181,10 +193,8 @@ class TestWebviewReadTool:
     async def test_not_started(self):
         """Returns empty actions when session not started."""
         mock_session = _make_mock_session(started=False)
-
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await openwebgoggles_read()
-
+        _inject_slot(mock_session)
+        result = await openwebgoggles_read()
         assert result == {"version": 0, "actions": []}
 
     async def test_read_actions(self):
@@ -194,10 +204,8 @@ class TestWebviewReadTool:
             "version": 1,
             "actions": [{"id": "submit", "type": "approve"}],
         }
-
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
-            result = await openwebgoggles_read()
-
+        _inject_slot(mock_session)
+        result = await openwebgoggles_read()
         assert result["actions"][0]["id"] == "submit"
         mock_session.clear_actions.assert_not_called()
 
@@ -208,19 +216,15 @@ class TestWebviewReadTool:
             "version": 1,
             "actions": [{"id": "submit"}],
         }
-
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
-            await openwebgoggles_read(clear=True)
-
+        _inject_slot(mock_session)
+        await openwebgoggles_read(clear=True)
         mock_session.clear_actions.assert_called_once()
 
     async def test_clear_no_actions(self):
         """Does not clear when clear=True but no actions."""
         mock_session = _make_mock_session()
-
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
-            await openwebgoggles_read(clear=True)
-
+        _inject_slot(mock_session)
+        await openwebgoggles_read(clear=True)
         mock_session.clear_actions.assert_not_called()
 
 
@@ -235,7 +239,7 @@ class TestWebviewUpdateTool:
         mock_session = _make_mock_session()
         mock_session._state_version = 2
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state={"title": "Updated"})
 
         assert result["updated"] is True
@@ -246,7 +250,7 @@ class TestWebviewUpdateTool:
         mock_session = _make_mock_session()
         mock_session.merge_state.return_value = {"version": 3, "title": "Merged"}
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state={"data": {"new": True}}, merge=True)
 
         assert result["updated"] is True
@@ -257,7 +261,7 @@ class TestWebviewUpdateTool:
         mock_session = _make_mock_session()
         mock_session.merge_state.side_effect = ValueError("Merged state validation failed")
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state={"data": {}}, merge=True)
 
         assert "error" in result
@@ -266,7 +270,7 @@ class TestWebviewUpdateTool:
         """Update expands preset."""
         mock_session = _make_mock_session()
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(
                 state={"tasks": [], "percentage": 50},
                 preset="progress",
@@ -287,7 +291,7 @@ class TestWebviewUpdateTool:
         mock_gate.validate_state.return_value = (False, "XSS detected", [])
         mcp_server._security_gate = mock_gate
         try:
-            with mock.patch("mcp_server._get_session", return_value=mock_session):
+            with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
                 result = await openwebgoggles_update(state={"title": "bad"})
             assert "error" in result
         finally:
@@ -298,7 +302,7 @@ class TestWebviewUpdateTool:
         mock_session = _make_mock_session()
         mock_session.ensure_started = mock.AsyncMock(side_effect=RuntimeError("fail"))
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state={"title": "Test"})
 
         assert "error" in result
@@ -313,41 +317,35 @@ class TestWebviewUpdateTool:
 class TestWebviewStatusTool:
     async def test_no_session(self):
         """Returns inactive when no session."""
-        old = mcp_server._session
-        mcp_server._session = None
-        try:
-            result = await openwebgoggles_status()
-            assert result["active"] is False
-            assert result["mode"] == "browser"
-        finally:
-            mcp_server._session = old
+        # Session manager starts empty from fixture — no slot exists
+        result = await openwebgoggles_status(session="default")
+        assert result["active"] is False
+        assert result["mode"] == "browser"
 
     async def test_session_not_started(self):
         """Returns inactive when session exists but not started."""
-        old = mcp_server._session
         mock_session = _make_mock_session(started=False)
-        mcp_server._session = mock_session
-        try:
-            result = await openwebgoggles_status()
-            assert result["active"] is False
-            assert result["mode"] == "browser"
-        finally:
-            mcp_server._session = old
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = mock_session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
+        result = await openwebgoggles_status(session="default")
+        assert result["active"] is False
+        assert result["mode"] == "browser"
 
     async def test_active_session(self):
         """Returns active session info."""
-        old = mcp_server._session
         mock_session = _make_mock_session()
-        mcp_server._session = mock_session
-        try:
-            result = await openwebgoggles_status()
-            assert result["active"] is True
-            assert result["mode"] == "browser"
-            assert result["alive"] is True
-            assert "url" in result
-            assert "session_id" in result
-        finally:
-            mcp_server._session = old
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = mock_session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
+        result = await openwebgoggles_status(session="default")
+        assert result["active"] is True
+        assert result["mode"] == "browser"
+        assert result["alive"] is True
+        assert "url" in result
+        assert "session_id" in result
 
 
 # ---------------------------------------------------------------------------
@@ -358,51 +356,38 @@ class TestWebviewStatusTool:
 class TestWebviewCloseTool:
     async def test_no_session(self):
         """Returns ok when no active session."""
-        old = mcp_server._session
-        mcp_server._session = None
-        try:
-            result = await openwebgoggles_close()
-            assert result["status"] == "ok"
-            assert "No active session" in result["message"]
-        finally:
-            mcp_server._session = old
+        # Session manager starts empty from fixture — no slot exists
+        result = await openwebgoggles_close()
+        assert result["status"] == "ok"
+        assert "0 session(s)" in result["message"]
 
     async def test_close_active_session(self):
-        """Closes active session and sets to None."""
-        old = mcp_server._session
+        """Closes active session and clears slot."""
         mock_session = _make_mock_session()
-        mcp_server._session = mock_session
-        try:
-            result = await openwebgoggles_close(message="Goodbye")
-            assert result["status"] == "ok"
-            assert mcp_server._session is None
-            mock_session.close.assert_called_once_with(message="Goodbye")
-        finally:
-            mcp_server._session = old
+        _inject_slot(mock_session)
+        result = await openwebgoggles_close(message="Goodbye", session="default")
+        assert result["status"] == "ok"
+        assert "default" not in mcp_server._session_manager._slots
+        mock_session.close.assert_called_once_with(message="Goodbye")
 
-    async def test_close_error_returns_error(self):
-        """Returns error dict when close raises."""
-        old = mcp_server._session
+    async def test_close_error_gracefully_handled(self):
+        """Close handles error in session close gracefully."""
         mock_session = _make_mock_session()
         mock_session.close = mock.AsyncMock(side_effect=Exception("close failed"))
-        mcp_server._session = mock_session
-        try:
-            result = await openwebgoggles_close()
-            assert "error" in result
-            assert "Failed to close session" in result["error"]
-        finally:
-            mcp_server._session = old
+        _inject_slot(mock_session)
+        result = await openwebgoggles_close(session="default")
+        # _close_slot catches exceptions and logs, doesn't return error
+        assert result["status"] == "ok"
 
     async def test_close_not_started(self):
         """Returns ok when session exists but not started."""
-        old = mcp_server._session
         mock_session = _make_mock_session(started=False)
-        mcp_server._session = mock_session
-        try:
-            result = await openwebgoggles_close()
-            assert result["status"] == "ok"
-        finally:
-            mcp_server._session = old
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = mock_session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
+        result = await openwebgoggles_close()
+        assert result["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -493,16 +478,14 @@ class TestStopAnyRunningServer:
 
     async def test_close_browser_mode_calls_stop_server(self):
         """openwebgoggles_close in browser mode calls _stop_any_running_server."""
-        old_session = mcp_server._session
         old_mode = mcp_server._cached_mode
         mcp_server._cached_mode = "browser"
-        mcp_server._session = None
+        # Session manager starts empty from fixture — no slot exists
         try:
             with mock.patch("mcp_server._stop_any_running_server") as mock_stop:
                 await openwebgoggles_close()
             mock_stop.assert_called_once()
         finally:
-            mcp_server._session = old_session
             mcp_server._cached_mode = old_mode
 
 
@@ -528,10 +511,9 @@ class TestVersionMonitorLoop:
                     with mock.patch("mcp_server._mark_stale") as mock_stale:
                         old_pending = mcp_server._reload_pending
                         old_active = mcp_server._active_tool_calls
-                        old_session = mcp_server._session
                         mcp_server._reload_pending = False
                         mcp_server._active_tool_calls = 0
-                        mcp_server._session = None
+                        # Session manager starts empty from fixture
                         try:
                             task = asyncio.create_task(mcp_server._version_monitor())
                             await asyncio.sleep(1.0)
@@ -545,7 +527,6 @@ class TestVersionMonitorLoop:
                         finally:
                             mcp_server._reload_pending = old_pending
                             mcp_server._active_tool_calls = old_active
-                            mcp_server._session = old_session
 
     async def test_mtime_unchanged_skips_version_read(self):
         """When mtime doesn't change, skips version read."""
@@ -631,10 +612,9 @@ class TestVersionMonitorLoop:
 
         old_active = mcp_server._active_tool_calls
         old_pending = mcp_server._reload_pending
-        old_session = mcp_server._session
         mcp_server._active_tool_calls = 1
         mcp_server._reload_pending = False
-        mcp_server._session = None
+        # Session manager starts empty from fixture
 
         try:
             with mock.patch("mcp_server._RELOAD_CHECK_INTERVAL", 0.2):
@@ -655,7 +635,6 @@ class TestVersionMonitorLoop:
         finally:
             mcp_server._active_tool_calls = old_active
             mcp_server._reload_pending = old_pending
-            mcp_server._session = old_session
 
     async def test_closes_session_before_reload(self):
         """Version monitor closes webview session before reloading."""
@@ -667,10 +646,12 @@ class TestVersionMonitorLoop:
         ]
 
         mock_session = _make_mock_session()
-        old_session = mcp_server._session
         old_pending = mcp_server._reload_pending
         old_active = mcp_server._active_tool_calls
-        mcp_server._session = mock_session
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = mock_session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
         mcp_server._reload_pending = False
         mcp_server._active_tool_calls = 0
 
@@ -689,7 +670,6 @@ class TestVersionMonitorLoop:
 
                             mock_session.close.assert_called()
         finally:
-            mcp_server._session = old_session
             mcp_server._reload_pending = old_pending
             mcp_server._active_tool_calls = old_active
 
@@ -730,12 +710,11 @@ class TestSignalReloadMonitorDrain:
         old_flag = mcp_server._signal_reload_requested
         old_pending = mcp_server._reload_pending
         old_active = mcp_server._active_tool_calls
-        old_session = mcp_server._session
 
         mcp_server._signal_reload_requested = True
         mcp_server._reload_pending = False
         mcp_server._active_tool_calls = 0
-        mcp_server._session = None
+        # Session manager starts empty from fixture
 
         try:
             with mock.patch("mcp_server._mark_stale") as mock_stale:
@@ -752,7 +731,6 @@ class TestSignalReloadMonitorDrain:
             mcp_server._signal_reload_requested = old_flag
             mcp_server._reload_pending = old_pending
             mcp_server._active_tool_calls = old_active
-            mcp_server._session = old_session
 
     async def test_closes_session_before_mark_stale(self):
         """Signal monitor closes session before marking stale."""
@@ -760,12 +738,14 @@ class TestSignalReloadMonitorDrain:
         old_flag = mcp_server._signal_reload_requested
         old_pending = mcp_server._reload_pending
         old_active = mcp_server._active_tool_calls
-        old_session = mcp_server._session
 
         mcp_server._signal_reload_requested = True
         mcp_server._reload_pending = False
         mcp_server._active_tool_calls = 0
-        mcp_server._session = mock_session
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = mock_session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
 
         try:
             with mock.patch("mcp_server._mark_stale"):
@@ -782,7 +762,6 @@ class TestSignalReloadMonitorDrain:
             mcp_server._signal_reload_requested = old_flag
             mcp_server._reload_pending = old_pending
             mcp_server._active_tool_calls = old_active
-            mcp_server._session = old_session
 
 
 # ---------------------------------------------------------------------------
@@ -794,7 +773,6 @@ class TestLifespanSessionCleanup:
     async def test_closes_session_on_shutdown(self):
         """Lifespan cleans up active session on MCP server shutdown."""
         mock_session = _make_mock_session()
-        old_session = mcp_server._session
 
         async def fake_version_monitor():
             try:
@@ -812,21 +790,20 @@ class TestLifespanSessionCleanup:
             with mock.patch("mcp_server._cleanup_mcp_pid"):
                 with mock.patch("mcp_server._version_monitor", side_effect=fake_version_monitor):
                     with mock.patch("mcp_server._signal_reload_monitor", side_effect=fake_signal_monitor):
-                        mcp_server._session = mock_session
-                        try:
-                            fake_server = mock.MagicMock()
-                            async with mcp_server.lifespan(fake_server):
-                                pass
-                            mock_session.close.assert_called_once()
-                            assert mcp_server._session is None
-                        finally:
-                            mcp_server._session = old_session
+                        slot = mcp_server.SessionSlot("default")
+                        slot.browser_session = mock_session
+                        slot.mode = "browser"
+                        mcp_server._session_manager._slots["default"] = slot
+                        fake_server = mock.MagicMock()
+                        async with mcp_server.lifespan(fake_server):
+                            pass
+                        mock_session.close.assert_called_once()
+                        assert "default" not in mcp_server._session_manager._slots
 
     async def test_session_close_exception_suppressed(self):
         """Lifespan suppresses exceptions during session close."""
         mock_session = _make_mock_session()
         mock_session.close = mock.AsyncMock(side_effect=RuntimeError("cleanup fail"))
-        old_session = mcp_server._session
 
         async def fake_version_monitor():
             try:
@@ -844,15 +821,15 @@ class TestLifespanSessionCleanup:
             with mock.patch("mcp_server._cleanup_mcp_pid"):
                 with mock.patch("mcp_server._version_monitor", side_effect=fake_version_monitor):
                     with mock.patch("mcp_server._signal_reload_monitor", side_effect=fake_signal_monitor):
-                        mcp_server._session = mock_session
-                        try:
-                            fake_server = mock.MagicMock()
-                            async with mcp_server.lifespan(fake_server):
-                                pass
-                            # Should not raise
-                            assert mcp_server._session is None
-                        finally:
-                            mcp_server._session = old_session
+                        slot = mcp_server.SessionSlot("default")
+                        slot.browser_session = mock_session
+                        slot.mode = "browser"
+                        mcp_server._session_manager._slots["default"] = slot
+                        fake_server = mock.MagicMock()
+                        async with mcp_server.lifespan(fake_server):
+                            pass
+                        # Should not raise
+                        assert "default" not in mcp_server._session_manager._slots
 
 
 # ---------------------------------------------------------------------------
@@ -1017,7 +994,7 @@ class TestWebviewMetricIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1048,7 +1025,7 @@ class TestWebviewMetricIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1067,7 +1044,7 @@ class TestWebviewMetricIntegration:
             },
         }
         mock_session = _make_mock_session()
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
@@ -1099,7 +1076,7 @@ class TestWebviewChartIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1127,7 +1104,7 @@ class TestWebviewChartIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1153,7 +1130,7 @@ class TestWebviewChartIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1178,7 +1155,7 @@ class TestWebviewChartIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1203,7 +1180,7 @@ class TestWebviewChartIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1225,7 +1202,7 @@ class TestWebviewChartIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1248,7 +1225,7 @@ class TestWebviewChartIntegration:
             },
         }
         mock_session = _make_mock_session()
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
@@ -1268,7 +1245,7 @@ class TestWebviewChartIntegration:
             },
         }
         mock_session = _make_mock_session()
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
@@ -1299,7 +1276,7 @@ class TestWebviewClickableTableIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1324,7 +1301,7 @@ class TestWebviewClickableTableIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1367,7 +1344,7 @@ class TestWebviewPagesIntegration:
             },
             "activePage": "overview",
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1412,7 +1389,7 @@ class TestWebviewPagesIntegration:
             },
             "activePage": "servers",
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1440,7 +1417,7 @@ class TestWebviewPagesIntegration:
             },
             "activePage": "logs",
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1458,7 +1435,7 @@ class TestWebviewPagesIntegration:
             "activePage": "nonexistent",
         }
         mock_session = _make_mock_session()
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" in result
@@ -1476,7 +1453,7 @@ class TestWebviewPagesIntegration:
         mock_session = _make_mock_session()
         mock_session.wait_for_action.return_value = {"actions": []}
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state=state, timeout=1, ctx=None)
 
         assert "error" not in result
@@ -1500,7 +1477,7 @@ class TestWebviewUpdatePagesIntegration:
                 }
             }
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state=state, merge=True)
 
         assert result["updated"] is True
@@ -1525,7 +1502,7 @@ class TestWebviewUpdatePagesIntegration:
                 }
             }
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state=state, merge=True)
 
         assert result["updated"] is True
@@ -1535,7 +1512,7 @@ class TestWebviewUpdatePagesIntegration:
         mock_session = _make_mock_session()
         mock_session.merge_state.return_value = {"version": 4}
 
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state={"activePage": "servers"}, merge=True)
 
         assert result["updated"] is True
@@ -1562,7 +1539,7 @@ class TestWebviewUpdatePagesIntegration:
             },
             "activePage": "main",
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state=state)
 
         assert result["updated"] is True
@@ -1595,7 +1572,7 @@ class TestWebviewUpdatePagesIntegration:
                 ]
             },
         }
-        with mock.patch("mcp_server._get_session", return_value=mock_session):
+        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles_update(state=state)
 
         assert result["updated"] is True
@@ -1783,13 +1760,8 @@ class TestWebviewCloseXSS:
         try:
 
             async def _test():
-                # Reset session to None so it's a no-op close
-                original = mcp_server._session
-                mcp_server._session = None
-                try:
-                    result = await openwebgoggles_close(message="Goodbye!")
-                finally:
-                    mcp_server._session = original
+                # Session manager starts empty from fixture — no slot exists
+                result = await openwebgoggles_close(message="Goodbye!")
                 return result
 
             result = loop.run_until_complete(_test())

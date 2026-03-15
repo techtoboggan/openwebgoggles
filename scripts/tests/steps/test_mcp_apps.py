@@ -72,12 +72,12 @@ def ctx():
 def _reset_app_mode_state():
     """Reset MCP Apps globals before each scenario."""
     old_fetched = mcp_server._host_fetched_ui_resource
-    old_app_state = mcp_server._app_mode_state
+    old_manager = mcp_server._session_manager
     old_security_gate = mcp_server._security_gate
     old_cached_mode = mcp_server._cached_mode
 
     mcp_server._host_fetched_ui_resource = False
-    mcp_server._app_mode_state = None
+    mcp_server._session_manager = mcp_server.SessionManager()
     mcp_server._cached_mode = None
     # Disable security gate to avoid side effects in unit tests
     mcp_server._security_gate = None
@@ -85,7 +85,7 @@ def _reset_app_mode_state():
     yield
 
     mcp_server._host_fetched_ui_resource = old_fetched
-    mcp_server._app_mode_state = old_app_state
+    mcp_server._session_manager = old_manager
     mcp_server._security_gate = old_security_gate
     mcp_server._cached_mode = old_cached_mode
 
@@ -160,7 +160,7 @@ def call_webview_fallback_ui(ctx):
     try:
 
         async def _call():
-            with mock.patch("mcp_server._get_session", return_value=mock_session):
+            with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
                 return await mcp_server.openwebgoggles(
                     state={"title": "Fallback UI", "data": {"sections": []}},
                     timeout=30,
@@ -219,7 +219,8 @@ def assert_structured_content(ctx):
 def assert_no_browser_launched(ctx):
     # In app mode, webview returns structuredContent directly — no session
     # is created. Verify that _session was NOT touched.
-    assert mcp_server._session is None, "Browser session should not have been created in app mode"
+    slot = mcp_server._session_manager._slots.get("default")
+    assert slot is None or slot.browser_session is None, "Browser session should not have been created in app mode"
 
 
 @then("the browser fallback should be used")
