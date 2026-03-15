@@ -60,13 +60,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration examples for LangChain, CrewAI, AutoGen, and Anthropic Agents SDK
 - Comprehensive integration guide with common patterns (approval gates, multi-step wizards, live dashboards)
 
+**Internationalization (i18n)**
+- Built-in translations for 6 locales: English, Spanish, French, German, Japanese, Chinese
+- `state.locale` sets UI language; `state.strings` provides custom translation overrides
+- `OWG.t(key, ...args)` translation function with `{0}`, `{1}` placeholder substitution
+- All hardcoded UI strings replaced: form validation, file upload, table filtering, empty states, SVG labels
+- SecurityGate validates `locale` (BCP-47) and `strings` (flat string→string dict, max 200 entries)
+- Structural test gate ensures all `OWG.t()` keys exist in all locales
+
+**Mobile Responsive CSS**
+- Responsive breakpoints at 600px and 400px for small screens
+- Form fields collapse from 2-column to 1-column layout
+- Action buttons stack full-width on mobile
+- SVG visualizations (network, timeline) expand to full container width
+- Tighter padding/font sizing for header, tabs, tables, metric cards, tree indent
+
 **Editor Support**
 - Cursor (`openwebgoggles init cursor`) and Windsurf (`openwebgoggles init windsurf`) setup commands
 - Smithery MCP registry configuration for discoverability
 
 ### Internal
-- 2621+ tests (2339 → 2621), 0 failures
-- New test files: test_delta_streaming.py (32 tests), test_remote_mode.py (25 tests), test_plugin_system.py (30 tests), test_webhook.py (18 tests), test_audit.py (27 tests)
+- 2652+ tests (2339 → 2652), 0 failures
+- New test files: test_delta_streaming.py (32 tests), test_remote_mode.py (25 tests), test_plugin_system.py (30 tests), test_webhook.py (18 tests), test_audit.py (27 tests), test_performance.py (12 benchmarks), test_i18n.py (19 tests)
 
 ---
 

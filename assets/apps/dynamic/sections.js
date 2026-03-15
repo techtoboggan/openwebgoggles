@@ -180,7 +180,7 @@
         break;
       case "static": {
         var staticContent = f.value || "";
-        var copyBtnStatic = f.copyable ? '<button class="owg-copy-btn" aria-label="Copy" data-copy-content="' + escAttr(staticContent) + '">\u2398</button>' : '';
+        var copyBtnStatic = f.copyable ? '<button class="owg-copy-btn" aria-label="' + escAttr(OWG.t("copy")) + '" data-copy-content="' + escAttr(staticContent) + '">\u2398</button>' : '';
         if (f.format === "markdown") {
           inner = '<div class="field-static">' + copyBtnStatic + markdownBlock(staticContent) + "</div>";
         } else {
@@ -247,8 +247,8 @@
           '<input type="file" id="' + id + '"' + acceptAttr + multipleAttr +
           ' data-max-size="' + escAttr(String(maxSizeBytes)) + '"' +
           dataKey + requiredAttr + ' style="display:none">' +
-          '<label for="' + escAttr(id) + '" class="file-upload-btn">Choose file' + (f.multiple ? 's' : '') + '\u2026</label>' +
-          '<span class="file-upload-status" id="' + escAttr(id) + '-status">No file chosen</span>' +
+          '<label for="' + escAttr(id) + '" class="file-upload-btn">' + esc(f.multiple ? OWG.t("choose_files") : OWG.t("choose_file")) + '\u2026</label>' +
+          '<span class="file-upload-status" id="' + escAttr(id) + '-status">' + esc(OWG.t("no_file_chosen")) + '</span>' +
           '</div>';
         // File validator: track required + maxSize
         OWG.fieldValidators[key] = OWG.fieldValidators[key] || { required: !!f.required, type: "file" };
@@ -314,7 +314,7 @@
 
   // ─── Text block ─────────────────────────────────────────────────────────────
   function renderText(sec) {
-    var copyBtn = sec.copyable ? '<button class="owg-copy-btn" aria-label="Copy to clipboard" data-copy-content="' + escAttr(sec.content || "") + '">\u2398</button>' : '';
+    var copyBtn = sec.copyable ? '<button class="owg-copy-btn" aria-label="' + escAttr(OWG.t("copy_clipboard")) + '" data-copy-content="' + escAttr(sec.content || "") + '">\u2398</button>' : '';
     if (sec.format === "markdown") {
       return '<div class="message-box' + (sec.copyable ? " message-box-copyable" : "") + '">' + copyBtn + markdownBlock(sec.content || "") + "</div>";
     }
@@ -472,11 +472,11 @@
       }
     }
     var filterable = !!sec.filterable;
-    var filterPh = sec.filterPlaceholder || "Filter rows...";
+    var filterPh = sec.filterPlaceholder || OWG.t("filter_placeholder");
     var html = "";
     if (filterable) {
       html += '<div class="table-filter-bar">' +
-        '<input type="search" class="owg-table-filter" placeholder="' + escAttr(filterPh) + '" data-table-filter="' + escAttr(String(si)) + '" aria-label="Filter table">' +
+        '<input type="search" class="owg-table-filter" placeholder="' + escAttr(filterPh) + '" data-table-filter="' + escAttr(String(si)) + '" aria-label="' + escAttr(OWG.t("filter_label")) + '">' +
         '<span class="table-row-count" data-table-count="' + escAttr(String(si)) + '"></span>' +
         '</div>';
     }
@@ -623,7 +623,7 @@
   function renderNetwork(sec, si) {
     var nodes = Array.isArray(sec.nodes) ? sec.nodes : [];
     var edges = Array.isArray(sec.edges) ? sec.edges : [];
-    if (!nodes.length) return '<div class="owg-network-empty">No network nodes</div>';
+    if (!nodes.length) return '<div class="owg-network-empty">' + esc(OWG.t("no_network_nodes")) + '</div>';
 
     var W = 580, H = 360;
     var nodeR = 22;
@@ -690,7 +690,7 @@
     }
 
     var uid = "owg-net-" + si;
-    var svg = '<svg id="' + escAttr(uid) + '" class="owg-network-svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Network diagram">';
+    var svg = '<svg id="' + escAttr(uid) + '" class="owg-network-svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + escAttr(OWG.t("network_label")) + '">';
 
     // Arrow marker
     svg += '<defs><marker id="' + escAttr(uid) + '-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">' +
@@ -733,7 +733,7 @@
     var xLabels = Array.isArray(sec.xLabels) ? sec.xLabels : [];
     var yLabels = Array.isArray(sec.yLabels) ? sec.yLabels : [];
     var values = Array.isArray(sec.values) ? sec.values : [];
-    if (!xLabels.length || !yLabels.length) return '<div class="owg-heatmap-empty">No heatmap data</div>';
+    if (!xLabels.length || !yLabels.length) return '<div class="owg-heatmap-empty">' + esc(OWG.t("no_heatmap_data")) + '</div>';
 
     // Find min/max for color scale
     var minVal = Infinity, maxVal = -Infinity;
@@ -787,7 +787,7 @@
     var svgW = labelW + xLabels.length * cellSize + 10;
     var svgH = headerH + yLabels.length * cellSize + 4;
 
-    var svg = '<svg class="owg-heatmap-svg" viewBox="0 0 ' + svgW + " " + svgH + '" role="img" aria-label="Heatmap">';
+    var svg = '<svg class="owg-heatmap-svg" viewBox="0 0 ' + svgW + " " + svgH + '" role="img" aria-label="' + escAttr(OWG.t("heatmap_label")) + '">';
 
     // X-axis labels
     for (var xi = 0; xi < xLabels.length; xi++) {
@@ -817,7 +817,7 @@
   // ─── Timeline / Gantt ───────────────────────────────────────────────────────
   function renderTimeline(sec) {
     var items = Array.isArray(sec.items) ? sec.items : [];
-    if (!items.length) return '<div class="owg-timeline-empty">No timeline items</div>';
+    if (!items.length) return '<div class="owg-timeline-empty">' + esc(OWG.t("no_timeline_items")) + '</div>';
 
     // Parse dates and find overall range
     var parsed = [];
@@ -831,7 +831,7 @@
       if (e > maxMs) maxMs = e;
       parsed.push({ label: String(it.label || ""), start: s, end: e, color: String(it.color || ""), group: String(it.group || "") });
     }
-    if (!parsed.length) return '<div class="owg-timeline-empty">No valid timeline items</div>';
+    if (!parsed.length) return '<div class="owg-timeline-empty">' + esc(OWG.t("no_valid_timeline")) + '</div>';
 
     // Extend range slightly for visual breathing room
     var pad = Math.max((maxMs - minMs) * 0.02, 86400000); // min 1 day padding
@@ -865,7 +865,7 @@
       ticks.push({ x: msToX(tms), label: tLabel });
     }
 
-    var svg = '<svg class="owg-timeline-svg" viewBox="0 0 ' + svgW + " " + svgH + '" role="img" aria-label="Timeline">';
+    var svg = '<svg class="owg-timeline-svg" viewBox="0 0 ' + svgW + " " + svgH + '" role="img" aria-label="' + escAttr(OWG.t("timeline_label")) + '">';
 
     // Grid lines + tick labels
     svg += '<g class="owg-tl-grid">';
@@ -1000,7 +1000,7 @@
       if (table) {
         var allRows = table.querySelectorAll("tbody tr");
         var countEl = root.querySelector('[data-table-count="' + _esc(ti) + '"]');
-        if (countEl) countEl.textContent = allRows.length + " rows";
+        if (countEl) countEl.textContent = OWG.t("rows_count", allRows.length);
       }
       input.addEventListener("input", function () {
         var q = input.value.trim().toLowerCase();
@@ -1016,7 +1016,7 @@
           if (show) visible++;
         });
         var countEl2 = root.querySelector('[data-table-count="' + _esc(ti2) + '"]');
-        if (countEl2) countEl2.textContent = visible + " of " + rows.length + " rows";
+        if (countEl2) countEl2.textContent = OWG.t("rows_filtered", visible, rows.length);
       });
     });
 
@@ -1179,7 +1179,7 @@
         var files = Array.prototype.slice.call(input.files || []);
         if (!files.length) {
           OWG.formValues[fkey] = null;
-          if (statusEl) statusEl.textContent = "No file chosen";
+          if (statusEl) statusEl.textContent = OWG.t("no_file_chosen");
           return;
         }
 
@@ -1187,7 +1187,7 @@
         var oversized = files.filter(function (f) { return f.size > maxSize; });
         if (oversized.length) {
           var limit = (maxSize / 1024).toFixed(0) + " KB";
-          if (statusEl) statusEl.textContent = "\u26A0 File too large (max " + limit + ")";
+          if (statusEl) statusEl.textContent = OWG.t("file_too_large", limit);
           OWG.formValues[fkey] = null;
           input.value = "";
           return;
@@ -1214,7 +1214,7 @@
           };
           reader.onerror = function () {
             OWG.formValues[fkey] = null;
-            if (statusEl) statusEl.textContent = "\u26A0 Error reading file";
+            if (statusEl) statusEl.textContent = OWG.t("file_read_error");
           };
           reader.readAsDataURL(file);
         });

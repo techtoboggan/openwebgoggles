@@ -43,7 +43,7 @@
     .then(function (instance) {
       if (!isMCPApps) {
         var m = instance.getManifest();
-        if (m && m.session) els.hdrSession.textContent = "Session: " + m.session.id.slice(0, 8);
+        if (m && m.session) els.hdrSession.textContent = U.t("session_prefix") + m.session.id.slice(0, 8);
         els.connDot.classList.add("on");
       }
       render(instance.getState());
@@ -65,10 +65,10 @@
     icon.textContent = "\u26a0";
     var label = document.createElement("div");
     label.style.cssText = "color:var(--yellow);font-weight:600";
-    label.textContent = "Connection lost";
+    label.textContent = U.t("connection_lost");
     var msg = document.createElement("div");
     msg.className = "done-msg";
-    msg.textContent = (d && d.message) || "The host disconnected unexpectedly.";
+    msg.textContent = (d && d.message) || U.t("disconnected_default");
     wrap.appendChild(icon);
     wrap.appendChild(label);
     wrap.appendChild(msg);
@@ -85,7 +85,7 @@
     icon.textContent = "\u2713";
     var label = document.createElement("div");
     label.style.cssText = "color:var(--green);font-weight:600";
-    label.textContent = "Session closed";
+    label.textContent = U.t("session_closed");
     var msg = document.createElement("div");
     msg.className = "done-msg";
     msg.textContent = (d && d.message) || "";
@@ -119,7 +119,10 @@
     clearObj(U.fieldValidators);
 
     // Header
-    var title = state.title || "OpenCode";
+    // Set locale from state before rendering
+    U.setLocale(state.locale, state.strings);
+
+    var title = state.title || U.t("default_title");
     document.title = title + " \u2014 OpenWebGoggles";
     els.hdrTitle.textContent = title;
 
@@ -393,7 +396,7 @@
 
     actionPromise.then(function () {
       if (btn.parentElement) {
-        U.safeHTML(btn.parentElement, '<span style="color:var(--green);font-size:12px">\u2713 Sent \u2014 waiting for agent...</span>');
+        U.safeHTML(btn.parentElement, '<span style="color:var(--green);font-size:12px">' + U.esc(U.t("action_sent")) + '</span>');
       }
     }).catch(function (err) {
       btn.disabled = false;

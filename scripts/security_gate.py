@@ -428,6 +428,8 @@ class SecurityGate:
                 "activePage",
                 "showNav",
                 "theme",
+                "locale",
+                "strings",
             }
         )
         unknown = set(state.keys()) - ALLOWED_TOP_KEYS
@@ -475,6 +477,31 @@ class SecurityGate:
         if theme is not None:
             if not isinstance(theme, str) or theme not in self.ALLOWED_THEMES:
                 return False, f"Invalid theme: {theme!r}. Must be one of: {', '.join(sorted(self.ALLOWED_THEMES))}", {}
+
+        # 4e. Validate locale — must be a short BCP-47-ish tag
+        locale = state.get("locale")
+        if locale is not None:
+            if not isinstance(locale, str) or not re.fullmatch(r"[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8})*", locale):
+                return False, f"Invalid locale: {locale!r}. Must be a BCP-47 language tag (e.g. 'en', 'zh-CN')", {}
+
+        # 4f. Validate strings — flat dict of string→string for i18n overrides
+        strings = state.get("strings")
+        if strings is not None:
+            if not isinstance(strings, dict):
+                return False, "strings must be an object", {}
+            if len(strings) > 200:
+                return False, f"strings: too many entries ({len(strings)}, max 200)", {}
+            for sk, sv in strings.items():
+                if not isinstance(sk, str) or not isinstance(sv, str):
+                    return (
+                        False,
+                        f"strings: key and value must be strings (got {type(sk).__name__}→{type(sv).__name__})",
+                        {},
+                    )
+                if len(sk) > 100:
+                    return False, f"strings: key too long ({len(sk)} chars, max 100)", {}
+                if len(sv) > 2000:
+                    return False, f"strings: value too long for key {sk!r} ({len(sv)} chars, max 2000)", {}
 
         # 5. Scan all strings for XSS patterns (including custom_css — CSS validation
         # catches CSS-specific attacks, but XSS patterns like <script> must also be caught)

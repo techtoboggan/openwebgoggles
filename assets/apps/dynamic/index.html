@@ -355,6 +355,66 @@
     .owg-tree-badge-deleted, .owg-tree-badge-removed { background: rgba(248,81,73,.15); color: var(--red); border-color: var(--red); }
     .owg-tree-children { width: 100%; }
     .owg-tree-children-collapsed { display: none; }
+
+    /* ─── File upload ─── */
+    .file-upload-btn { white-space: nowrap; }
+    .file-status { overflow: hidden; text-overflow: ellipsis; }
+
+    /* ─── Mobile responsive ─── */
+    @media (max-width: 600px) {
+      html, body { font-size: 13px; }
+      header { padding: 8px 12px; }
+      .header-title { font-size: 14px; }
+      .header-right { font-size: 10px; }
+      #content { padding: 12px; }
+
+      /* Fields: collapse 2-col to 1-col on small screens */
+      .fields-grid.cols-2 { grid-template-columns: 1fr; }
+
+      /* Items: stack layout on small screens */
+      .item-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+      .item-actions { align-self: flex-end; }
+
+      /* Buttons: full-width on mobile */
+      .actions-bar { flex-direction: column; }
+      .actions-bar .btn { width: 100%; text-align: center; }
+
+      /* Tabs: smaller padding */
+      .tabs-btn { padding: 6px 12px; font-size: 12px; }
+
+      /* Table cells: tighter padding */
+      .owg-table th, .owg-table td { padding: 4px 8px; font-size: 12px; }
+
+      /* Diff: smaller gutter */
+      .diff-gutter { width: 30px; font-size: 11px; }
+      .diff-text { padding: 0 4px; font-size: 12px; }
+
+      /* Metric cards: less padding */
+      .metric-card { padding: 12px; }
+      .metric-value { font-size: 22px; }
+
+      /* Nav: smaller tabs */
+      .owg-nav-btn { padding: 8px 12px; font-size: 12px; }
+
+      /* Log: smaller font */
+      .log-container { font-size: 11px; }
+
+      /* Done state: less padding */
+      .done-state { padding: 24px 12px; }
+
+      /* SVGs: allow full width on mobile */
+      .owg-network-svg { max-width: 100%; }
+      .owg-timeline-svg { max-width: 100%; }
+
+      /* Tree: reduce indent on mobile */
+      .owg-tree-list { padding-left: 14px; }
+    }
+
+    @media (max-width: 400px) {
+      header { flex-direction: column; gap: 4px; align-items: flex-start; }
+      .header-right { width: 100%; justify-content: flex-end; }
+      .metric-value { font-size: 18px; }
+    }
   </style>
 </head>
 <body>

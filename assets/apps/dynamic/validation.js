@@ -12,7 +12,7 @@
     // Required check
     if (config.required) {
       if (value === undefined || value === null || value === "" || value === false) {
-        return config.errorMessage || "This field is required";
+        return config.errorMessage || OWG.t("field_required");
       }
     }
 
@@ -28,7 +28,7 @@
         try {
           var re = new RegExp(config.pattern);
           if (!re.test(value)) {
-            return config.errorMessage || "Invalid format";
+            return config.errorMessage || OWG.t("invalid_format");
           }
         } catch (e) {
           // Invalid regex — skip validation
@@ -38,18 +38,18 @@
 
     // Min/max length — only for string values
     if (config.minLength && typeof value === "string" && value.length < config.minLength) {
-      return config.errorMessage || "Too short (min " + config.minLength + " characters)";
+      return config.errorMessage || OWG.t("too_short", config.minLength);
     }
     if (config.maxLength && typeof value === "string" && value.length > config.maxLength) {
-      return config.errorMessage || "Too long (max " + config.maxLength + " characters)";
+      return config.errorMessage || OWG.t("too_long", config.maxLength);
     }
 
     // Min/max — only for number values
     if (config.min !== undefined && config.min !== null && typeof value === "number" && value < config.min) {
-      return config.errorMessage || "Must be at least " + config.min;
+      return config.errorMessage || OWG.t("min_value", config.min);
     }
     if (config.max !== undefined && config.max !== null && typeof value === "number" && value > config.max) {
-      return config.errorMessage || "Must be at most " + config.max;
+      return config.errorMessage || OWG.t("max_value", config.max);
     }
 
     // Autocomplete allowCustom: false — value must be in allowed options list
@@ -60,7 +60,7 @@
         if (config.options[i] === strVal) { found = true; break; }
       }
       if (!found) {
-        return config.errorMessage || "Value must be one of the provided options";
+        return config.errorMessage || OWG.t("must_be_option");
       }
     }
 
