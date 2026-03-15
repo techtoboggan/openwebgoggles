@@ -635,6 +635,30 @@
         this._state = msg.data;
         this._emit("state_updated", msg.data);
         break;
+      case "state_patch":
+        // Delta update: apply patch ops to current state instead of full replacement.
+        // Falls back to full state_updated semantics if no state exists yet.
+        if (!this._state) {
+          // No base state to patch — request full state
+          this._sendWsSigned({ type: "request_state" });
+          break;
+        }
+        // Version monotonicity check
+        if (typeof msg.version === "number" && typeof this._state.version === "number") {
+          if (msg.version <= this._state.version) {
+            console.warn("OpenWebGoggles: Rejected patch downgrade (v" + msg.version + " <= v" + this._state.version + ")");
+            break;
+          }
+        }
+        if (msg.ops && Array.isArray(msg.ops)) {
+          this._applyPatch(msg.ops);
+        }
+        if (typeof msg.version === "number") {
+          this._state.version = msg.version;
+        }
+        this._emit("state_updated", this._state);
+        this._emit("state_patched", msg.ops || []);
+        break;
       case "manifest_updated":
         this._manifest = msg.data;
         this._emit("manifest_updated", msg.data);
@@ -662,6 +686,65 @@
       case "error":
         this._emit("error", msg);
         break;
+    }
+  };
+
+  /**
+   * Apply an array of patch operations to the current state in place.
+   *
+   * Supported ops:
+   *   {op: "set", path: "dot.path", value: any}     — replace value at path
+   *   {op: "append", path: "dot.path", value: [...]} — append items to array at path
+   *   {op: "merge", path: "dot.path", value: {...}}  — shallow merge into object at path
+   *
+   * @param {Array} ops - Array of patch operation objects
+   */
+  OpenWebGoggles.prototype._applyPatch = function (ops) {
+    for (var i = 0; i < ops.length; i++) {
+      var op = ops[i];
+      if (!op || !op.path) continue;
+      var parts = op.path.split(".");
+      var target = this._state;
+      // Navigate to parent
+      for (var j = 0; j < parts.length - 1; j++) {
+        if (target == null) break;
+        var key = parts[j];
+        // Support numeric indices for arrays
+        if (Array.isArray(target)) {
+          var idx = parseInt(key, 10);
+          target = isNaN(idx) ? undefined : target[idx];
+        } else {
+          target = target[key];
+        }
+      }
+      if (target == null) continue;
+      var lastKey = parts[parts.length - 1];
+      if (Array.isArray(target)) {
+        var arrIdx = parseInt(lastKey, 10);
+        if (isNaN(arrIdx)) continue;
+        lastKey = arrIdx;
+      }
+      switch (op.op) {
+        case "set":
+          target[lastKey] = op.value;
+          break;
+        case "append":
+          if (Array.isArray(target[lastKey]) && Array.isArray(op.value)) {
+            for (var k = 0; k < op.value.length; k++) {
+              target[lastKey].push(op.value[k]);
+            }
+          }
+          break;
+        case "merge":
+          if (target[lastKey] && typeof target[lastKey] === "object" && !Array.isArray(target[lastKey]) &&
+              op.value && typeof op.value === "object" && !Array.isArray(op.value)) {
+            var keys = Object.keys(op.value);
+            for (var m = 0; m < keys.length; m++) {
+              target[lastKey][keys[m]] = op.value[keys[m]];
+            }
+          }
+          break;
+      }
     }
   };
 

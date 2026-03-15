@@ -127,12 +127,14 @@ class WebviewServer:
         apps_dir: str | None = None,
         dev_mode: bool = False,
         watch_dirs: list[str] | None = None,
+        bind_host: str = "127.0.0.1",
     ):
         self.data_dir = Path(data_dir)
         self.apps_dir = Path(apps_dir) if apps_dir else self.data_dir / "apps"
         self.http_port = http_port
         self.ws_port = ws_port
         self.sdk_path = Path(sdk_path)
+        self.bind_host = bind_host
         self._running = True
         self._ws_clients: set = set()
         self._ws_server = None
@@ -195,6 +197,7 @@ class WebviewServer:
             http_port=self.http_port,
             ws_port=self.ws_port,
             security_gate=self._security_gate,
+            bind_host=self.bind_host,
         )
         self.http_handler.ws_clients = self._ws_clients
         self.http_handler._public_key_hex = self._public_key_hex
@@ -258,13 +261,19 @@ class WebviewServer:
     # ---------------------------------------------------------------------------
 
     async def start(self):  # pragma: no cover
+        if self.bind_host == "0.0.0.0":  # noqa: S104
+            logger.warning(
+                "REMOTE MODE: Server bound to 0.0.0.0 — accessible from the network. "
+                "Ensure your network is trusted or use SSH tunneling. "
+                "HTTPS/TLS is not yet supported; traffic is unencrypted."
+            )
         # Start HTTP server
         http_server = await asyncio.start_server(
             self.http_handler.handle_request,
-            "127.0.0.1",
+            self.bind_host,
             self.http_port,
         )
-        logger.info("HTTP server listening on http://127.0.0.1:%d", self.http_port)
+        logger.info("HTTP server listening on http://%s:%d", self.bind_host, self.http_port)
 
         tasks = [http_server.serve_forever()]
 
@@ -272,12 +281,12 @@ class WebviewServer:
         if HAS_WEBSOCKETS:
             self._ws_server = await websockets.serve(
                 self._handle_ws,
-                "127.0.0.1",
+                self.bind_host,
                 self.ws_port,
                 ping_interval=self.WS_PING_INTERVAL,
                 ping_timeout=self.WS_PING_TIMEOUT,
             )
-            logger.info("WebSocket server listening on ws://127.0.0.1:%d", self.ws_port)
+            logger.info("WebSocket server listening on ws://%s:%d", self.bind_host, self.ws_port)
             _running_ref = [True]
             tasks.append(self._file_watcher.watch(_running_ref))
         else:
@@ -350,6 +359,12 @@ def main():  # pragma: no cover
         metavar="DIR",
         help="Additional directory to watch for source changes (can be repeated)",
     )
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        default=False,
+        help="Bind to 0.0.0.0 instead of 127.0.0.1 (for SSH, Codespaces, Gitpod)",
+    )
     args = parser.parse_args()
 
     from log_config import configure_logging
@@ -360,11 +375,18 @@ def main():  # pragma: no cover
         log_format=args.log_format,
     )
 
+    # Resolve remote mode: --remote flag or OWG_REMOTE env var
+    remote = args.remote or os.environ.get("OWG_REMOTE", "").strip().lower() in ("1", "true", "yes")
+    bind_host = "0.0.0.0" if remote else "127.0.0.1"  # noqa: S104
+
     # Auto-create a minimal dev manifest so the server serves without a prior MCP session
     if args.app:
+        import socket as _socket
+
         data_dir = Path(args.data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = data_dir / "manifest.json"
+        display_host = _socket.gethostname() if remote else "127.0.0.1"
         if not manifest_path.exists():
             import json as _json
 
@@ -374,7 +396,7 @@ def main():  # pragma: no cover
                         "version": "1.0",
                         "app": {"name": args.app, "entry": f"{args.app}/index.html", "title": args.app},
                         "session": {"id": "dev", "created_at": "dev", "token": "REDACTED"},
-                        "server": {"http_port": args.http_port, "ws_port": args.ws_port, "host": "127.0.0.1"},
+                        "server": {"http_port": args.http_port, "ws_port": args.ws_port, "host": display_host},
                     }
                 )
             )
@@ -387,6 +409,7 @@ def main():  # pragma: no cover
         apps_dir=args.apps_dir,
         dev_mode=args.dev,
         watch_dirs=args.watch_dirs,
+        bind_host=bind_host,
     )
 
     loop = asyncio.new_event_loop()

@@ -51,6 +51,7 @@ class WebviewHTTPHandler:
         http_port: int = 18420,
         ws_port: int = 18421,
         security_gate: SecurityGate | None = None,
+        bind_host: str = "127.0.0.1",
     ):
         self.contract = contract
         self.apps_dir = apps_dir
@@ -59,6 +60,11 @@ class WebviewHTTPHandler:
         self.http_port = http_port
         self.ws_port = ws_port
         self._security_gate = security_gate
+        self.bind_host = bind_host
+        # Remote mode: when bound to 0.0.0.0, accept any host header (bearer auth
+        # already prevents unauthorized access). When localhost, restrict to
+        # localhost variants only (DNS rebinding protection).
+        self._remote = bind_host == "0.0.0.0"  # noqa: S104
         self.start_time = time.monotonic()
         self.ws_clients: set = set()
         self._public_key_hex: str = ""
@@ -194,9 +200,17 @@ class WebviewHTTPHandler:
     _ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
     def _is_valid_host(self, host_header: str) -> bool:
-        """Check if Host header is a localhost variant (with optional port)."""
+        """Check if Host header is a localhost variant (with optional port).
+
+        In remote mode (bind_host=0.0.0.0), any host header is accepted since
+        the server is intentionally network-accessible and bearer auth is the
+        access gate. DNS rebinding is not a concern when the server expects
+        arbitrary origins.
+        """
         if not host_header:
             return False
+        if self._remote:
+            return True  # Bearer auth is the access gate in remote mode
         # Strip port suffix (e.g. "localhost:18420" -> "localhost")
         host = host_header.rsplit(":", 1)[0] if ":" in host_header else host_header
         # Handle IPv6 with brackets (e.g. "[::1]:18420")
@@ -305,6 +319,54 @@ class WebviewHTTPHandler:
 
             else:
                 await self._send_response(writer, 405, {"error": "Method not allowed"})
+
+        elif path == "/_api/patch":
+            # Broadcast a state_patch delta to all WebSocket clients.
+            # The MCP server uses this to deliver incremental updates (append mode)
+            # without waiting for the file-watcher poll cycle.
+            if method != "POST":
+                await self._send_response(writer, 405, {"error": "Method not allowed"})
+                return
+            try:
+                patch_msg = json.loads(body)
+            except json.JSONDecodeError:
+                await self._send_response(writer, 400, {"error": "Invalid JSON"})
+                return
+            # Validate patch structure
+            if not isinstance(patch_msg, dict) or patch_msg.get("type") != "state_patch":
+                await self._send_response(writer, 400, {"error": "Invalid patch message"})
+                return
+            ops = patch_msg.get("ops", [])
+            if not isinstance(ops, list):
+                await self._send_response(writer, 400, {"error": "ops must be a list"})
+                return
+            # Validate each op through security gate (check values for XSS/injection)
+            if self._security_gate:
+                for op in ops:
+                    val = op.get("value")
+                    if val is not None:
+                        # Use validate_state for complex values, skip primitives
+                        if isinstance(val, dict):
+                            valid, err, _ = self._security_gate.validate_state(
+                                json.dumps({"title": "x", "data": val}, separators=(",", ":"))
+                            )
+                            if not valid:
+                                await self._send_response(writer, 400, {"error": f"Patch value rejected: {err}"})
+                                return
+                        elif isinstance(val, str):
+                            xss = self._security_gate._scan_xss(val, f"patch.{op.get('path', '?')}")
+                            if xss:
+                                await self._send_response(writer, 400, {"error": "Patch value contains XSS"})
+                                return
+                        elif isinstance(val, list):
+                            for item in val:
+                                if isinstance(item, str):
+                                    xss = self._security_gate._scan_xss(item, f"patch.{op.get('path', '?')}")
+                                    if xss:
+                                        await self._send_response(writer, 400, {"error": "Patch value contains XSS"})
+                                        return
+            await self._broadcast(patch_msg)
+            await self._send_response(writer, 200, {"ok": True, "ops": len(ops)})
 
         elif path == "/_api/close":
             # Broadcast close message to all connected WebSocket clients, then optionally stop
@@ -465,9 +527,23 @@ class WebviewHTTPHandler:
         content_type = self._content_type(str(file_path))
         await self._send_raw(writer, 200, body, content_type)
 
-    async def _send_raw(self, writer, status: int, body: bytes, content_type: str, *, csp_nonce: str | None = None):
+    async def _send_raw(
+        self,
+        writer,
+        status: int,
+        body: bytes,
+        content_type: str,
+        *,
+        csp_nonce: str | None = None,
+        request_origin: str = "",
+    ):
         reason = HTTPStatus(status).phrase
-        origin = f"http://127.0.0.1:{self.http_port}"
+        # In remote mode, echo the request origin (standard CORS for authenticated APIs).
+        # In localhost mode, use the known localhost origin.
+        if self._remote and request_origin:
+            origin = request_origin
+        else:
+            origin = f"http://127.0.0.1:{self.http_port}"
         headers = [
             f"HTTP/1.1 {status} {reason}",
         ]
@@ -489,11 +565,16 @@ class WebviewHTTPHandler:
         )
         # Add CSP for HTML responses (nonce must be passed explicitly per-request)
         if content_type == "text/html" and csp_nonce:
+            # In remote mode, use wildcard connect-src since the hostname can vary
+            if self._remote:
+                ws_connect = "ws: wss:"
+            else:
+                ws_connect = f"ws://127.0.0.1:{self.ws_port}"
             csp = (
                 f"default-src 'none'; "
                 f"script-src 'nonce-{csp_nonce}'; "
                 f"style-src 'unsafe-inline' 'self'; "
-                f"connect-src 'self' ws://127.0.0.1:{self.ws_port}; "
+                f"connect-src 'self' {ws_connect}; "
                 f"img-src 'self'; "
                 f"font-src 'self'; "
                 f"frame-ancestors 'none'; "

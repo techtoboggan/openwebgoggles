@@ -523,12 +523,18 @@ async def _close_slot(slot: SessionSlot, message: str = "Session complete.") -> 
             logger.warning("Error closing session %s", slot.name, exc_info=True)
 
 
+def _is_remote_mode() -> bool:
+    """Check if OWG_REMOTE env var enables remote mode."""
+    return os.environ.get("OWG_REMOTE", "").strip().lower() in ("1", "true", "yes")
+
+
 async def _get_browser_session(name: str = "default", app: str = "dynamic") -> WebviewSession:
     """Get or create a browser-mode WebviewSession for a named slot."""
     slot = await _session_manager.get_or_create(name)
     if slot.browser_session is None:
         data_dir = _get_data_dir() / "sessions" / name if name != "default" else None
-        slot.browser_session = WebviewSession(work_dir=data_dir, open_browser=True)
+        remote = _is_remote_mode()
+        slot.browser_session = WebviewSession(work_dir=data_dir, open_browser=not remote, remote=remote)
     slot.mode = "browser"
     return slot.browser_session
 
@@ -539,6 +545,41 @@ def _get_slot_app_state(slot: SessionSlot) -> "AppModeState":
         slot.app_state = AppModeState()
     slot.mode = "app"
     return slot.app_state
+
+
+async def _broadcast_patch(ws: WebviewSession, version: int, ops: list[dict[str, Any]]) -> None:
+    """POST a state_patch to the webview server for WS broadcast.
+
+    This bypasses the file-watcher polling loop, delivering the delta to
+    connected browsers within milliseconds instead of the 500ms poll cycle.
+    The full state is also written to disk (by append_state) so file-watcher
+    clients and HTTP pollers stay consistent.
+    """
+    if not ws._started or not ws.is_alive():
+        return  # No server to broadcast to
+    patch_msg = json.dumps(
+        {
+            "type": "state_patch",
+            "version": version,
+            "ops": ops,
+        }
+    )
+    try:
+        import urllib.request as _urlreq  # noqa: I001 — lazy import for startup speed
+
+        body = patch_msg.encode()
+        req = _urlreq.Request(
+            f"http://127.0.0.1:{ws.http_port}/_api/patch",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {ws.session_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        _urlreq.urlopen(req, timeout=3)  # nosec B310 — localhost-only
+    except Exception:
+        logger.debug("Failed to broadcast patch to webview server", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -973,6 +1014,49 @@ class AppModeState:
             merged["version"] = self.state_version
             self.state = merged
             return merged
+
+    def append_state(
+        self,
+        partial: dict[str, Any],
+        validator: Callable | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Append list values in *partial* to existing state lists.
+
+        Like merge_state, but list values are **appended** rather than
+        replaced.  Returns ``(full_state, patch_ops)`` where patch_ops
+        can be sent as a ``state_patch`` message for incremental updates.
+        """
+        with self._state_lock:
+            current = json.loads(json.dumps(self.state))  # deep copy
+            ops: list[dict[str, Any]] = []
+            self._collect_append_ops(current, partial, "", ops)
+            if validator:
+                validator(current)
+            self.state_version += 1
+            current["version"] = self.state_version
+            self.state = current
+            return current, ops
+
+    @staticmethod
+    def _collect_append_ops(
+        base: dict[str, Any],
+        patch: dict[str, Any],
+        prefix: str,
+        ops: list[dict[str, Any]],
+    ) -> None:
+        """Walk *patch* and mutate *base* in place, collecting patch ops."""
+        for key, value in patch.items():
+            if key in _DANGEROUS_KEYS:
+                raise ValueError(f"Append rejected: dangerous key {key!r}")
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, list) and isinstance(base.get(key), list):
+                base[key].extend(value)
+                ops.append({"op": "append", "path": path, "value": value})
+            elif isinstance(value, dict) and isinstance(base.get(key), dict):
+                AppModeState._collect_append_ops(base[key], value, path, ops)
+            else:
+                base[key] = value
+                ops.append({"op": "set", "path": path, "value": value})
 
     def read_actions(self) -> list[dict[str, Any]]:
         with self._actions_lock:
@@ -1783,6 +1867,7 @@ async def openwebgoggles_read(clear: bool = False, session: str = "default") -> 
 async def openwebgoggles_update(
     state: dict[str, Any],
     merge: bool = False,
+    append: bool = False,
     preset: str | None = None,
     app: str = "dynamic",
     session: str = "default",
@@ -1799,6 +1884,11 @@ async def openwebgoggles_update(
         state: The state object (same schema as openwebgoggles).
         merge: If True, deep-merge into existing state instead of full replacement.
                Dicts are merged recursively. Lists are replaced, not appended.
+        append: If True, list values in state are **appended** to existing lists
+                (instead of replaced). Non-list values are set directly. This
+                enables efficient streaming — e.g. append new log lines without
+                resending the full log array. The browser receives a compact
+                ``state_patch`` delta instead of the full state.
         preset: Optional preset name to expand state from shorthand.
                 "progress" — takes {tasks: [...], percentage: N}
                 "confirm" — takes {title, message, details?}
@@ -1832,6 +1922,15 @@ async def openwebgoggles_update(
     # ── App mode: update in-memory state, return structuredContent ─────
     if mode == "app":
         app_state = _get_app_state(session)
+        if append:
+            try:
+                full, _ops = app_state.append_state(state, validator=validator)
+            except ValueError as e:
+                return {"error": str(e)}
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Updated (v{app_state.state_version})")],
+                structuredContent=full,
+            )
         if merge:
             try:
                 merged = app_state.merge_state(state, validator=validator)
@@ -1856,6 +1955,16 @@ async def openwebgoggles_update(
         return {"error": "Failed to start webview server"}
 
     # Do NOT clear actions — preserve pending user actions
+    if append:
+        try:
+            full, ops = ws.append_state(state, validator=validator)
+        except ValueError as e:
+            return {"error": str(e)}
+        # Broadcast compact patch to browser (bypasses file watcher for speed)
+        version = full.get("version", 0)
+        await _broadcast_patch(ws, version, ops)
+        return {"updated": True, "version": version, "patch_ops": len(ops)}
+
     if merge:
         try:
             merged = ws.merge_state(state, validator=validator)

@@ -101,6 +101,9 @@ def _make_session(tmp_path):
     session._chrome_process = None
     session._chrome_profile = None
     session._lock_fd = None
+    session._remote = False
+    session._bind_host = "127.0.0.1"
+    session._display_host = "127.0.0.1"
     return session
 
 

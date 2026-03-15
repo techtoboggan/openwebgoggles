@@ -299,18 +299,19 @@ class TestPortFinding:
         assert 1 <= http_port <= 65535
         assert ws_port == http_port + 1
 
-    def test_port_available_check(self):
+    def test_port_available_check(self, tmp_path):
         # Port 0 is special but a high random port should be available
         import socket
 
+        session = WebviewSession(work_dir=tmp_path)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
         # Port is in use
-        assert not WebviewSession._port_available(port)
+        assert not session._port_available(port)
         s.close()
         # Port should now be free
-        assert WebviewSession._port_available(port)
+        assert session._port_available(port)
 
 
 # ---------------------------------------------------------------------------

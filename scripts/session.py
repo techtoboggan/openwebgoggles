@@ -103,7 +103,7 @@ class WebviewSession:
     POLL_INTERVAL = 0.5
     PROGRESS_INTERVAL = 10.0
 
-    def __init__(self, work_dir: Path | None = None, open_browser: bool = True):
+    def __init__(self, work_dir: Path | None = None, open_browser: bool = True, remote: bool = False):
         self.work_dir = work_dir or Path.cwd()
         self.data_dir = work_dir if work_dir else _get_data_dir()
         self.process: subprocess.Popen | None = None
@@ -118,6 +118,10 @@ class WebviewSession:
         self._chrome_process: subprocess.Popen | None = None
         self._chrome_profile: str | None = None
         self._lock_fd: int | None = None  # flock file descriptor
+        # Remote mode: bind to 0.0.0.0 instead of 127.0.0.1 for SSH/Codespaces/Gitpod
+        self._remote: bool = remote
+        self._bind_host: str = "0.0.0.0" if remote else "127.0.0.1"  # noqa: S104
+        self._display_host: str = socket.gethostname() if remote else "127.0.0.1"
 
     # -- Singleton enforcement -----------------------------------------------
 
@@ -281,21 +285,25 @@ class WebviewSession:
 
         from log_config import DEFAULT_LOG_FILE
 
+        cmd = [
+            sys.executable,
+            str(server_py),
+            "--data-dir",
+            str(self.data_dir),
+            "--http-port",
+            str(self.http_port),
+            "--ws-port",
+            str(self.ws_port),
+            "--sdk-path",
+            str(sdk_path),
+            "--log-file",
+            str(DEFAULT_LOG_FILE),
+        ]
+        if self._remote:
+            cmd.append("--remote")
+
         self.process = subprocess.Popen(
-            [
-                sys.executable,
-                str(server_py),
-                "--data-dir",
-                str(self.data_dir),
-                "--http-port",
-                str(self.http_port),
-                "--ws-port",
-                str(self.ws_port),
-                "--sdk-path",
-                str(sdk_path),
-                "--log-file",
-                str(DEFAULT_LOG_FILE),
-            ],
+            cmd,
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -376,6 +384,52 @@ class WebviewSession:
                 validator(current)  # raises on failure — write is skipped
             self._write_state_locked(current)
             return current
+
+    def append_state(
+        self,
+        partial: dict[str, Any],
+        validator: Any | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Append list values in *partial* to existing state lists.
+
+        Non-list values are set directly (like merge). List values are appended
+        to the corresponding list in the current state. Returns a tuple of
+        (full_updated_state, patch_ops) where patch_ops is a list of
+        ``{"op": "append"|"set", "path": "dot.path", "value": ...}`` dicts.
+
+        The patch_ops can be broadcast as a ``state_patch`` WS message so
+        clients can apply the delta without a full state replacement.
+        """
+        with self._state_lock:
+            current = self.read_state()
+            ops: list[dict[str, Any]] = []
+            self._collect_append_ops(current, partial, "", ops)
+            if validator:
+                validator(current)
+            self._write_state_locked(current)
+            # Include new version in ops for client-side monotonicity
+            return current, ops
+
+    @staticmethod
+    def _collect_append_ops(
+        base: dict[str, Any],
+        patch: dict[str, Any],
+        prefix: str,
+        ops: list[dict[str, Any]],
+    ) -> None:
+        """Walk *patch* and mutate *base* in place, collecting patch ops."""
+        for key, value in patch.items():
+            if key in _DANGEROUS_KEYS:
+                raise MergeError(f"Append rejected: dangerous key {key!r}")
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, list) and isinstance(base.get(key), list):
+                base[key].extend(value)
+                ops.append({"op": "append", "path": path, "value": value})
+            elif isinstance(value, dict) and isinstance(base.get(key), dict):
+                WebviewSession._collect_append_ops(base[key], value, path, ops)
+            else:
+                base[key] = value
+                ops.append({"op": "set", "path": path, "value": value})
 
     def read_actions(self) -> dict[str, Any]:
         """Read current actions.json."""
@@ -466,7 +520,7 @@ class WebviewSession:
 
     @property
     def url(self) -> str:
-        return f"http://127.0.0.1:{self.http_port}"
+        return f"http://{self._display_host}:{self.http_port}"
 
     # -- Internal helpers ---------------------------------------------------
 
@@ -575,7 +629,7 @@ class WebviewSession:
             "server": {
                 "http_port": self.http_port,
                 "ws_port": self.ws_port,
-                "host": "127.0.0.1",
+                "host": self._display_host,
             },
         }
         self._write_json(self.data_dir / "manifest.json", manifest)
@@ -632,8 +686,7 @@ class WebviewSession:
             f"(tried {self.DEFAULT_HTTP_PORT}-{http_port - 1})"
         )
 
-    @staticmethod
-    def _port_available(port: int) -> bool:
+    def _port_available(self, port: int) -> bool:
         """Check if a TCP port is available to bind.
 
         TOCTOU note: The port may be claimed between this check and the
@@ -642,7 +695,7 @@ class WebviewSession:
         """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("127.0.0.1", port))
+                s.bind((self._bind_host, port))
                 return True
         except OSError:
             return False
