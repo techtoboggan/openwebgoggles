@@ -311,6 +311,24 @@ Adds to `~/.config/opencode/opencode.json` (global config) — available in ever
 
 > To set up a specific project instead: `openwebgoggles init opencode /path/to/project`
 
+### Cursor
+
+```bash
+cd your-project
+openwebgoggles init cursor
+```
+
+Creates `.cursor/mcp.json` in your project. Restart Cursor to pick up the new MCP server.
+
+### Windsurf
+
+```bash
+cd your-project
+openwebgoggles init windsurf
+```
+
+Creates `.windsurf/mcp.json` in your project. Restart Windsurf to pick up the new MCP server.
+
 ### Try It
 
 Tell your agent:

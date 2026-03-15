@@ -39,8 +39,10 @@ from mcp_server import (
     _find_server_key,
     _get_data_dir,
     _init_claude,
+    _init_cursor,
     _init_opencode,
     _init_usage,
+    _init_windsurf,
     _parse_logs_args,
     _print_usage,
     _read_pid_file,
@@ -288,6 +290,95 @@ class TestInitOpencode:
 
 
 # ---------------------------------------------------------------------------
+# _init_cursor
+# ---------------------------------------------------------------------------
+
+
+class TestInitCursor:
+    def test_creates_cursor_mcp_json(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_cursor(tmp_path)
+
+        cfg_path = tmp_path / ".cursor" / "mcp.json"
+        assert cfg_path.exists()
+        cfg = json.loads(cfg_path.read_text())
+        assert "openwebgoggles" in cfg["mcpServers"]
+        assert cfg["mcpServers"]["openwebgoggles"]["command"] == "/usr/bin/openwebgoggles"
+
+    def test_idempotent_skips_existing(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_cursor(tmp_path)
+            _init_cursor(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "skipping" in output.lower()
+
+    def test_merges_into_existing_config(self, tmp_path, capsys):
+        config_dir = tmp_path / ".cursor"
+        config_dir.mkdir()
+        cfg_path = config_dir / "mcp.json"
+        cfg_path.write_text(json.dumps({"mcpServers": {"other": {"command": "other"}}}) + "\n")
+
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_cursor(tmp_path)
+
+        cfg = json.loads(cfg_path.read_text())
+        assert "openwebgoggles" in cfg["mcpServers"]
+        assert "other" in cfg["mcpServers"]
+
+    def test_done_message_mentions_cursor(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_cursor(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "Cursor" in output
+
+
+# ---------------------------------------------------------------------------
+# _init_windsurf
+# ---------------------------------------------------------------------------
+
+
+class TestInitWindsurf:
+    def test_creates_windsurf_mcp_json(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_windsurf(tmp_path)
+
+        cfg_path = tmp_path / ".windsurf" / "mcp.json"
+        assert cfg_path.exists()
+        cfg = json.loads(cfg_path.read_text())
+        assert "openwebgoggles" in cfg["mcpServers"]
+
+    def test_idempotent_skips_existing(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_windsurf(tmp_path)
+            _init_windsurf(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "skipping" in output.lower()
+
+    def test_merges_into_existing_config(self, tmp_path, capsys):
+        config_dir = tmp_path / ".windsurf"
+        config_dir.mkdir()
+        cfg_path = config_dir / "mcp.json"
+        cfg_path.write_text(json.dumps({"mcpServers": {"other": {"command": "other"}}}) + "\n")
+
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_windsurf(tmp_path)
+
+        cfg = json.loads(cfg_path.read_text())
+        assert "openwebgoggles" in cfg["mcpServers"]
+        assert "other" in cfg["mcpServers"]
+
+    def test_done_message_mentions_windsurf(self, tmp_path, capsys):
+        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            _init_windsurf(tmp_path)
+
+        output = capsys.readouterr().out
+        assert "Windsurf" in output
+
+
+# ---------------------------------------------------------------------------
 # _init_usage / _print_usage
 # ---------------------------------------------------------------------------
 
@@ -298,6 +389,8 @@ class TestUsage:
         output = capsys.readouterr().out
         assert "claude" in output
         assert "opencode" in output
+        assert "cursor" in output
+        assert "windsurf" in output
         assert "Usage:" in output
 
     def test_print_usage_prints(self, capsys):
@@ -730,6 +823,18 @@ class TestMainDispatch:
             with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
                 main()
         assert (tmp_path / "opencode.json").exists()
+
+    def test_init_cursor_dispatch(self, tmp_path):
+        with mock.patch("sys.argv", ["openwebgoggles", "init", "cursor", str(tmp_path)]):
+            with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+                main()
+        assert (tmp_path / ".cursor" / "mcp.json").exists()
+
+    def test_init_windsurf_dispatch(self, tmp_path):
+        with mock.patch("sys.argv", ["openwebgoggles", "init", "windsurf", str(tmp_path)]):
+            with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+                main()
+        assert (tmp_path / ".windsurf" / "mcp.json").exists()
 
     def test_restart_dispatch(self, tmp_path):
         data_dir = tmp_path

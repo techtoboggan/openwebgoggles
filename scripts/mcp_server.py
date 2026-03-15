@@ -144,8 +144,10 @@ try:
         _find_server_key,
         _get_claude_desktop_config_path,
         _init_claude_desktop,
+        _init_cursor,
         _init_opencode,
         _init_usage,
+        _init_windsurf,
         _parse_dev_args,  # noqa: F401
         _parse_logs_args,  # noqa: F401
         _parse_scaffold_args,  # noqa: F401
@@ -171,8 +173,10 @@ except ImportError:
         _find_server_key,
         _get_claude_desktop_config_path,
         _init_claude_desktop,
+        _init_cursor,
         _init_opencode,
         _init_usage,
+        _init_windsurf,
         _parse_dev_args,
         _parse_logs_args,
         _parse_scaffold_args,
@@ -2122,7 +2126,7 @@ async def openwebgoggles_restore(session_id: str) -> dict[str, Any]:
 # Init command — bootstrap OpenWebGoggles for a specific editor
 # ---------------------------------------------------------------------------
 
-_EDITORS = ["claude", "claude-desktop", "opencode"]
+_EDITORS = ["claude", "claude-desktop", "opencode", "cursor", "windsurf"]
 
 # Default config directories per editor (when user doesn't specify a target).
 # Claude Code uses project-level .mcp.json, so cwd is the right default.
@@ -2133,6 +2137,8 @@ _EDITOR_DEFAULT_DIRS: dict[str, Path | None] = {
     "claude": None,  # None means cwd
     "claude-desktop": None,  # handled specially — platform-specific global config
     "opencode": Path.home() / ".config" / "opencode",
+    "cursor": None,  # project-level .cursor/mcp.json
+    "windsurf": None,  # project-level .windsurf/mcp.json
 }
 
 
@@ -2240,6 +2246,8 @@ _INIT_DISPATCH = {
     "claude": _init_claude,
     "claude-desktop": _init_claude_desktop,
     "opencode": _init_opencode,
+    "cursor": _init_cursor,
+    "windsurf": _init_windsurf,
 }
 
 

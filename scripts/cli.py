@@ -248,6 +248,45 @@ def _init_opencode(root: Path) -> None:
     print("Restart OpenCode to pick up the new MCP server.")
 
 
+def _init_mcp_json_editor(root: Path, editor_name: str, config_subdir: str) -> None:
+    """Generic init for editors using .{subdir}/mcp.json (Cursor, Windsurf, etc.)."""
+    root.mkdir(parents=True, exist_ok=True)
+    binary = _resolve_binary()
+    print(f"  binary: {binary}")
+    server_entry: dict[str, Any] = {"command": binary}
+
+    config_dir = root / config_subdir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "mcp.json"
+
+    if config_path.exists():
+        existing = json.loads(config_path.read_text())
+        servers = existing.setdefault("mcpServers", {})
+        existing_key = _find_server_key(servers)
+        if existing_key:
+            print(f"  {config_path}: {existing_key} already configured, skipping.")
+        else:
+            servers["openwebgoggles"] = server_entry
+            config_path.write_text(json.dumps(existing, indent=2) + "\n")
+            print(f"  {config_path}: added openwebgoggles server.")
+    else:
+        config = {"mcpServers": {"openwebgoggles": server_entry}}
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+        print(f"  {config_path}: created.")
+
+    print(f"\nDone! Configured for {editor_name} in {root}. Restart {editor_name} to pick up the new MCP server.")
+
+
+def _init_cursor(root: Path) -> None:
+    """Set up .cursor/mcp.json for Cursor."""
+    _init_mcp_json_editor(root, "Cursor", ".cursor")
+
+
+def _init_windsurf(root: Path) -> None:
+    """Set up .windsurf/mcp.json for Windsurf."""
+    _init_mcp_json_editor(root, "Windsurf", ".windsurf")
+
+
 def _init_usage() -> None:
     """Print init subcommand usage."""
     print("Usage: openwebgoggles init <editor> [target_dir] [--global]\n")
@@ -259,13 +298,19 @@ def _init_usage() -> None:
     print("  claude-desktop  Claude Desktop only — adds to claude_desktop_config.json")
     print("                  Uses the global platform-specific config path")
     print("  opencode        OpenCode — creates opencode.json")
-    print("                  Default target: ~/.config/opencode/ (global, all projects)\n")
+    print("                  Default target: ~/.config/opencode/ (global, all projects)")
+    print("  cursor          Cursor — creates .cursor/mcp.json")
+    print("                  Default target: current directory (project-level)")
+    print("  windsurf        Windsurf — creates .windsurf/mcp.json")
+    print("                  Default target: current directory (project-level)\n")
     print("Examples:")
     print("  openwebgoggles init claude              # set up Claude Code for this project")
     print("  openwebgoggles init claude --global     # set up Claude Code for ALL projects")
     print("  openwebgoggles init claude-desktop       # set up Claude Desktop only")
     print("  openwebgoggles init opencode             # set up OpenCode globally")
     print("  openwebgoggles init opencode .           # set up OpenCode for this project only")
+    print("  openwebgoggles init cursor               # set up Cursor for this project")
+    print("  openwebgoggles init windsurf             # set up Windsurf for this project")
     print("  openwebgoggles init claude ~/my-proj     # set up a specific project for Claude")
 
 
