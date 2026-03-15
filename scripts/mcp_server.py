@@ -111,6 +111,23 @@ except Exception:
     logger.warning("Webhook initialization failed", exc_info=True)
 
 
+# Audit logging — structured JSONL log of every HITL interaction
+_audit = None
+try:
+    try:
+        from .audit import AuditLogger
+    except ImportError:
+        from audit import AuditLogger  # noqa: I001
+
+    _audit = AuditLogger()
+    if _audit.enabled:
+        logger.info("Audit logging enabled: %s", _audit.path)
+except ImportError:
+    logger.debug("Audit module not available")
+except Exception:
+    logger.warning("Audit logging initialization failed", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Session utilities — imported from session.py
 # ---------------------------------------------------------------------------
@@ -1647,6 +1664,17 @@ async def _owg_action(
 
     app_state = _get_app_state(session)
     app_state.add_action(action)
+
+    # Audit log: record MCP Apps user action
+    if _audit and _audit.enabled:
+        _audit.log_action(
+            action_id=action_id,
+            action_type=action_type,
+            session=session,
+            value=value,
+            tool="_owg_action",
+        )
+
     return {"received": True}
 
 
@@ -1818,6 +1846,16 @@ async def openwebgoggles(
 
     mode = _resolve_mode(ctx)
 
+    # Audit log: record tool invocation
+    if _audit and _audit.enabled:
+        _audit.log_tool_call(
+            tool="openwebgoggles",
+            session=session,
+            mode=mode,
+            state_title=state.get("title", ""),
+            state_status=state.get("status", ""),
+        )
+
     # ── App mode: return immediately with structuredContent ─────────────
     # The host renders an iframe AFTER the tool returns, so we must NOT
     # block here.  User actions arrive via _owg_action → openwebgoggles_read().
@@ -1878,6 +1916,16 @@ async def openwebgoggles(
     if result is None:
         return {"error": f"Timed out after {timeout}s waiting for user action."}
 
+    # Audit log: record user actions from browser mode
+    if _audit and _audit.enabled:
+        for action in result.get("actions", []):
+            _audit.log_action(
+                action_id=action.get("action_id", action.get("id", "")),
+                action_type=action.get("type", ""),
+                session=session,
+                value=action.get("value"),
+            )
+
     # Persist final state + actions if requested
     if persist:
         _persist_session(ws.session_id, state, result, mode="browser")
@@ -1923,7 +1971,7 @@ async def openwebgoggles_read(clear: bool = False, session: str = "default") -> 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def openwebgoggles_update(
+async def openwebgoggles_update(  # noqa: C901
     state: dict[str, Any],
     merge: bool = False,
     append: bool = False,
@@ -1977,6 +2025,17 @@ async def openwebgoggles_update(
 
     validator = _make_merge_validator()
     mode = _resolve_mode(ctx)
+
+    # Audit log: record update call
+    if _audit and _audit.enabled:
+        _audit.log_tool_call(
+            tool="openwebgoggles_update",
+            session=session,
+            mode=mode,
+            state_title=state.get("title", ""),
+            merge=merge,
+            append=append,
+        )
 
     # ── App mode: update in-memory state, return structuredContent ─────
     if mode == "app":
@@ -2093,6 +2152,10 @@ async def openwebgoggles_close(
         xss_warnings = _security_gate._scan_xss(message, "webview_close.message")
         if xss_warnings:
             return {"error": f"Close message rejected by security gate: {xss_warnings[0]}"}
+
+    # Audit log: record session close
+    if _audit and _audit.enabled:
+        _audit.log_session_event("session_close", session=session or "all", message=message)
 
     # ── Close a specific named session ──────────────────────────────────
     if session is not None:

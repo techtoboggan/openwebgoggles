@@ -45,9 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Focus indicators on all interactive elements
 - ARIA labels and roles on dynamic content
 
+**Webhook Notifications**
+- `OWG_WEBHOOK_URL` env var for Slack, Discord, or generic HTTP webhook notifications
+- Non-blocking daemon threads with per-session rate limiting (1/min)
+- Custom message templates via `OWG_WEBHOOK_TEMPLATE`
+
+**Audit Logging**
+- Structured JSONL audit log of every HITL interaction (tool calls, user actions, session events)
+- `OWG_AUDIT_LOG` env var for custom log path (default: `~/.openwebgoggles/audit.jsonl`)
+- Automatic log rotation (50MB, keeps 3 rotated files)
+- Thread-safe, non-blocking — failures never break the main flow
+
+**Agent Framework Integrations**
+- Integration examples for LangChain, CrewAI, AutoGen, and Anthropic Agents SDK
+- Comprehensive integration guide with common patterns (approval gates, multi-step wizards, live dashboards)
+
+**Editor Support**
+- Cursor (`openwebgoggles init cursor`) and Windsurf (`openwebgoggles init windsurf`) setup commands
+- Smithery MCP registry configuration for discoverability
+
 ### Internal
-- 2566+ tests (2339 → 2566), 0 failures
-- New test files: test_delta_streaming.py (32 tests), test_remote_mode.py (25 tests), test_plugin_system.py (30 tests)
+- 2621+ tests (2339 → 2621), 0 failures
+- New test files: test_delta_streaming.py (32 tests), test_remote_mode.py (25 tests), test_plugin_system.py (30 tests), test_webhook.py (18 tests), test_audit.py (27 tests)
 
 ---
 

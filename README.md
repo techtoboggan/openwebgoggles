@@ -623,6 +623,39 @@ Extend the renderer with custom section types. Drop a `.js` file in `~/.openwebg
 
 Plugins are discovered at startup, validated for safety (no `eval`, `innerHTML`, `document.write`), and injected into the bundle before `Object.freeze`. The `OWG.h()` helper builds HTML safely with a tag allowlist and automatic attribute escaping.
 
+## Agent Framework Integrations
+
+OpenWebGoggles works with any agent framework that supports MCP tools. Integration examples for popular frameworks:
+
+| Framework | Style | Example |
+|-----------|-------|---------|
+| **Agents SDK** | Native MCP — zero glue | [`examples/integrations/agents_sdk_hitl.py`](examples/integrations/agents_sdk_hitl.py) |
+| **LangChain** | `StructuredTool` wrappers | [`examples/integrations/langchain_hitl.py`](examples/integrations/langchain_hitl.py) |
+| **CrewAI** | `BaseTool` subclasses | [`examples/integrations/crewai_hitl.py`](examples/integrations/crewai_hitl.py) |
+| **AutoGen** | `UserProxyAgent` override | [`examples/integrations/autogen_hitl.py`](examples/integrations/autogen_hitl.py) |
+
+For detailed patterns (approval gates, multi-step wizards, live dashboards, parallel reviews), see the [Integration Guide](docs/integrations.md).
+
+## Audit Logging
+
+Every HITL interaction is recorded in a structured JSON Lines log for compliance and debugging:
+
+```bash
+# Enable (on by default)
+export OWG_AUDIT_LOG=~/.openwebgoggles/audit.jsonl   # custom path
+export OWG_AUDIT=0                                    # disable entirely
+```
+
+Each entry captures the event type, timestamp, session, tool, and action details:
+
+```jsonl
+{"ts":"2026-03-15T14:30:00+00:00","event":"tool_call","tool":"openwebgoggles","session":"deploy","mode":"browser","title":"Deploy Review","status":"pending_review"}
+{"ts":"2026-03-15T14:31:12+00:00","event":"user_action","action_id":"approve","action_type":"approve","session":"deploy","value":{"decision":"approved"}}
+{"ts":"2026-03-15T14:31:15+00:00","event":"session_close","session":"deploy","message":"Session complete."}
+```
+
+Log files rotate automatically at 50MB (keeps 3 rotations). The audit logger is thread-safe and non-blocking — failures are silently logged, never raised.
+
 ## Security
 
 The trust model is straightforward: the agent and the browser are on the same machine, and nobody else should be able to read or tamper with the communication between them.
