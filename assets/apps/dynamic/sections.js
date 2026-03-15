@@ -8,6 +8,38 @@
   var safeClass = OWG.safeClass;
   var markdownBlock = OWG.markdownBlock;
 
+  // ─── Plugin registry ──────────────────────────────────────────────────────
+  // Custom section renderers registered by plugins before OWG freeze.
+  // Plugins call OWG.registerPlugin(typeName, renderFn) to register.
+  var _plugins = Object.create(null);
+  var _pluginPostRender = [];
+  var _BUILTINS = ["form","items","text","actions","progress","log","diff","table","tabs","metric","chart","tree","timeline","heatmap","network"];
+
+  OWG.registerPlugin = function (typeName, renderFn) {
+    if (typeof typeName !== "string" || !/^[a-z][a-z0-9_-]{0,30}$/.test(typeName)) {
+      console.error("OWG plugin: invalid type name:", typeName);
+      return false;
+    }
+    if (typeof renderFn !== "function") {
+      console.error("OWG plugin: render must be a function for type:", typeName);
+      return false;
+    }
+    if (_BUILTINS.indexOf(typeName) !== -1) {
+      console.error("OWG plugin: cannot override built-in type:", typeName);
+      return false;
+    }
+    _plugins[typeName] = renderFn;
+    return true;
+  };
+
+  OWG.registerPluginPostRender = function (fn) {
+    if (typeof fn === "function") _pluginPostRender.push(fn);
+  };
+
+  OWG.getRegisteredPlugins = function () {
+    return Object.keys(_plugins);
+  };
+
   // Module-scope state for tabs — preserved across render() calls
   var activeTabs = Object.create(null);
 
@@ -46,7 +78,13 @@
       case "timeline":  bodyHtml += renderTimeline(sec);            break;
       case "heatmap":   bodyHtml += renderHeatmap(sec);             break;
       case "network":   bodyHtml += renderNetwork(sec, si);         break;
-      default:          bodyHtml += renderForm(sec, si);            break;
+      default:
+        if (Object.prototype.hasOwnProperty.call(_plugins, sec.type)) {
+          bodyHtml += _plugins[sec.type](sec, si, OWG);
+        } else {
+          bodyHtml += renderForm(sec, si);
+        }
+        break;
     }
 
     if (isCollapsible) {
@@ -569,6 +607,10 @@
     var logs = document.querySelectorAll('.log-container[data-autoscroll="true"]');
     for (var i = 0; i < logs.length; i++) {
       logs[i].scrollTop = logs[i].scrollHeight;
+    }
+    // Run plugin post-render hooks
+    for (var pi = 0; pi < _pluginPostRender.length; pi++) {
+      try { _pluginPostRender[pi](); } catch (e) { console.error("Plugin post-render error:", e); }
     }
   };
 

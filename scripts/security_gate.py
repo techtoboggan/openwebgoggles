@@ -59,8 +59,21 @@ def _suggest(value: str, allowed: frozenset[str], max_suggestions: int = 3) -> s
     return ""
 
 
+_PLUGIN_TYPE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
+
+
 class SecurityGate:
     """Validates state payloads before they reach the browser."""
+
+    def __init__(self, *, extra_section_types: frozenset[str] | None = None) -> None:
+        self._allowed_section_types = self.ALLOWED_SECTION_TYPES
+        if extra_section_types:
+            for t in extra_section_types:
+                if not isinstance(t, str) or not _PLUGIN_TYPE_RE.match(t):
+                    raise ValueError(f"Invalid plugin section type name: {t!r}")
+                if t in self.ALLOWED_SECTION_TYPES:
+                    raise ValueError(f"Cannot override built-in section type: {t!r}")
+            self._allowed_section_types = self.ALLOWED_SECTION_TYPES | extra_section_types
 
     # --- Size limits ---
     MAX_PAYLOAD_SIZE = 512_000  # 512KB total state
@@ -740,8 +753,8 @@ class SecurityGate:
             if not isinstance(sec, dict):
                 return False, f"sections[{i}] must be an object"
             sec_type = sec.get("type", "form")
-            if sec_type not in self.ALLOWED_SECTION_TYPES:
-                hint = _suggest(sec_type, self.ALLOWED_SECTION_TYPES)
+            if sec_type not in self._allowed_section_types:
+                hint = _suggest(sec_type, self._allowed_section_types)
                 return False, f"sections[{i}].type: invalid type {sec_type!r}.{hint}"
 
             # Validate section format

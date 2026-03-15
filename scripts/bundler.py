@@ -37,13 +37,20 @@ def _find_assets_dir() -> Path:
     raise FileNotFoundError(msg)
 
 
-def bundle_html(assets_dir: Path | None = None) -> str:
+def bundle_html(assets_dir: Path | None = None, plugin_contents: list[str] | None = None) -> str:
     """Bundle all dynamic app assets into a single self-contained HTML string.
 
-    The result is cached for the lifetime of the process.
+    Args:
+        assets_dir: Path to the assets directory. Auto-detected if None.
+        plugin_contents: Optional list of plugin JS source strings to inline
+            after behaviors.js but before app.js (so plugins register before
+            Object.freeze).
+
+    The result is cached for the lifetime of the process (only when no plugins).
     """
     global _bundled_cache  # noqa: PLW0603
-    if _bundled_cache is not None:
+    # Only use cache when no plugins (plugins may change between calls)
+    if _bundled_cache is not None and not plugin_contents:
         return _bundled_cache
 
     if assets_dir is None:
@@ -76,6 +83,13 @@ def bundle_html(assets_dir: Path | None = None) -> str:
         content = content.replace("</script>", "<\\/script>")
         scripts.append(f"<script>{content}</script>")
 
+        # Inject plugins after behaviors.js (before app.js) so they register
+        # before Object.freeze freezes the OWG namespace
+        if filename == "behaviors.js" and plugin_contents:
+            for plugin_js in plugin_contents:
+                safe_js = plugin_js.replace("</script>", "<\\/script>")
+                scripts.append(f"<script>{safe_js}</script>")
+
     script_block = "\n".join(scripts)
 
     # Inject before </body>
@@ -87,7 +101,8 @@ def bundle_html(assets_dir: Path | None = None) -> str:
     # In embedded mode, remove min-height:100vh so iframe can size naturally
     html = html.replace("min-height: 100vh", "min-height: auto")
 
-    _bundled_cache = html
+    if not plugin_contents:
+        _bundled_cache = html
     return html
 
 

@@ -61,6 +61,24 @@ except Exception as exc:
 
 logger = logging.getLogger("openwebgoggles")
 
+# Plugin discovery — discover plugins before SecurityGate init so extra types are registered
+_discovered_plugins: list = []
+try:
+    try:
+        from .plugin_loader import discover_plugins, get_plugin_dirs
+    except ImportError:
+        from plugin_loader import discover_plugins, get_plugin_dirs  # noqa: I001
+
+    _discovered_plugins = discover_plugins(*get_plugin_dirs())
+    if _discovered_plugins:
+        logger.info(
+            "Loaded %d plugin(s): %s", len(_discovered_plugins), ", ".join(p.type_name for p in _discovered_plugins)
+        )
+except ImportError:
+    logger.debug("Plugin loader not available — plugins disabled")
+except Exception:
+    logger.warning("Plugin discovery failed — plugins disabled", exc_info=True)
+
 # SecurityGate — imported eagerly for validation in MCP tools
 _security_gate = None
 try:
@@ -69,7 +87,8 @@ try:
     except ImportError:
         from security_gate import SecurityGate  # noqa: I001
 
-    _security_gate = SecurityGate()
+    extra_types = frozenset(p.type_name for p in _discovered_plugins) if _discovered_plugins else None
+    _security_gate = SecurityGate(extra_section_types=extra_types)
 except ImportError:
     logger.warning("SecurityGate not available — state validation disabled")
 except Exception:
@@ -1301,7 +1320,8 @@ def _get_bundled_html() -> str:
             from .bundler import bundle_html
         except ImportError:
             from bundler import bundle_html  # noqa: I001
-        return bundle_html()
+        plugin_contents = [p.content for p in _discovered_plugins] if _discovered_plugins else None
+        return bundle_html(plugin_contents=plugin_contents)
     except Exception:
         logger.error("Failed to bundle HTML for MCP Apps resource", exc_info=True)
         return "<html><body><p>Error: Failed to load OpenWebGoggles UI</p></body></html>"

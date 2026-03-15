@@ -241,4 +241,34 @@
   // to ensure all markdown renders get target="_blank" and rel="noopener noreferrer"
   _ensurePurifyHook();
 
+  // ─── Plugin DOM builder helper ──────────────────────────────────────────────
+  // Provides a safe way for plugins to build HTML without using innerHTML directly.
+  // Usage: OWG.h("div", {"class": "my-thing"}, "text content")
+  //        OWG.h("ul", {}, [OWG.h("li", {}, "item 1"), OWG.h("li", {}, "item 2")])
+  var _SAFE_TAGS = /^(div|span|p|h[1-6]|ul|ol|li|strong|em|code|pre|table|thead|tbody|tr|th|td|button|label|details|summary|hr|br|a|small|sub|sup|dl|dt|dd|blockquote|abbr|time|mark|del|ins|figure|figcaption|section|article|nav|header|footer)$/;
+  OWG.h = function (tag, attrs, children) {
+    if (!_SAFE_TAGS.test(tag)) return "";
+    var html = "<" + tag;
+    if (attrs) {
+      var akeys = Object.keys(attrs);
+      for (var ai = 0; ai < akeys.length; ai++) {
+        var k = akeys[ai];
+        // Block event handlers and dangerous attributes
+        if (/^on/i.test(k)) continue;
+        html += " " + OWG.escAttr(k) + '="' + OWG.escAttr(String(attrs[k])) + '"';
+      }
+    }
+    if (tag === "br" || tag === "hr") return html + ">";
+    html += ">";
+    if (typeof children === "string") {
+      html += children; // Caller is responsible for escaping (use OWG.esc() for text)
+    } else if (Array.isArray(children)) {
+      for (var ci = 0; ci < children.length; ci++) {
+        if (typeof children[ci] === "string") html += children[ci];
+      }
+    }
+    html += "</" + tag + ">";
+    return html;
+  };
+
 })(window.OWG = window.OWG || {});
