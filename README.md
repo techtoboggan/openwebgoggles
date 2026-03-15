@@ -346,6 +346,10 @@ Five MCP tools — that's the entire API surface:
 | `webview_read()` | Poll for actions without blocking |
 | `webview_status()` | Check if a session is active |
 | `webview_close()` | Close the session |
+| `webview_save(name)` | Save session state for later restoration |
+| `webview_restore(name)` | Restore a previously saved session |
+
+All tools accept an optional `session_name` parameter for **multi-session support** — run multiple concurrent UI panels side by side. Each named session gets its own browser tab, server ports, and isolated state.
 
 ### Manual Setup
 
@@ -422,9 +426,9 @@ This means you can debug the entire system by looking at three JSON files. No hi
 
 Most use cases don't require custom HTML. The built-in `dynamic` app takes a JSON schema and renders a complete, styled interface.
 
-**Section types:** `text`, `items`, `form`, `actions`, `progress`, `log`, `diff`, `table`, `tabs`, `metric`, `chart`
+**Section types:** `text`, `items`, `form`, `actions`, `progress`, `log`, `diff`, `table`, `tabs`, `metric`, `chart`, `tree`, `timeline`, `heatmap`, `network`
 
-**Form field types:** `text`, `textarea`, `number`, `select`, `checkbox`, `email`, `url`, `static`
+**Form field types:** `text`, `textarea`, `number`, `select`, `checkbox`, `email`, `url`, `static`, `slider`, `date`, `datetime`, `autocomplete`, `file`
 
 **Action styles:** `primary`, `success`, `danger`, `warning`, `ghost`, `approve`, `reject`, `submit`, `delete`
 
@@ -441,6 +445,10 @@ Beyond basic forms and text, the renderer supports content types purpose-built f
 - **`tabs`** — Client-side tabbed panels. Nest any other section types inside each tab. No server round-trip on tab switch.
 - **`metric`** — KPI cards in a responsive grid (1–6 columns). Each card supports a label, value, unit, change indicator, and inline SVG sparkline.
 - **`chart`** — Data-driven SVG charts: bar, line, area, pie, donut, and sparkline. Provide data as `{labels, datasets}` or reuse the `columns/rows` format from tables.
+- **`tree`** — Hierarchical node/child display with expand/collapse. Good for file trees, org charts, dependency graphs.
+- **`timeline`** — Gantt-style timeline with labelled event spans, color coding, and date-range scaling.
+- **`heatmap`** — Matrix grid with configurable color scale. Show correlations, error rates by hour/day, coverage matrices.
+- **`network`** — Graph diagram with nodes and edges. Visualize service dependencies, data flows, or relationship maps.
 
 ### Live Updates
 
@@ -455,6 +463,16 @@ Use `merge=True` to update specific fields without replacing the entire state. O
 ```json
 webview_update({"tasks": [...], "percentage": 75}, preset="progress")
 ```
+
+#### Delta Streaming
+
+For high-frequency updates (streaming logs, appending table rows), use `append=True` to send only the new data instead of replacing entire lists:
+
+```json
+webview_update({"data": {"sections": [{"lines": ["new log line 1", "new log line 2"]}]}}, append=True)
+```
+
+Append mode generates compact patch operations that are broadcast instantly over WebSocket — no file-watcher polling delay. The browser applies them incrementally without re-rendering the entire UI.
 
 ### Field Validation
 
@@ -554,6 +572,39 @@ These aren't toy demos. They're functional interfaces that handle real workflows
 
 **Batch triage.** Show all items at once with per-item actions — tabs, cards, or a list with inline controls. Works well when the total count is under 10 or so.
 
+## Remote Mode
+
+By default, the server binds to `127.0.0.1` (localhost only). For SSH tunnels, GitHub Codespaces, Gitpod, or any environment where the browser runs on a different machine:
+
+```bash
+# Via environment variable
+OWG_REMOTE=1 openwebgoggles
+
+# Via CLI flag (dev server)
+openwebgoggles dev --remote
+```
+
+Remote mode binds to `0.0.0.0`, adjusts CORS headers dynamically, and uses wildcard WebSocket CSP. Bearer token authentication remains the access gate — the server is not open to unauthenticated access.
+
+## Plugins
+
+Extend the renderer with custom section types. Drop a `.js` file in `~/.openwebgoggles/plugins/` (global) or `plugins/` (project-local):
+
+```javascript
+// @owg-plugin type: kanban
+(function(OWG) {
+  OWG.registerPlugin("kanban", function(section, sectionIndex) {
+    var html = OWG.h("div", {"class": "kanban-board"}, [
+      // Build your UI using OWG.h() for safe HTML generation
+      OWG.h("div", {"class": "column"}, OWG.esc(section.title))
+    ]);
+    return html;
+  });
+})(window.OWG);
+```
+
+Plugins are discovered at startup, validated for safety (no `eval`, `innerHTML`, `document.write`), and injected into the bundle before `Object.freeze`. The `OWG.h()` helper builds HTML safely with a tag allowlist and automatic attribute escaping.
+
 ## Security
 
 The trust model is straightforward: the agent and the browser are on the same machine, and nobody else should be able to read or tamper with the communication between them.
@@ -570,7 +621,7 @@ Nine defense layers enforce this, all enabled by default:
 - **SecurityGate** — 30 XSS patterns, zero-width character detection, schema validation
 - **Rate limiting** — 30 actions per minute per session
 
-All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 1800+ tests (unit, BDD, and E2E).
+All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 2500+ tests (unit, BDD, and E2E).
 
 The tradeoff is real, though. This level of defense adds complexity to the codebase. If you're running in a fully trusted local environment and want to understand what each layer does, the [security tests](scripts/tests/) are the best documentation.
 

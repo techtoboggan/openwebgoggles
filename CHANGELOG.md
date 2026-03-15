@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-03-15
+
+### Added
+
+**Multi-Session Support**
+- Named sessions via `session_name` parameter — run multiple concurrent UI panels
+- Session isolation — each session has its own data directory, server ports, and browser tab
+- `openwebgoggles_close(session_name=)` closes specific sessions
+- Session registry tracks all active sessions with automatic cleanup
+
+**Session Persistence**
+- `openwebgoggles_save(name=)` / `openwebgoggles_restore(name=)` tools for saving and restoring session state across restarts
+- Saved sessions stored in `~/.openwebgoggles/saved_sessions/`
+- State, manifest, and metadata preserved; server ports re-allocated on restore
+
+**Delta Streaming / Append Mode**
+- `append=True` parameter on `openwebgoggles_update()` — list values are appended instead of replaced
+- Compact patch ops (`set`/`append`) broadcast via `state_patch` WebSocket messages
+- `/_api/patch` HTTP endpoint for instant delta delivery (bypasses file-watcher poll cycle)
+- SDK `state_patched` event for incremental UI updates
+
+**Remote Mode**
+- `OWG_REMOTE=1` env var or `--remote` CLI flag binds server to `0.0.0.0` for SSH tunnels, Codespaces, Gitpod
+- Dynamic CORS (echoes request Origin) and wildcard WebSocket CSP for remote connections
+- Host validation relaxed in remote mode (bearer auth remains the access gate)
+
+**Plugin / Extension System**
+- File-based plugin discovery from `~/.openwebgoggles/plugins/` and local `plugins/` directories
+- `@owg-plugin type: <name>` header convention for plugin registration
+- `OWG.registerPlugin(typeName, renderFn)` JS API with built-in override protection
+- Static safety checks: reject eval, innerHTML, document.write, Function constructor
+- `OWG.h(tag, attrs, children)` safe DOM builder helper for plugin authors
+- SecurityGate `extra_section_types` — plugin section types pass validation without modifying built-in allowlist
+- Bundler injects plugins after behaviors.js but before app.js (before Object.freeze)
+
+**WCAG 2.1 AA Accessibility**
+- Contrast ratios meet 4.5:1 minimum across all UI elements
+- Focus indicators on all interactive elements
+- ARIA labels and roles on dynamic content
+
+### Internal
+- 2566+ tests (2339 → 2566), 0 failures
+- New test files: test_delta_streaming.py (32 tests), test_remote_mode.py (25 tests), test_plugin_system.py (30 tests)
+
+---
+
 ## [0.16.1] - 2026-03-10
 
 ### Fixed
