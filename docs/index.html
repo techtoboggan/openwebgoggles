@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenWebGoggles — MCP Human-in-the-Loop UI for AI Agents</title>
+  <meta name="description" content="OpenWebGoggles is an MCP-based human-in-the-loop UI that gives AI agents rich browser panels for confirmations, forms, dashboards, and more.">
+  <meta name="keywords" content="MCP, human-in-the-loop, AI agents, LangChain, CrewAI, AutoGen, Claude, browser UI, developer tools">
+  <meta name="author" content="OpenWebGoggles Contributors">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="OpenWebGoggles — The goggles, they do everything.">
+  <meta property="og:description" content="MCP-based human-in-the-loop UI for AI agents. Rich browser panels, 9-layer security, works with any agent framework.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://openwebgoggles.dev">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="OpenWebGoggles — The goggles, they do everything.">
+  <meta name="twitter:description" content="MCP-based human-in-the-loop UI for AI agents. Rich browser panels, 9-layer security, works with any agent framework.">
+
+  <style>
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #0b0e14;
+      --bg-raised: #131720;
+      --bg-card: #181d28;
+      --border: #252b3a;
+      --text: #d4dae6;
+      --text-muted: #7a8494;
+      --text-heading: #eef1f7;
+      --accent: #38bdf8;
+      --accent-dim: rgba(56, 189, 248, 0.12);
+      --accent-glow: rgba(56, 189, 248, 0.25);
+      --code-bg: #0f1219;
+      --green: #4ade80;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", Arial, sans-serif;
+      --mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+
+    a:hover {
+      opacity: 0.8;
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ---- NAV ---- */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(11, 14, 20, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+    }
+
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--text-heading);
+      letter-spacing: -0.02em;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-heading);
+      opacity: 1;
+    }
+
+    /* ---- HERO ---- */
+    .hero {
+      text-align: center;
+      padding: 100px 0 80px;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      border-radius: 999px;
+      padding: 6px 16px;
+      margin-bottom: 28px;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.4rem, 5.5vw, 3.8rem);
+      font-weight: 800;
+      color: var(--text-heading);
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+
+    .hero .subtitle {
+      font-size: clamp(1.05rem, 2.2vw, 1.25rem);
+      color: var(--text-muted);
+      max-width: 620px;
+      margin: 0 auto 40px;
+      line-height: 1.6;
+    }
+
+    .hero-install {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 24px;
+      font-family: var(--mono);
+      font-size: 0.95rem;
+      color: var(--green);
+      margin-bottom: 28px;
+      cursor: default;
+      user-select: all;
+    }
+
+    .hero-install .prompt {
+      color: var(--text-muted);
+      user-select: none;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 12px 24px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #0b0e14;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.9;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--text-muted);
+      opacity: 1;
+    }
+
+    /* ---- SECTION SHARED ---- */
+    section {
+      padding: 80px 0;
+    }
+
+    .section-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+
+    .section-title {
+      font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+      font-weight: 700;
+      color: var(--text-heading);
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      color: var(--text-muted);
+      max-width: 560px;
+      margin-bottom: 48px;
+      font-size: 1.05rem;
+    }
+
+    .section-desc.center {
+      text-align: center;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .center-text {
+      text-align: center;
+    }
+
+    /* ---- FEATURE CARDS ---- */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px 28px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .card:hover {
+      border-color: rgba(56, 189, 248, 0.3);
+      box-shadow: 0 0 30px rgba(56, 189, 248, 0.06);
+    }
+
+    .card-icon {
+      font-size: 1.6rem;
+      margin-bottom: 16px;
+      display: block;
+      width: 48px;
+      height: 48px;
+      line-height: 48px;
+      text-align: center;
+      background: var(--accent-dim);
+      border-radius: 10px;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .card h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin-bottom: 10px;
+    }
+
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .card .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 14px;
+    }
+
+    .tag {
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.15);
+    }
+
+    /* ---- HOW IT WORKS ---- */
+    .flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .flow-step {
+      text-align: center;
+      padding: 28px 24px;
+      flex: 0 1 180px;
+    }
+
+    .flow-step .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--accent-dim);
+      border: 2px solid var(--accent);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 14px;
+    }
+
+    .flow-step h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin-bottom: 6px;
+    }
+
+    .flow-step p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .flow-arrow {
+      color: var(--border);
+      font-size: 1.6rem;
+      line-height: 1;
+      flex-shrink: 0;
+      padding: 0 4px;
+    }
+
+    /* ---- CODE EXAMPLE ---- */
+    .code-section {
+      background: var(--bg-raised);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .code-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 32px;
+      overflow-x: auto;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .code-block pre {
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .code-block .kw { color: #c084fc; }
+    .code-block .fn { color: #38bdf8; }
+    .code-block .str { color: #4ade80; }
+    .code-block .cm { color: #5c6678; font-style: italic; }
+    .code-block .var { color: #f9a8d4; }
+
+    /* ---- QUICK START ---- */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .step {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 24px;
+    }
+
+    .step .step-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+
+    .step h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin-bottom: 12px;
+    }
+
+    .step code {
+      display: block;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      color: var(--green);
+      white-space: pre;
+      overflow-x: auto;
+    }
+
+    /* ---- FOOTER ---- */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 48px 0;
+    }
+
+    footer .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .footer-left {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+      list-style: none;
+    }
+
+    .footer-links a {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+
+    .footer-links a:hover {
+      color: var(--text-heading);
+      opacity: 1;
+    }
+
+    /* ---- RESPONSIVE ---- */
+    @media (max-width: 768px) {
+      .cards, .steps {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding: 64px 0 56px;
+      }
+
+      section {
+        padding: 56px 0;
+      }
+
+      .flow-arrow {
+        display: none;
+      }
+
+      .flow {
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .flow-step {
+        flex: 1 1 auto;
+      }
+
+      .nav-links {
+        gap: 16px;
+      }
+
+      .code-block {
+        padding: 20px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .nav-links {
+        display: none;
+      }
+
+      .hero-install {
+        font-size: 0.82rem;
+        padding: 12px 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav>
+    <div class="container">
+      <div class="nav-logo">OpenWebGoggles</div>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#how-it-works">How It Works</a></li>
+        <li><a href="#quickstart">Quick Start</a></li>
+        <li><a href="https://github.com/AugmendTech/openwebgoggles" target="_blank" rel="noopener">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="container">
+      <div class="hero-badge">MCP Human-in-the-Loop UI</div>
+      <h1>The goggles &mdash; they do<br>everything.</h1>
+      <p class="subtitle">
+        Give your AI agents rich browser panels for confirmations, forms, dashboards, and diffs &mdash; with 9 layers of security built in.
+      </p>
+      <div class="hero-install">
+        <span class="prompt">$</span> pipx install openwebgoggles
+      </div>
+      <div class="hero-actions">
+        <a href="https://github.com/AugmendTech/openwebgoggles" target="_blank" rel="noopener" class="btn btn-primary">View on GitHub</a>
+        <a href="#quickstart" class="btn btn-secondary">Quick Start</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Features -->
+  <section id="features">
+    <div class="container">
+      <div class="center-text">
+        <div class="section-label">Features</div>
+        <h2 class="section-title">Everything agents need to talk to humans</h2>
+        <p class="section-desc center">
+          A single MCP server that turns any agent into a full-stack app with browser-based human oversight.
+        </p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <span class="card-icon">UI</span>
+          <h3>Rich UI Panels</h3>
+          <p>Present decisions to humans with full-fidelity browser UI &mdash; not just plain text in a terminal.</p>
+          <div class="tag-list">
+            <span class="tag">Forms</span>
+            <span class="tag">Tables</span>
+            <span class="tag">Dashboards</span>
+            <span class="tag">Diffs</span>
+            <span class="tag">Charts</span>
+          </div>
+        </div>
+        <div class="card">
+          <span class="card-icon">AI</span>
+          <h3>Any Agent Framework</h3>
+          <p>Works with every major agent framework via the Model Context Protocol. One tool, universal compatibility.</p>
+          <div class="tag-list">
+            <span class="tag">LangChain</span>
+            <span class="tag">CrewAI</span>
+            <span class="tag">AutoGen</span>
+            <span class="tag">Agents SDK</span>
+            <span class="tag">Claude</span>
+          </div>
+        </div>
+        <div class="card">
+          <span class="card-icon">9x</span>
+          <h3>9-Layer Security</h3>
+          <p>Defense in depth from localhost binding to Ed25519 signatures. SecurityGate rejects &mdash; never mutates.</p>
+          <div class="tag-list">
+            <span class="tag">Ed25519</span>
+            <span class="tag">HMAC</span>
+            <span class="tag">CSP</span>
+            <span class="tag">SecurityGate</span>
+            <span class="tag">Rate Limiting</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works -->
+  <section id="how-it-works" style="background: var(--bg-raised); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+    <div class="container center-text">
+      <div class="section-label">How It Works</div>
+      <h2 class="section-title">Agent asks, human decides</h2>
+      <p class="section-desc center">
+        OpenWebGoggles sits between your agent and the browser, presenting rich UI for human-in-the-loop decisions.
+      </p>
+      <div class="flow">
+        <div class="flow-step">
+          <div class="step-num">1</div>
+          <h4>Agent</h4>
+          <p>Calls an MCP tool to request a human decision</p>
+        </div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">
+          <div class="step-num">2</div>
+          <h4>OpenWebGoggles</h4>
+          <p>Renders a rich UI panel in the browser</p>
+        </div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">
+          <div class="step-num">3</div>
+          <h4>Browser</h4>
+          <p>Human reviews, edits, and submits their decision</p>
+        </div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">
+          <div class="step-num">4</div>
+          <h4>Response</h4>
+          <p>Decision flows back to the agent as structured data</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Code Example -->
+  <section class="code-section">
+    <div class="container center-text">
+      <div class="section-label">Developer Experience</div>
+      <h2 class="section-title">Two lines of Python</h2>
+      <p class="section-desc center">
+        Import, call, done. The browser panel appears automatically.
+      </p>
+      <div class="code-block">
+        <pre><span class="kw">from</span> openwebgoggles.sdk <span class="kw">import</span> <span class="fn">confirm</span>
+
+<span class="cm"># A rich confirmation dialog appears in the browser</span>
+<span class="var">approved</span> = <span class="fn">confirm</span>(<span class="str">"Deploy to production?"</span>)
+
+<span class="kw">if</span> <span class="var">approved</span>:
+    <span class="fn">deploy</span>()</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Start -->
+  <section id="quickstart">
+    <div class="container">
+      <div class="center-text">
+        <div class="section-label">Quick Start</div>
+        <h2 class="section-title">Up and running in 60 seconds</h2>
+        <p class="section-desc center">
+          Three commands. No configuration files, no Docker, no API keys.
+        </p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-label">Step 1 &mdash; Install</div>
+          <h4>Get the package</h4>
+          <code>pipx install openwebgoggles</code>
+        </div>
+        <div class="step">
+          <div class="step-label">Step 2 &mdash; Init</div>
+          <h4>Add to your MCP config</h4>
+          <code>openwebgoggles init</code>
+        </div>
+        <div class="step">
+          <div class="step-label">Step 3 &mdash; Use</div>
+          <h4>Start your agent</h4>
+          <code>claude
+# or any MCP-compatible agent</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <div class="footer-left">OpenWebGoggles &mdash; Open source, MIT licensed.</div>
+      <ul class="footer-links">
+        <li><a href="https://github.com/AugmendTech/openwebgoggles" target="_blank" rel="noopener">GitHub</a></li>
+        <li><a href="https://pypi.org/project/openwebgoggles/" target="_blank" rel="noopener">PyPI</a></li>
+        <li><a href="https://github.com/AugmendTech/openwebgoggles/tree/main/docs" target="_blank" rel="noopener">Docs</a></li>
+        <li><a href="https://github.com/AugmendTech/openwebgoggles/blob/main/docs/cookbook.md" target="_blank" rel="noopener">Cookbook</a></li>
+      </ul>
+    </div>
+  </footer>
+
+</body>
+</html>

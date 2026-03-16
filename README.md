@@ -1,16 +1,31 @@
 # OpenWebGoggles
 
-AI coding agents are good at writing code. They are not good at showing you things. An agent can generate a 200-line diff, but it has no way to pull up a side-by-side review UI, highlight the parts that matter, and wait for you to say "approved" or "try again with fewer abstractions."
+[![PyPI](https://img.shields.io/pypi/v/openwebgoggles)](https://pypi.org/project/openwebgoggles/) [![Tests](https://img.shields.io/badge/tests-2478%2B%20passing-brightgreen)]() [![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)]() [![License](https://img.shields.io/pypi/l/openwebgoggles)](LICENSE)
 
-OpenWebGoggles fixes that. It gives any agent — Claude Code, a shell script, anything that can write JSON — the ability to open a browser-based UI and get structured decisions back from a human.
+**Give any AI agent a browser UI.** OpenWebGoggles lets agents open rich, interactive panels -- approval flows, dashboards, wizards, forms -- and get structured decisions back from a human, all from a JSON schema.
 
-Not a chat interface. Not a terminal dump. A real interactive panel: forms, approval flows, dashboards, multi-step wizards. The kind of thing you'd build if you had a few days and a frontend team. Except the agent builds it on the fly from a JSON schema, and the whole round-trip takes seconds.
+```bash
+pipx install openwebgoggles        # install
+cd your-project
+openwebgoggles init claude          # bootstrap (also: cursor, windsurf, opencode)
+# Tell your agent: "Show me a review UI for these changes."
+```
 
 ```
-Agent ←→ OpenWebGoggles Server ←→ Browser UI ←→ Human
+Agent  <──MCP──>  OWG Server  <──WS──>  Browser  <──UI──>  Human
+  |                   |                    |                   |
+  |   (JSON state)    |   (real-time)      |   (rich panels)   |
+  |   <── structured decisions ──────────────────────────────> |
 ```
 
-*"The goggles — they do everything."*
+**Key Features**
+
+- **Rich UI panels** -- forms, tables, diffs, charts, metric cards, trees, timelines, heatmaps, and more. No HTML required.
+- **Multi-session** -- run up to 10 concurrent UI panels side by side, each with isolated state.
+- **9-layer security** -- localhost binding, bearer auth, Ed25519 signatures, HMAC, nonce replay prevention, CSP, and more.
+- **Agent framework integrations** -- works with Claude Code, Agents SDK, LangChain, CrewAI, AutoGen, or plain shell scripts.
+- **Mobile responsive** -- layouts collapse gracefully; works on phones and tablets out of the box.
+- **Plugin system** -- extend the renderer with custom section types via a simple JS API.
 
 ## The Big Use Case: Review Before You Commit
 

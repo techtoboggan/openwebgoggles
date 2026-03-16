@@ -79,9 +79,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor (`openwebgoggles init cursor`) and Windsurf (`openwebgoggles init windsurf`) setup commands
 - Smithery MCP registry configuration for discoverability
 
+**SLSA Provenance**
+- Level 3 supply chain attestation for published PyPI artifacts
+- SHA-256 subject hashes from build artifacts uploaded to GitHub Releases
+
+**JSON Schema for State**
+- `schemas/state.schema.json` — full JSON Schema 2020-12 for state payloads
+- Provides VS Code / IDE intellisense, autocomplete, and validation
+
+**GitHub Pages Landing Page**
+- Developer-focused landing page at `docs/index.html` with install instructions, feature overview, and code examples
+
+### Security
+- **SecurityGate fails closed** — tools reject state when gate unavailable (was silent pass-through)
+- **Session ID path traversal prevention** — SessionArchive validates UUID format on save/get/delete
+- **Prototype pollution guard** — SDK `_applyPatch` blocks `__proto__`/`constructor`/`prototype` in paths and merge values
+- **Bundled HTML CSP** — MCP Apps iframe HTML includes `<meta>` CSP with `default-src 'none'`
+- **Audit log directory permissions** — created with `0o700` (owner-only)
+- **Webhook SSRF validation** — rejects `file://`, `ftp://`, link-local `169.254.x.x` URLs
+- **Dependabot PRs merged** — `actions/download-artifact`, `docker/setup-qemu-action`, `actions/setup-node`, `docker/login-action`
+
 ### Internal
-- 2652+ tests (2339 → 2652), 0 failures
-- New test files: test_delta_streaming.py (32 tests), test_remote_mode.py (25 tests), test_plugin_system.py (30 tests), test_webhook.py (18 tests), test_audit.py (27 tests), test_performance.py (12 benchmarks), test_i18n.py (19 tests)
+- 2689+ tests (2339 → 2689), 0 failures
+- New test files: test_delta_streaming.py (32 tests), test_remote_mode.py (25 tests), test_plugin_system.py (30 tests), test_webhook.py (18 tests), test_audit.py (27 tests), test_performance.py (12 benchmarks), test_i18n.py (19 tests), test_security_hardening.py (28 tests)
+- Internal appsec audit against OWASP Top 10, OWASP Top 10 for LLMs, MITRE ATLAS — 7 remediated findings
 
 ---
 

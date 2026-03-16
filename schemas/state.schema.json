@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/techtoboggan/openwebgoggles/blob/main/schemas/state.schema.json",
+  "title": "OpenWebGoggles State",
+  "description": "JSON schema for OpenWebGoggles state payloads. Use with VS Code for autocomplete and validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "State version — auto-incremented by the server. Do not set manually."
+    },
+    "updated_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of last update."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Title displayed in the header bar."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["initializing", "ready", "pending_review", "waiting_input", "processing", "completed", "error"],
+      "description": "Visual status indicator shown in the header."
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 50000,
+      "description": "Top-level message displayed above sections. Supports markdown when message_format is 'markdown'."
+    },
+    "message_format": {
+      "type": "string",
+      "enum": ["markdown", "plain", "text"],
+      "default": "plain",
+      "description": "Rendering format for the message field."
+    },
+    "message_className": {
+      "type": "string",
+      "description": "CSS class applied to the message container."
+    },
+    "theme": {
+      "type": "string",
+      "enum": ["dark", "light", "system"],
+      "default": "system",
+      "description": "Color theme for the UI."
+    },
+    "locale": {
+      "type": "string",
+      "pattern": "^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$",
+      "description": "BCP-47 locale code for UI strings (e.g. 'en', 'es', 'ja'). Built-in: en, es, fr, de, ja, zh."
+    },
+    "strings": {
+      "type": "object",
+      "description": "Custom translation overrides. Keys must match built-in string keys.",
+      "additionalProperties": { "type": "string" }
+    },
+    "custom_css": {
+      "type": "string",
+      "description": "Custom CSS injected into the page (validated by SecurityGate — no url(), @import, etc.)."
+    },
+    "data": {
+      "type": "object",
+      "description": "Main content container.",
+      "properties": {
+        "sections": {
+          "type": "array",
+          "maxItems": 50,
+          "description": "Array of section objects rendered in order.",
+          "items": { "$ref": "#/$defs/section" }
+        }
+      }
+    },
+    "actions_requested": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Action buttons shown at the bottom of the UI.",
+      "items": { "$ref": "#/$defs/action" }
+    },
+    "behaviors": {
+      "type": "array",
+      "description": "Conditional visibility/interactivity rules.",
+      "items": { "$ref": "#/$defs/behavior" }
+    },
+    "layout": {
+      "type": "string",
+      "description": "Layout mode for the sections container."
+    },
+    "panels": {
+      "type": "object",
+      "description": "Panel layout configuration for split-pane views."
+    },
+    "pages": {
+      "type": "array",
+      "description": "SPA page definitions for multi-page navigation.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "sections": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/section" }
+          }
+        }
+      }
+    },
+    "activePage": {
+      "type": "string",
+      "description": "ID of the currently active SPA page."
+    },
+    "showNav": {
+      "type": "boolean",
+      "description": "Whether to show the SPA page navigation bar."
+    }
+  },
+  "$defs": {
+    "section": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["form", "items", "text", "actions", "progress", "log", "diff", "table", "tabs", "metric", "chart", "tree", "timeline", "heatmap", "network"],
+          "description": "Section renderer type."
+        },
+        "id": {
+          "type": "string",
+          "description": "Unique section ID for behavior targeting and tab state."
+        },
+        "title": {
+          "type": "string",
+          "description": "Section heading."
+        },
+        "className": {
+          "type": "string",
+          "description": "CSS class applied to the section container."
+        },
+        "content": {
+          "type": "string",
+          "description": "Text/markdown content (for 'text' type)."
+        },
+        "format": {
+          "type": "string",
+          "enum": ["markdown", "plain", "text"],
+          "description": "Content format for text sections."
+        },
+        "copyable": {
+          "type": "boolean",
+          "description": "Show copy-to-clipboard button."
+        },
+        "fields": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "Form fields (for 'form' type).",
+          "items": { "$ref": "#/$defs/field" }
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 500,
+          "description": "List items (for 'items' type)."
+        },
+        "actions": {
+          "type": "array",
+          "description": "Action buttons within this section.",
+          "items": { "$ref": "#/$defs/action" }
+        },
+        "columns": {
+          "type": "array",
+          "description": "Column definitions for table sections.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "label": { "type": "string" },
+              "sortable": { "type": "boolean" }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 500,
+          "description": "Row data for table sections."
+        },
+        "filterable": {
+          "type": "boolean",
+          "description": "Enable row filtering on table sections."
+        },
+        "tabs": {
+          "type": "array",
+          "description": "Tab definitions (for 'tabs' type).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "sections": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/section" }
+              }
+            }
+          }
+        },
+        "value": {
+          "description": "Current value (metric, progress percentage, etc.)."
+        },
+        "max": {
+          "type": "number",
+          "description": "Maximum value for progress bars."
+        },
+        "label": {
+          "type": "string",
+          "description": "Display label for metric sections."
+        },
+        "entries": {
+          "type": "array",
+          "description": "Log entries (for 'log' type)."
+        },
+        "old_text": {
+          "type": "string",
+          "description": "Original text (for 'diff' type)."
+        },
+        "new_text": {
+          "type": "string",
+          "description": "Modified text (for 'diff' type)."
+        },
+        "chartType": {
+          "type": "string",
+          "enum": ["bar", "line", "pie", "doughnut"],
+          "description": "Chart visualization type."
+        },
+        "chartData": {
+          "type": "object",
+          "description": "Chart data (labels + datasets)."
+        },
+        "nodes": {
+          "type": "array",
+          "description": "Tree nodes or network nodes."
+        },
+        "edges": {
+          "type": "array",
+          "description": "Network graph edges."
+        },
+        "xLabels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "X-axis labels for heatmap."
+        },
+        "yLabels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Y-axis labels for heatmap."
+        },
+        "cells": {
+          "type": "array",
+          "description": "Heatmap cell data."
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["key", "type"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Unique field identifier used in form submission values."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["text", "textarea", "number", "select", "checkbox", "email", "url", "static", "slider", "date", "datetime", "autocomplete", "file"],
+          "description": "Field input type."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable field label."
+        },
+        "value": {
+          "description": "Default/initial value."
+        },
+        "placeholder": {
+          "type": "string",
+          "description": "Placeholder text for empty fields."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the field must be filled before submission."
+        },
+        "options": {
+          "type": "array",
+          "maxItems": 200,
+          "description": "Options for select/autocomplete fields.",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "properties": {
+                  "value": { "type": "string" },
+                  "label": { "type": "string" }
+                }
+              }
+            ]
+          }
+        },
+        "min": { "type": "number", "description": "Minimum value (number/slider)." },
+        "max": { "type": "number", "description": "Maximum value (number/slider)." },
+        "step": { "type": "number", "description": "Step increment (number/slider)." },
+        "minLength": { "type": "integer", "description": "Minimum string length." },
+        "maxLength": { "type": "integer", "description": "Maximum string length." },
+        "pattern": { "type": "string", "description": "Regex validation pattern." },
+        "description": { "type": "string", "description": "Help text shown below the field." },
+        "copyable": { "type": "boolean", "description": "Show copy button for static fields." },
+        "multiple": { "type": "boolean", "description": "Allow multiple file selection (file type)." },
+        "maxFileSize": { "type": "integer", "description": "Max file size in KB (file type)." },
+        "accept": { "type": "string", "description": "Accepted file types (file type)." },
+        "visibleWhen": { "$ref": "#/$defs/condition", "description": "Show this field only when condition is met." }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["id", "label"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Action identifier sent back to the agent."
+        },
+        "label": {
+          "type": "string",
+          "description": "Button text."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["approve", "reject", "confirm", "submit", "delete", "select", "input", "custom", "action", "primary", "danger", "success", "warning", "ghost"],
+          "description": "Action type — determines button styling and semantics."
+        },
+        "style": {
+          "type": "string",
+          "enum": ["primary", "success", "danger", "warning", "ghost", "approve", "reject", "confirm", "submit", "delete"],
+          "description": "Visual style override."
+        },
+        "description": {
+          "type": "string",
+          "description": "Tooltip text."
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "Disable the button."
+        },
+        "enabledWhen": {
+          "$ref": "#/$defs/condition",
+          "description": "Enable this action only when condition is met."
+        }
+      }
+    },
+    "behavior": {
+      "type": "object",
+      "description": "Conditional visibility/interactivity rule.",
+      "properties": {
+        "condition": { "$ref": "#/$defs/condition" },
+        "show": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Field keys or section IDs to show when condition is true."
+        },
+        "hide": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Field keys or section IDs to hide when condition is true."
+        },
+        "enable": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Action IDs to enable when condition is true."
+        },
+        "disable": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Action IDs to disable when condition is true."
+        }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "description": "Condition based on a form field value.",
+      "properties": {
+        "field": { "type": "string", "description": "Field key to evaluate." },
+        "equals": { "description": "Value must equal this." },
+        "not_equals": { "description": "Value must not equal this." },
+        "matches": { "type": "string", "description": "Regex pattern to match against." },
+        "in": { "type": "array", "description": "Value must be one of these." },
+        "not_empty": { "type": "boolean", "description": "Value must be non-empty." }
+      }
+    }
+  }
+}
