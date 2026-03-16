@@ -7,9 +7,22 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
+
+# Session IDs must be UUID-formatted (hex + hyphens, 36 chars) to prevent path traversal
+_SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _validate_session_id(session_id: str) -> None:
+    """Validate session_id format to prevent path traversal attacks."""
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
+        msg = (
+            f"Invalid session_id format: {session_id!r}. Must be a UUID (e.g. '550e8400-e29b-41d4-a716-446655440000')."
+        )
+        raise ValueError(msg)
 
 
 class DataContract:
@@ -135,6 +148,7 @@ class SessionArchive:
 
         Returns the path of the written file.
         """
+        _validate_session_id(session_id)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
 
         snapshot = {
@@ -188,6 +202,7 @@ class SessionArchive:
 
     def get(self, session_id: str) -> dict | None:
         """Load a persisted session snapshot by ID."""
+        _validate_session_id(session_id)
         path = self.archive_dir / f"{session_id}.json"
         if not path.is_file():
             return None
@@ -198,6 +213,7 @@ class SessionArchive:
 
     def delete(self, session_id: str) -> bool:
         """Delete a session snapshot. Returns True if deleted."""
+        _validate_session_id(session_id)
         path = self.archive_dir / f"{session_id}.json"
         try:
             path.unlink()

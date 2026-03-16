@@ -79,8 +79,6 @@ def _reset_app_mode_state():
     mcp_server._host_fetched_ui_resource = False
     mcp_server._session_manager = mcp_server.SessionManager()
     mcp_server._cached_mode = None
-    # Disable security gate to avoid side effects in unit tests
-    mcp_server._security_gate = None
 
     yield
 
@@ -180,7 +178,7 @@ def user_clicks_approve(ctx):
         async def _action():
             return await mcp_server._owg_action(
                 action_id="approve",
-                action_type="click",
+                action_type="approve",
                 value=True,
             )
 

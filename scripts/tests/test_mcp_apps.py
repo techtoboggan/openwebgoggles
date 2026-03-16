@@ -363,7 +363,7 @@ class TestModeDetection:
 class TestOwgAction:
     async def test_not_in_app_mode(self):
         """_owg_action returns error when not in app mode."""
-        mcp_server._security_gate = None
+
         result = await _owg_action("approve", "approve", True)
         assert "error" in result
         assert "Not in MCP Apps mode" in result["error"]
@@ -371,7 +371,7 @@ class TestOwgAction:
     async def test_stores_action(self):
         """_owg_action stores the action in the in-memory queue."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         result = await _owg_action("approve", "approve", True)
         assert result == {"received": True}
         actions = _get_app_state().read_actions()
@@ -381,7 +381,7 @@ class TestOwgAction:
     async def test_action_has_required_fields(self):
         """Stored action contains action_id, type, value, id, and timestamp."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         await _owg_action("submit", "submit", {"key": "val"})
         action = _get_app_state().read_actions()[0]
         assert "action_id" in action
@@ -396,9 +396,9 @@ class TestOwgAction:
     async def test_action_with_context(self):
         """_owg_action stores context when provided."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         ctx = {"item_index": 0, "section_id": "items"}
-        await _owg_action("click", "click", True, context=ctx)
+        await _owg_action("select", "select", True, context=ctx)
         action = _get_app_state().read_actions()[0]
         assert action["context"] == ctx
 
@@ -424,7 +424,7 @@ class TestWebviewAppMode:
     async def test_returns_structured_content(self):
         """webview returns CallToolResult with structuredContent in app mode."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         result = await openwebgoggles(state={"title": "Test"})
         assert hasattr(result, "structuredContent")
         assert result.structuredContent["title"] == "Test"
@@ -432,7 +432,7 @@ class TestWebviewAppMode:
     async def test_clears_actions_on_new_webview(self):
         """webview clears pending actions when called in app mode."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         app_state = _get_app_state()
         app_state.add_action({"action_id": "old"})
         await openwebgoggles(state={"title": "Fresh"})
@@ -441,7 +441,7 @@ class TestWebviewAppMode:
     async def test_does_not_block(self):
         """webview returns immediately in app mode (no timeout/blocking)."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         # If this blocks, the test will time out
         result = await asyncio.wait_for(
             openwebgoggles(state={"title": "Quick"}),
@@ -452,7 +452,7 @@ class TestWebviewAppMode:
     async def test_state_stored_in_memory(self):
         """webview stores state in the AppModeState singleton."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         await openwebgoggles(state={"title": "Stored", "data": {"sections": []}})
         app_state = _get_app_state()
         assert app_state.state["title"] == "Stored"
@@ -468,7 +468,7 @@ class TestWebviewReadAppMode:
     async def test_reads_from_memory(self):
         """webview_read returns actions from the in-memory queue."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         app_state = _get_app_state()
         app_state.add_action({"action_id": "btn", "type": "approve", "value": True})
         result = await openwebgoggles_read()
@@ -478,7 +478,7 @@ class TestWebviewReadAppMode:
     async def test_clear_drains_queue(self):
         """webview_read(clear=True) drains the queue so next read is empty."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         app_state = _get_app_state()
         app_state.add_action({"action_id": "a"})
         result1 = await openwebgoggles_read(clear=True)
@@ -489,7 +489,7 @@ class TestWebviewReadAppMode:
     async def test_empty_when_no_actions(self):
         """webview_read returns empty actions when queue is empty."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         # Ensure singleton exists but has no actions
         _get_app_state()
         result = await openwebgoggles_read()
@@ -505,7 +505,7 @@ class TestWebviewUpdateAppMode:
     async def test_update_replaces_state(self):
         """webview_update returns CallToolResult with structuredContent."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         app_state = _get_app_state()
         app_state.write_state({"title": "Old"})
         result = await openwebgoggles_update(state={"title": "New"})
@@ -516,7 +516,7 @@ class TestWebviewUpdateAppMode:
     async def test_update_merge_mode(self):
         """webview_update(merge=True) deep-merges into existing state."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         app_state = _get_app_state()
         app_state.write_state({"title": "Base", "data": {"meta": {"a": 1}}})
         result = await openwebgoggles_update(state={"data": {"meta": {"b": 2}}}, merge=True)
@@ -529,7 +529,7 @@ class TestWebviewUpdateAppMode:
     async def test_preset_expansion(self):
         """webview_update with preset="confirm" expands state."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         _get_app_state()
         result = await openwebgoggles_update(
             state={"title": "Sure?", "message": "Do it?"},
@@ -550,7 +550,7 @@ class TestWebviewCloseAppMode:
     async def test_clears_state(self):
         """webview_close clears in-memory state and resets mode in app mode."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         app_state = _get_app_state()
         app_state.write_state({"title": "Active"})
         app_state.add_action({"action_id": "x"})
@@ -573,7 +573,7 @@ class TestWebviewStatusAppMode:
     async def test_active_when_state_exists(self):
         """webview_status reports active=True when state is non-empty."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         app_state = _get_app_state()
         app_state.write_state({"title": "Live"})
         result = await openwebgoggles_status(session="default")
@@ -584,7 +584,7 @@ class TestWebviewStatusAppMode:
     async def test_inactive_when_empty(self):
         """webview_status reports active=False when no state has been written."""
         _enable_app_mode()
-        mcp_server._security_gate = None
+
         _get_app_state()  # create slot but don't write state
         result = await openwebgoggles_status(session="default")
         assert result["active"] is False

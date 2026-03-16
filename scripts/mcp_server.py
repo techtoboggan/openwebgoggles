@@ -79,7 +79,9 @@ except ImportError:
 except Exception:
     logger.warning("Plugin discovery failed — plugins disabled", exc_info=True)
 
-# SecurityGate — imported eagerly for validation in MCP tools
+# SecurityGate — imported eagerly for validation in MCP tools.
+# SECURITY: gate MUST be present — fail closed if unavailable.
+_security_gate_error: str | None = None
 _security_gate = None
 try:
     try:
@@ -90,9 +92,11 @@ try:
     extra_types = frozenset(p.type_name for p in _discovered_plugins) if _discovered_plugins else None
     _security_gate = SecurityGate(extra_section_types=extra_types)
 except ImportError:
-    logger.warning("SecurityGate not available — state validation disabled")
-except Exception:
-    logger.error("SecurityGate failed to initialize — state validation disabled", exc_info=True)
+    _security_gate_error = "SecurityGate module not found"
+    logger.warning("SecurityGate not available — tools will reject state until resolved")
+except Exception as exc:
+    _security_gate_error = f"SecurityGate init failed: {exc}"
+    logger.error("SecurityGate failed to initialize — tools will reject state until resolved", exc_info=True)
 
 # Webhook notifications — fires non-blocking HTTP POST when HITL decisions are pending
 _webhook = None
@@ -1837,12 +1841,14 @@ async def openwebgoggles(
 
     # Validate eagerly so the agent gets a clear error; use sanitized state
     # (which has aliases normalized to canonical values) for everything downstream.
-    if _security_gate:
-        raw = json.dumps(state, separators=(",", ":"))
-        valid, err, sanitized = _security_gate.validate_state(raw)
-        if not valid:
-            return {"error": f"State validation failed: {err}"}
-        state = sanitized
+    # SECURITY: fail closed — refuse to serve state if SecurityGate is unavailable
+    if not _security_gate:
+        return {"error": f"SecurityGate unavailable: {_security_gate_error or 'unknown'}. Cannot validate state."}
+    raw = json.dumps(state, separators=(",", ":"))
+    valid, err, sanitized = _security_gate.validate_state(raw)
+    if not valid:
+        return {"error": f"State validation failed: {err}"}
+    state = sanitized
 
     mode = _resolve_mode(ctx)
 
@@ -2016,12 +2022,14 @@ async def openwebgoggles_update(  # noqa: C901
             return {"error": str(e)}
 
     # Validate eagerly; use sanitized state (aliases normalized) for everything downstream.
-    if _security_gate:
-        raw = json.dumps(state, separators=(",", ":"))
-        valid, err, sanitized = _security_gate.validate_state(raw)
-        if not valid:
-            return {"error": f"State validation failed: {err}"}
-        state = sanitized
+    # SECURITY: fail closed — refuse to serve state if SecurityGate is unavailable
+    if not _security_gate:
+        return {"error": f"SecurityGate unavailable: {_security_gate_error or 'unknown'}. Cannot validate state."}
+    raw = json.dumps(state, separators=(",", ":"))
+    valid, err, sanitized = _security_gate.validate_state(raw)
+    if not valid:
+        return {"error": f"State validation failed: {err}"}
+    state = sanitized
 
     validator = _make_merge_validator()
     mode = _resolve_mode(ctx)

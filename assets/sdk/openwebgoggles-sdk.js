@@ -699,11 +699,22 @@
    *
    * @param {Array} ops - Array of patch operation objects
    */
+  // Keys that must never be set — prevents prototype pollution via crafted patches
+  var _DANGEROUS_KEYS = {"__proto__": 1, "constructor": 1, "prototype": 1};
+
   OpenWebGoggles.prototype._applyPatch = function (ops) {
     for (var i = 0; i < ops.length; i++) {
       var op = ops[i];
       if (!op || !op.path) continue;
       var parts = op.path.split(".");
+
+      // Reject any path segment that could cause prototype pollution
+      var poisoned = false;
+      for (var p = 0; p < parts.length; p++) {
+        if (parts[p] in _DANGEROUS_KEYS) { poisoned = true; break; }
+      }
+      if (poisoned) continue;
+
       var target = this._state;
       // Navigate to parent
       for (var j = 0; j < parts.length - 1; j++) {
@@ -740,6 +751,8 @@
               op.value && typeof op.value === "object" && !Array.isArray(op.value)) {
             var keys = Object.keys(op.value);
             for (var m = 0; m < keys.length; m++) {
+              // Skip dangerous keys in merge values
+              if (keys[m] in _DANGEROUS_KEYS) continue;
               target[lastKey][keys[m]] = op.value[keys[m]];
             }
           }

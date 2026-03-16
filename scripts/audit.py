@@ -167,8 +167,8 @@ class AuditLogger:
             logger.debug("Audit log write failed", exc_info=True)
 
     def _ensure_dir(self) -> None:
-        """Create the parent directory if it doesn't exist."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        """Create the parent directory if it doesn't exist (owner-only permissions)."""
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     def _rotate_if_needed(self) -> None:
         """Rotate the log file if it exceeds the size limit."""

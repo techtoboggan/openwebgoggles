@@ -17,6 +17,7 @@ import time
 import urllib.request
 from collections import defaultdict
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 logger = logging.getLogger("openwebgoggles.webhook")
 
@@ -24,6 +25,27 @@ _DEFAULT_TEMPLATE = "OpenWebGoggles: {title} — {status} — {url}"
 
 # Rate limit: 1 notification per 60 seconds per session
 _RATE_WINDOW = 60.0
+
+# Allowed URL schemes for webhook endpoints (prevents file:// SSRF, etc.)
+_ALLOWED_SCHEMES = frozenset({"https", "http"})
+
+
+def _validate_webhook_url(url: str) -> str | None:
+    """Validate webhook URL against SSRF. Returns error message or None if valid."""
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return f"Invalid webhook URL: {url!r}"
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        return f"Webhook URL scheme must be http or https, got: {parsed.scheme!r}"
+    if not parsed.hostname:
+        return f"Webhook URL missing hostname: {url!r}"
+    # Block cloud metadata endpoints (169.254.x.x link-local)
+    if parsed.hostname.startswith("169.254."):
+        return f"Webhook URL targets link-local address (possible SSRF): {parsed.hostname}"
+    return None
 
 
 class _SafeDict(defaultdict):
@@ -37,7 +59,13 @@ class WebhookNotifier:
     """Fire-and-forget webhook notifications for pending HITL decisions."""
 
     def __init__(self) -> None:
-        self._url = os.environ.get("OWG_WEBHOOK_URL", "").strip()
+        raw_url = os.environ.get("OWG_WEBHOOK_URL", "").strip()
+        err = _validate_webhook_url(raw_url)
+        if err:
+            logger.warning("Webhook disabled: %s", err)
+            self._url = ""
+        else:
+            self._url = raw_url
         self._template = os.environ.get("OWG_WEBHOOK_TEMPLATE", "").strip() or _DEFAULT_TEMPLATE
         self._provider = self._detect_provider(self._url)
         self._last_sent: dict[str, float] = {}

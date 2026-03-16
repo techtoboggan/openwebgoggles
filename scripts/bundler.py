@@ -95,6 +95,22 @@ def bundle_html(assets_dir: Path | None = None, plugin_contents: list[str] | Non
     # Inject before </body>
     html = html.replace("</body>", f"{script_block}\n</body>")
 
+    # Inject CSP meta tag for defense-in-depth when loaded outside MCP host context.
+    # script-src 'unsafe-inline' is required since all scripts are inlined.
+    csp_meta = (
+        '<meta http-equiv="Content-Security-Policy" content="'
+        "default-src 'none'; "
+        "script-src 'unsafe-inline'; "
+        "style-src 'unsafe-inline'; "
+        "img-src data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'self'; "
+        "base-uri 'none'; "
+        "form-action 'none'"
+        '">'
+    )
+    html = html.replace("<head>", f"<head>\n{csp_meta}", 1)
+
     # Hide header in embedded mode (host provides its own chrome)
     html = html.replace("<header", '<header style="display:none"', 1)
 
