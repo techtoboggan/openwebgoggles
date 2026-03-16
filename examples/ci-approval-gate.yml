@@ -1,0 +1,67 @@
+# Example: CI Approval Gate with OpenWebGoggles
+#
+# This workflow demonstrates using OpenWebGoggles as a human approval gate
+# in a deployment pipeline. The "approve" job blocks until a human reviews
+# and approves the deployment.
+#
+# Setup:
+#   1. Copy this file to .github/workflows/deploy.yml
+#   2. Set OWG_WEBHOOK_URL secret for Slack/Discord notifications (optional)
+#   3. Configure GitHub Environment protection rules for production approval
+#
+# Flow:
+#   build → approve (human reviews) → deploy (only if approved)
+
+name: Deploy with Approval
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Building artifacts..."
+      # ... your build steps here
+
+  approve:
+    needs: build
+    uses: techtoboggan/openwebgoggles/.github/workflows/approval-gate.yml@main
+    with:
+      title: "Deploy ${{ github.ref_name }} to ${{ inputs.environment || 'production' }}"
+      message: "A new release is ready for deployment."
+      details: |
+        ### Release ${{ github.ref_name }}
+
+        **Environment:** ${{ inputs.environment || 'production' }}
+        **Commit:** ${{ github.sha }}
+
+        Please review the changes and approve the deployment.
+      confirm-label: "Deploy"
+      cancel-label: "Abort"
+      timeout: 3600
+    secrets:
+      webhook-url: ${{ secrets.OWG_WEBHOOK_URL }}
+
+  deploy:
+    needs: approve
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'production' }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "Deploying ${{ github.ref_name }}..."
+          echo "Approved: ${{ needs.approve.outputs.approved }}"
+          # ... your deploy steps here

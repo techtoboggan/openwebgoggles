@@ -448,3 +448,45 @@ action_id, value = unwrap_action(result)
 # Extract form values as a dict
 values = get_form_values(result)
 ```
+
+---
+
+## CI Approval Gate (GitHub Actions)
+
+Use OpenWebGoggles as a human approval step in your deployment pipeline.
+
+### Reusable Workflow
+
+```yaml
+# .github/workflows/deploy.yml
+jobs:
+  approve:
+    uses: techtoboggan/openwebgoggles/.github/workflows/approval-gate.yml@main
+    with:
+      title: "Deploy v2.3.1 to production"
+      message: "Release includes auth fix and health endpoint."
+      details: |
+        ### Changes
+        - Fix: token refresh race condition
+        - Feat: /health endpoint
+      confirm-label: "Deploy"
+      cancel-label: "Abort"
+    secrets:
+      webhook-url: ${{ secrets.OWG_WEBHOOK_URL }}
+
+  deploy:
+    needs: approve
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploying..."
+```
+
+### Webhook Notifications
+
+Set `OWG_WEBHOOK_URL` as a repository secret to get Slack/Discord notifications when approval is pending:
+
+- **Slack**: `https://hooks.slack.com/services/T00/B00/xxx`
+- **Discord**: `https://discord.com/api/webhooks/123/abc`
+- **Generic**: Any HTTPS endpoint accepting JSON POST
+
+See [`examples/ci-approval-gate.yml`](../examples/ci-approval-gate.yml) for a complete example.
