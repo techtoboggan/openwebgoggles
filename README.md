@@ -1,6 +1,6 @@
 # OpenWebGoggles
 
-[![PyPI](https://img.shields.io/pypi/v/openwebgoggles)](https://pypi.org/project/openwebgoggles/) [![Tests](https://img.shields.io/badge/tests-2478%2B%20passing-brightgreen)]() [![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)]() [![License](https://img.shields.io/pypi/l/openwebgoggles)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/openwebgoggles)](https://pypi.org/project/openwebgoggles/) [![Tests](https://img.shields.io/badge/tests-2689%2B%20passing-brightgreen)]() [![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)]() [![License](https://img.shields.io/pypi/l/openwebgoggles)](LICENSE)
 
 **Give any AI agent a browser UI.** OpenWebGoggles lets agents open rich, interactive panels -- approval flows, dashboards, wizards, forms -- and get structured decisions back from a human, all from a JSON schema.
 
@@ -687,7 +687,7 @@ Nine defense layers enforce this, all enabled by default:
 - **SecurityGate** — 30 XSS patterns, zero-width character detection, schema validation
 - **Rate limiting** — 30 actions per minute per session
 
-All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 2500+ tests (unit, BDD, and E2E).
+All cryptographic keys are ephemeral — generated in memory at session start, zeroed on shutdown, never written to disk in plaintext. The test suite covers OWASP Top 10, MITRE ATT&CK techniques, and LLM-specific attack vectors across 2689+ tests (unit, BDD, and E2E).
 
 The tradeoff is real, though. This level of defense adds complexity to the codebase. If you're running in a fully trusted local environment and want to understand what each layer does, the [security tests](scripts/tests/) are the best documentation.
 

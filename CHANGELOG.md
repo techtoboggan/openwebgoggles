@@ -90,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **GitHub Pages Landing Page**
 - Developer-focused landing page at `docs/index.html` with install instructions, feature overview, and code examples
 
+**GitHub Actions CI Approval Gate**
+- Reusable workflow `.github/workflows/approval-gate.yml` for human-in-the-loop CI approval gates
+- Blocks deployment pipelines until a human reviews and approves via OpenWebGoggles UI
+
 ### Security
 - **SecurityGate fails closed** — tools reject state when gate unavailable (was silent pass-through)
 - **Session ID path traversal prevention** — SessionArchive validates UUID format on save/get/delete
