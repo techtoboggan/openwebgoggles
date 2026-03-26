@@ -647,7 +647,10 @@ def _cmd_logs(lines: int = 50, tail: bool = False) -> None:  # pragma: no cover
     """
     import time as _time
 
-    from log_config import DEFAULT_LOG_FILE
+    try:
+        from .log_config import DEFAULT_LOG_FILE
+    except ImportError:
+        from log_config import DEFAULT_LOG_FILE  # noqa: I001
 
     log_path = DEFAULT_LOG_FILE
     if not log_path.exists():

@@ -2357,12 +2357,38 @@ _INIT_DISPATCH = {
 }
 
 
-def _dispatch_subcommand(cmd: str | None) -> bool:
+def _dispatch_subcommand(cmd: str | None) -> bool:  # noqa: C901
     """Handle subcommands that exit before starting the MCP server.
 
     Returns True if a subcommand was handled (caller should return), False
     if no subcommand matched and the MCP server should start.
     """
+    # Lazy-import CLI helpers — only needed for a subset of subcommands.
+    # Single try/except covers all four to keep cyclomatic complexity low.
+    if cmd in ("logs", "scaffold", "dev", "playground"):
+        try:
+            from .cli import (  # noqa: I001
+                _cmd_dev,
+                _cmd_logs,
+                _cmd_playground,
+                _cmd_scaffold,
+                _parse_dev_args,
+                _parse_logs_args,
+                _parse_playground_args,
+                _parse_scaffold_args,
+            )
+        except ImportError:
+            from cli import (  # noqa: I001
+                _cmd_dev,
+                _cmd_logs,
+                _cmd_playground,
+                _cmd_scaffold,
+                _parse_dev_args,
+                _parse_logs_args,
+                _parse_playground_args,
+                _parse_scaffold_args,
+            )
+
     if cmd == "init":
         if len(sys.argv) < 3 or sys.argv[2] not in _INIT_DISPATCH:
             _init_usage()
@@ -2396,27 +2422,19 @@ def _dispatch_subcommand(cmd: str | None) -> bool:
         return True
 
     if cmd == "logs":
-        from cli import _cmd_logs, _parse_logs_args
-
         n_lines, follow = _parse_logs_args(sys.argv[2:])
         _cmd_logs(lines=n_lines, tail=follow)
         return True
 
     if cmd == "scaffold":
-        from cli import _cmd_scaffold, _parse_scaffold_args
-
         app_name, out_dir, force = _parse_scaffold_args(sys.argv[2:])
         sys.exit(_cmd_scaffold(app_name, output_dir=out_dir, force=force))
 
     if cmd == "dev":
-        from cli import _cmd_dev, _parse_dev_args
-
         app_name, data_dir, http_port, ws_port, watch_dirs = _parse_dev_args(sys.argv[2:])
         sys.exit(_cmd_dev(app_name, data_dir=data_dir, http_port=http_port, ws_port=ws_port, watch_dirs=watch_dirs))
 
     if cmd == "playground":
-        from cli import _cmd_playground, _parse_playground_args
-
         http_port, ws_port, no_open = _parse_playground_args(sys.argv[2:])
         sys.exit(_cmd_playground(http_port=http_port, ws_port=ws_port, no_open=no_open))
 

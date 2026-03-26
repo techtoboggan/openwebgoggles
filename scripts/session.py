@@ -283,7 +283,10 @@ class WebviewSession:
         env = os.environ.copy()
         env["OCV_SESSION_TOKEN"] = self.session_token
 
-        from log_config import DEFAULT_LOG_FILE
+        try:
+            from .log_config import DEFAULT_LOG_FILE
+        except ImportError:
+            from log_config import DEFAULT_LOG_FILE  # noqa: I001
 
         cmd = [
             sys.executable,

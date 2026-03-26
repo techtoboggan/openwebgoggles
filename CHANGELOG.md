@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-03-26
+
+### Fixed
+
+- **Import crash on installed package (pip/pipx)** — Several lazy imports inside function bodies used bare module names (`from log_config import ...`, `from cli import ...`, `from data_contract import ...`) that work when running from the source tree but fail when the package is installed. Fixed in `session.py`, `cli.py`, `file_watcher.py`, and `mcp_server.py` using the standard `try: from .X import / except ImportError: from X import` pattern. These failures caused the `openwebgoggles` tool to crash or appear to hang on client machines.
+
+---
+
 ## [0.17.0] - 2026-03-15
 
 ### Added

@@ -113,7 +113,10 @@ class FileWatcher:
                 elif name == "manifest":
                     data = self._contract.get_manifest()
                     if data:
-                        from data_contract import _strip_token  # noqa: I001
+                        try:
+                            from .data_contract import _strip_token
+                        except ImportError:
+                            from data_contract import _strip_token  # noqa: I001
 
                         safe_data = _strip_token(data)
                         await self._broadcast({"type": "manifest_updated", "data": safe_data})
