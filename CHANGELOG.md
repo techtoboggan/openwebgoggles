@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.3] - 2026-03-26
+
+### Fixed
+
+- **MCP error -32001 / session timeout** — The `openwebgoggles` tool's default wait timeout has been raised from 300 s (5 min) to 86 400 s (24 h), so a browser window stays alive indefinitely until the user acts. The MCP keepalive heartbeat interval was also tightened from 10 s to 5 s. Progress notifications now use indeterminate mode (`total=None`) instead of reporting elapsed/300, which some MCP hosts interpreted as "100% complete" and cancelled the pending call with -32001.
+
+---
+
 ## [0.17.2] - 2026-03-26
 
 ### Added

@@ -101,7 +101,7 @@ class WebviewSession:
     MAX_PORT_ATTEMPTS = 10
     HEALTH_TIMEOUT = 15.0
     POLL_INTERVAL = 0.5
-    PROGRESS_INTERVAL = 10.0
+    PROGRESS_INTERVAL = 5.0
 
     def __init__(self, work_dir: Path | None = None, open_browser: bool = True, remote: bool = False):
         self.work_dir = work_dir or Path.cwd()

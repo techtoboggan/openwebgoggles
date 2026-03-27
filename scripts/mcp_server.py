@@ -1691,7 +1691,7 @@ async def _owg_action(
 @_track_tool_call
 async def openwebgoggles(
     state: dict[str, Any],
-    timeout: int = 300,
+    timeout: int = 86400,
     app: str = "dynamic",
     preset: str | None = None,
     persist: bool = False,
@@ -1911,9 +1911,11 @@ async def openwebgoggles(
             session=session,
         )
 
-    async def _progress(elapsed: float, total: float) -> None:
+    async def _progress(elapsed: float, total: float) -> None:  # noqa: ARG001
         if ctx:
-            await ctx.report_progress(elapsed, total)
+            # Use indeterminate progress (total=None) so the host never sees
+            # "100% complete" and cancels the long-running wait with -32001.
+            await ctx.report_progress(1, None)
 
     result = await ws.wait_for_action(
         timeout=timeout,
