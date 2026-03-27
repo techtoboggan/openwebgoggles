@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.5] - 2026-03-26
+
+### Added
+
+- **`openwebgoggles cleanup` command** — kills all stale webview server instances left behind after upgrades or crashes. Scans the default data directory (`~/.local/share/openwebgoggles/`), all named-session subdirectories (`sessions/*/`), and common local dev paths (`.openwebgoggles`, `.openwebgoggles-dev`) for `.server.pid` files, sends SIGTERM to any live processes, removes stale `.server.pid` and `.server.lock` files, then runs a `pgrep -f webview_server` sweep to catch any orphaned processes with no PID file. Prints a clear summary of what was stopped and cleaned.
+
+---
+
 ## [0.17.4] - 2026-03-26
 
 ### Fixed

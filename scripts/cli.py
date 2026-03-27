@@ -635,6 +635,118 @@ def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic 
         print(f"  {ok_count} passed, {warn_count} issue(s) found.")
 
 
+# -- cleanup subcommand -----------------------------------------------------
+
+
+def _cmd_cleanup() -> None:  # noqa: C901
+    """Kill all stale webview server instances and remove lock/PID files.
+
+    Scans the default data directory, all named-session subdirectories, and
+    common local dev paths for ``.server.pid`` files, terminates any live
+    processes found, removes ``.server.pid`` and ``.server.lock`` files, then
+    does a broad ``pgrep`` sweep to catch any orphaned ``webview_server``
+    processes that have no PID file.
+    """
+    import signal as _signal  # noqa: PLC0415
+    import subprocess as _sp  # noqa: PLC0415
+
+    is_windows = platform.system() == "Windows"
+    cwd = Path.cwd()
+    data_dir = _find_data_dir(None)
+
+    # Collect all candidate data directories
+    candidate_dirs: list[Path] = [
+        data_dir,
+        cwd / ".openwebgoggles",
+        cwd / ".openwebgoggles-dev",
+        Path.home() / ".openwebgoggles",
+    ]
+    sessions_dir = data_dir / "sessions"
+    if sessions_dir.is_dir():
+        try:
+            for entry in sessions_dir.iterdir():
+                if entry.is_dir():
+                    candidate_dirs.append(entry)
+        except OSError:
+            pass
+
+    killed = []  # list of (pid, label)
+    cleaned_files = 0
+    handled_pids: set[int] = set()
+
+    for d in candidate_dirs:
+        if not d.is_dir():
+            continue
+        pid_file = d / ".server.pid"
+        lock_file = d / ".server.lock"
+
+        pid = None
+        if pid_file.exists():
+            raw = pid_file.read_text().strip()
+            if raw.isdigit():
+                pid = int(raw)
+
+        if pid is not None and pid not in handled_pids:
+            handled_pids.add(pid)
+            try:
+                os.kill(pid, 0)  # existence check — raises OSError if dead
+                try:
+                    os.kill(pid, 15 if is_windows else _signal.SIGTERM)
+                    killed.append((pid, d.name))
+                except OSError:
+                    pass
+            except OSError:
+                pass  # already gone — just clean up the file
+
+        for stale in (pid_file, lock_file):
+            if stale.exists():
+                try:
+                    stale.unlink()
+                    cleaned_files += 1
+                except OSError:
+                    pass
+
+    # Broad pgrep sweep to catch orphans without PID files
+    orphans = []
+    if not is_windows:
+        try:
+            result = _sp.run(
+                ["pgrep", "-f", "webview_server"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    orphan_pid = int(line)
+                    if orphan_pid not in handled_pids and orphan_pid != os.getpid():
+                        try:
+                            os.kill(orphan_pid, _signal.SIGTERM)
+                            orphans.append(orphan_pid)
+                        except OSError:
+                            pass
+                        handled_pids.add(orphan_pid)
+        except (FileNotFoundError, _sp.TimeoutExpired, OSError):
+            pass
+
+    # Summary
+    print("OpenWebGoggles Cleanup")
+    print()
+    total = len(killed) + len(orphans)
+    if total == 0 and cleaned_files == 0:
+        print("  Nothing to clean — no stale instances found.")
+    else:
+        for pid, label in killed:
+            print(f"  \u2713 Stopped webview server  PID {pid}  (session: {label})")
+        for orphan_pid in orphans:
+            print(f"  \u2713 Stopped orphaned webview server  PID {orphan_pid}")
+        if cleaned_files:
+            print(f"  \u2713 Removed {cleaned_files} stale lock/PID file(s)")
+        print()
+        print(f"  Done \u2014 stopped {total} process(es), removed {cleaned_files} file(s).")
+
+
 # -- logs subcommand --------------------------------------------------------
 
 
@@ -1060,6 +1172,7 @@ def _print_usage() -> None:
     print("  restart       Restart the running MCP server")
     print("  status        Show server status and health")
     print("  doctor        Diagnose setup and environment")
+    print("  cleanup       Kill all stale webview server instances")
     print("  logs          Show server log output")
     print("  scaffold      Create a new custom app from template")
     print("  dev           Start webview server in dev mode with hot-reload")

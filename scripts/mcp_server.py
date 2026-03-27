@@ -172,6 +172,7 @@ try:
         _DEPRECATED_PERMISSIONS,
         _EDITORS,
         _SERVER_NAME_ALIASES,
+        _cmd_cleanup,
         _cmd_doctor,
         _cmd_logs,  # noqa: F401
         _cmd_restart,
@@ -201,6 +202,7 @@ except ImportError:
         _DEPRECATED_PERMISSIONS,
         _EDITORS,
         _SERVER_NAME_ALIASES,
+        _cmd_cleanup,
         _cmd_dev,
         _cmd_doctor,
         _cmd_logs,
@@ -2424,6 +2426,10 @@ def _dispatch_subcommand(cmd: str | None) -> bool:  # noqa: C901
         _cmd_doctor()
         return True
 
+    if cmd == "cleanup":
+        _cmd_cleanup()
+        return True
+
     if cmd == "logs":
         n_lines, follow = _parse_logs_args(sys.argv[2:])
         _cmd_logs(lines=n_lines, tail=follow)
@@ -2457,6 +2463,7 @@ def main():
         openwebgoggles restart [dir]            # Restart running MCP server
         openwebgoggles status [dir]             # Show server status
         openwebgoggles doctor [dir]             # Diagnose setup
+        openwebgoggles cleanup                  # Kill all stale webview instances
         openwebgoggles logs [--lines N] [-f]    # Show server log
         openwebgoggles scaffold <app> [-o DIR]  # Create custom app scaffold
         openwebgoggles dev <app> [--watch-dir D] # Start dev server with hot-reload
