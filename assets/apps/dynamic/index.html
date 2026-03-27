@@ -360,6 +360,11 @@
     .file-upload-btn { white-space: nowrap; }
     .file-status { overflow: hidden; text-overflow: ellipsis; }
 
+    /* ─── Close Session bar ─── */
+    #close-bar { display: flex; align-items: center; padding: 8px 20px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+    .btn-close-session { color: var(--text3); border-color: transparent; font-size: 12px; }
+    .btn-close-session:hover { color: var(--red); border-color: rgba(248,81,73,.4); background: rgba(248,81,73,.08); }
+
     /* ─── Mobile responsive ─── */
     @media (max-width: 600px) {
       html, body { font-size: 13px; }
@@ -431,6 +436,9 @@
     </header>
     <div id="loading" role="alert" aria-live="assertive"><p>Connecting...</p></div>
     <main id="content" class="hidden" role="main"></main>
+    <div id="close-bar" class="hidden">
+      <button id="close-btn" class="btn btn-ghost btn-close-session" type="button">&#10005; Close Session</button>
+    </div>
   </div>
   <script src="openwebgoggles-sdk.js"></script>
   <script src="marked.min.js"></script>

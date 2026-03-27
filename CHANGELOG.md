@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.2] - 2026-03-26
+
+### Added
+
+- **Close Session button** — A persistent "✕ Close Session" button is now always visible at the bottom of the webview panel. Clicking it sends an `owg_session_closed` action (type `session_closed`, value `{reason: "user_closed"}`) back to the agent so it knows the user deliberately closed the session.
+- **Window/tab close detection** — When the user closes the browser window or tab, a `fetch` with `keepalive: true` fires automatically and delivers the same `owg_session_closed` action (reason `window_closed`) even after the page begins unloading. Agents can detect user-initiated close via `action.type == "session_closed"` in the `wait_for_action` result.
+
+---
+
 ## [0.17.1] - 2026-03-26
 
 ### Fixed

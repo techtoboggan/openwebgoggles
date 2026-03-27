@@ -31,6 +31,8 @@
     hdrBadge:   document.getElementById("hdr-badge"),
     hdrSession: document.getElementById("hdr-session"),
     connDot:    document.getElementById("conn-dot"),
+    closeBar:   document.getElementById("close-bar"),
+    closeBtn:   document.getElementById("close-btn"),
   };
 
   // Hide header in MCP Apps mode (host provides its own chrome)
@@ -39,6 +41,36 @@
     if (hdr) hdr.style.display = "none";
   }
 
+  // ─── Close Session ──────────────────────────────────────────────────────────
+  function sendCloseAction() {
+    if (done) return;
+    done = true;
+    if (els.closeBar) els.closeBar.classList.add("hidden");
+    wv.sendAction("owg_session_closed", "session_closed", { reason: "user_closed" }).catch(function (err) {
+      console.error("Close action failed:", err);
+    });
+  }
+
+  if (els.closeBtn) {
+    els.closeBtn.addEventListener("click", sendCloseAction);
+  }
+
+  // Notify the agent when the browser window/tab is closed (browser mode only).
+  // fetch() with keepalive:true continues after the page unloads; avoids the
+  // deprecated synchronous XHR and works with Bearer auth unlike sendBeacon().
+  window.addEventListener("beforeunload", function () {
+    if (done || isMCPApps) return;
+    var token = wv && wv._token;
+    var base  = wv && wv._httpUrl;
+    if (!token || !base) return;
+    fetch(base + "/_api/actions", {
+      method:    "POST",
+      headers:   { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+      body:      JSON.stringify({ action_id: "owg_session_closed", type: "session_closed", value: { reason: "window_closed" } }),
+      keepalive: true,
+    });
+  });
+
   wv.connect()
     .then(function (instance) {
       if (!isMCPApps) {
@@ -46,6 +78,7 @@
         if (m && m.session) els.hdrSession.textContent = U.t("session_prefix") + m.session.id.slice(0, 8);
         els.connDot.classList.add("on");
       }
+      if (els.closeBar) els.closeBar.classList.remove("hidden");
       render(instance.getState());
     })
     .catch(function (err) {
@@ -58,6 +91,7 @@
     // Host disconnect (crash, tab close) — show non-dismissable overlay
     if (done) return;
     done = true;
+    if (els.closeBar) els.closeBar.classList.add("hidden");
     var wrap = document.createElement("div");
     wrap.className = "done-state";
     var icon = document.createElement("div");
@@ -77,6 +111,7 @@
   });
   wv.on("close",         function (d) {
     done = true;
+    if (els.closeBar) els.closeBar.classList.add("hidden");
     // Build close message via DOM API (prevents HTML structure injection)
     var wrap = document.createElement("div");
     wrap.className = "done-state";
