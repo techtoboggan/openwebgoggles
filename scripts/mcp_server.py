@@ -1693,7 +1693,6 @@ async def _owg_action(
 @_track_tool_call
 async def openwebgoggles(
     state: dict[str, Any],
-    timeout: int | None = None,
     app: str = "dynamic",
     preset: str | None = None,
     persist: bool = False,
@@ -1920,12 +1919,12 @@ async def openwebgoggles(
             await ctx.report_progress(1, None)
 
     result = await ws.wait_for_action(
-        timeout=timeout,
+        timeout=None,  # infinite — window stays open until user acts or session is closed
         on_progress=_progress if ctx else None,
     )
     if result is None:
-        # Only reachable when an explicit timeout was passed and it expired.
-        return {"error": f"Timed out after {timeout}s waiting for user action."}
+        # Unreachable with timeout=None; guard for future explicit timeout use.
+        return {"error": "Timed out waiting for user action."}
 
     # Audit log: record user actions from browser mode
     if _audit and _audit.enabled:

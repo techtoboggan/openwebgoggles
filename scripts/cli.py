@@ -48,6 +48,7 @@ _CLAUDE_SETTINGS = {
             "mcp__openwebgoggles__openwebgoggles_close",
             "mcp__openwebgoggles__openwebgoggles_update",
             "mcp__openwebgoggles__openwebgoggles_status",
+            "mcp__openwebgoggles___owg_action",  # iframe close/action button → host proxy
         ]
     }
 }

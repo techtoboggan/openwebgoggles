@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.6] - 2026-03-26
+
+### Fixed
+
+- **Close Session button now works in MCP Apps mode** — `mcp__openwebgoggles___owg_action` added to the Claude Code auto-allow permissions list. Previously the host silently blocked the `_owg_action` tool call from the iframe (no user prompt, no error visible) so the button appeared to do nothing.
+- **Close Session shows closed state immediately** — the "✓ Session closed" overlay is now rendered before the action is sent to the agent, so the button works correctly even when the agent has already disconnected (fire-and-forget windows).
+- **Disconnected = session complete, not an error** — when the agent moves on and the WebSocket drops, the window now shows the same green "✓ Session closed" overlay instead of a yellow "Connection lost" warning. Fire-and-forget windows self-complete gracefully.
+- **`timeout` removed from `openwebgoggles` tool signature** — agents (including OpenCode) were incorrectly passing `timeout=300` by reading the parameter name. The window is now always infinite; the `timeout` parameter is gone so agents cannot accidentally override it.
+
+---
+
 ## [0.17.5] - 2026-03-26
 
 ### Added

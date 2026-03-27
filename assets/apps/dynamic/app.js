@@ -41,13 +41,38 @@
     if (hdr) hdr.style.display = "none";
   }
 
+  // ─── Closed overlay (shared by close button, disconnect, and close event) ───
+  function showClosedOverlay(message) {
+    if (els.closeBar) els.closeBar.classList.add("hidden");
+    var wrap = document.createElement("div");
+    wrap.className = "done-state";
+    var icon = document.createElement("div");
+    icon.className = "done-icon";
+    icon.textContent = "\u2713";
+    var label = document.createElement("div");
+    label.style.cssText = "color:var(--green);font-weight:600";
+    label.textContent = U.t("session_closed");
+    var msg = document.createElement("div");
+    msg.className = "done-msg";
+    if (message) msg.textContent = message;
+    wrap.appendChild(icon);
+    wrap.appendChild(label);
+    wrap.appendChild(msg);
+    els.content.textContent = "";
+    els.content.appendChild(wrap);
+    els.content.classList.remove("hidden");
+    els.loading.classList.add("hidden");
+  }
+
   // ─── Close Session ──────────────────────────────────────────────────────────
   function sendCloseAction() {
     if (done) return;
     done = true;
-    if (els.closeBar) els.closeBar.classList.add("hidden");
+    // Show closed state immediately — don't depend on the send succeeding
+    // (agent may have already moved on and closed the connection).
+    showClosedOverlay();
     wv.sendAction("owg_session_closed", "session_closed", { reason: "user_closed" }).catch(function (err) {
-      console.error("Close action failed:", err);
+      console.error("Close action failed (agent may have disconnected):", err);
     });
   }
 
@@ -88,47 +113,16 @@
   wv.on("connected",     function (d) { render(d.state); });
   wv.on("state_updated", function (s) { if (!done) render(s); });
   wv.on("disconnected",  function (d) {
-    // Host disconnect (crash, tab close) — show non-dismissable overlay
+    // Agent disconnected (moved on, crashed, or fire-and-forget) — treat as
+    // session complete. The window stays open so the user can read any
+    // displayed content; it just switches to the "Session closed" state.
     if (done) return;
     done = true;
-    if (els.closeBar) els.closeBar.classList.add("hidden");
-    var wrap = document.createElement("div");
-    wrap.className = "done-state";
-    var icon = document.createElement("div");
-    icon.className = "done-icon";
-    icon.textContent = "\u26a0";
-    var label = document.createElement("div");
-    label.style.cssText = "color:var(--yellow);font-weight:600";
-    label.textContent = U.t("connection_lost");
-    var msg = document.createElement("div");
-    msg.className = "done-msg";
-    msg.textContent = (d && d.message) || U.t("disconnected_default");
-    wrap.appendChild(icon);
-    wrap.appendChild(label);
-    wrap.appendChild(msg);
-    els.content.textContent = "";
-    els.content.appendChild(wrap);
+    showClosedOverlay((d && d.message) || "");
   });
   wv.on("close",         function (d) {
     done = true;
-    if (els.closeBar) els.closeBar.classList.add("hidden");
-    // Build close message via DOM API (prevents HTML structure injection)
-    var wrap = document.createElement("div");
-    wrap.className = "done-state";
-    var icon = document.createElement("div");
-    icon.className = "done-icon";
-    icon.textContent = "\u2713";
-    var label = document.createElement("div");
-    label.style.cssText = "color:var(--green);font-weight:600";
-    label.textContent = U.t("session_closed");
-    var msg = document.createElement("div");
-    msg.className = "done-msg";
-    msg.textContent = (d && d.message) || "";
-    wrap.appendChild(icon);
-    wrap.appendChild(label);
-    wrap.appendChild(msg);
-    els.content.textContent = "";
-    els.content.appendChild(wrap);
+    showClosedOverlay((d && d.message) || "");
   });
 
   // Clear all keys from an Object.create(null) dict without replacing it
