@@ -369,8 +369,12 @@ class WebviewHTTPHandler:
             await self._send_response(writer, 200, {"ok": True, "ops": len(ops)})
 
         elif path == "/_api/agent-status":
-            # Returns whether the agent is currently in wait_for_action (liveness file present
-            # and fresh). The browser polls this to show "Agent watching" vs "Agent idle".
+            # Returns whether the agent is currently in wait_for_action.
+            # was_active=True means the agent wrote a liveness file at some point
+            # this session (it was watching but stopped). was_active=False means
+            # the liveness file never existed — agent never connected or already
+            # completed cleanly. The browser uses was_active to decide whether to
+            # show the "Remind Agent" button (only meaningful when was_active=True).
             if method != "GET":
                 await self._send_response(writer, 405, {"error": "Method not allowed"})
                 return
@@ -379,11 +383,17 @@ class WebviewHTTPHandler:
                 if liveness_path.exists():
                     age = time.time() - float(liveness_path.read_text())
                     if age < 10.0:
-                        await self._send_response(writer, 200, {"waiting": True, "age": round(age, 1)})
+                        await self._send_response(
+                            writer, 200, {"waiting": True, "was_active": True, "age": round(age, 1)}
+                        )
                         return
+                    # File exists but stale — agent was watching and has since stopped
+                    await self._send_response(writer, 200, {"waiting": False, "was_active": True})
+                    return
             except (OSError, ValueError):
                 pass
-            await self._send_response(writer, 200, {"waiting": False})
+            # No liveness file — agent never connected or exited cleanly
+            await self._send_response(writer, 200, {"waiting": False, "was_active": False})
 
         elif path == "/_api/close":
             # Broadcast close message to all connected WebSocket clients, then optionally stop

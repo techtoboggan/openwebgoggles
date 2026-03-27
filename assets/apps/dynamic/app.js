@@ -100,21 +100,27 @@
     if (_agentStatusTimer) { clearTimeout(_agentStatusTimer); _agentStatusTimer = null; }
   }
 
-  function updateAgentStatusUI(waiting) {
+  function updateAgentStatusUI(d) {
     if (!els.closeBar || done) return;
     var existing = document.getElementById("agent-status-area");
     if (!existing) return;
     var now = Date.now();
-    if (waiting) {
+    if (d.waiting) {
       _agentIdleSince = null;
       existing.innerHTML = '<span class="agent-dot agent-dot-on"></span><span class="agent-status-text">Agent watching</span>';
+    } else if (!d.was_active) {
+      // Agent never connected this session (subagent already finished, dead process,
+      // or clean exit via openwebgoggles_close). Don't offer "Remind" — there's nobody
+      // listening. Show nothing so the bar stays clean.
+      existing.innerHTML = "";
     } else {
+      // was_active=true: agent was watching but stopped. Could be processing or gone.
       if (!_agentIdleSince) _agentIdleSince = now;
       var idleMs = now - _agentIdleSince;
       if (idleMs > AGENT_IDLE_REMIND_THRESHOLD) {
         existing.innerHTML =
           '<span class="agent-dot agent-dot-idle"></span>' +
-          '<span class="agent-status-text">Agent not watching</span>' +
+          '<span class="agent-status-text">Agent not responding</span>' +
           '<button class="btn btn-ghost btn-remind" id="remind-btn" type="button">Remind Agent</button>';
         var remindBtn = document.getElementById("remind-btn");
         if (remindBtn) {
@@ -140,7 +146,7 @@
     if (!token || !base) { _agentStatusTimer = setTimeout(pollAgentStatus, 5000); return; }
     fetch(base + "/_api/agent-status", { headers: { Authorization: "Bearer " + token } })
       .then(function (r) { return r.json(); })
-      .then(function (d) { updateAgentStatusUI(!!d.waiting); })
+      .then(function (d) { updateAgentStatusUI(d); })
       .catch(function () { /* ignore — server may be briefly busy */ })
       .finally(function () {
         if (!done) _agentStatusTimer = setTimeout(pollAgentStatus, 5000);

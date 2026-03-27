@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.8] - 2026-03-27
+
+### Fixed
+
+- **"Remind Agent" button suppressed when agent is dead** — `/_api/agent-status` now returns `was_active: true/false` to distinguish "agent was watching and went quiet" from "agent never connected or already exited cleanly". The browser only shows the Remind Agent button when `was_active=true` — i.e. the liveness file exists but is stale. When `was_active=false` (subagent finished, process dead, clean exit) the status area is blank and no reconnect is offered.
+
+---
+
 ## [0.17.7] - 2026-03-27
 
 ### Added
