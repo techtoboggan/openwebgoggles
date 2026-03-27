@@ -361,9 +361,15 @@
     .file-status { overflow: hidden; text-overflow: ellipsis; }
 
     /* ─── Close Session bar ─── */
-    #close-bar { display: flex; align-items: center; padding: 8px 20px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+    #close-bar { display: flex; align-items: center; gap: 12px; padding: 8px 20px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
     .btn-close-session { color: var(--text3); border-color: transparent; font-size: 12px; }
     .btn-close-session:hover { color: var(--red); border-color: rgba(248,81,73,.4); background: rgba(248,81,73,.08); }
+    #agent-status-area { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 11px; color: var(--text3); }
+    .agent-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .agent-dot-on   { background: var(--green); box-shadow: 0 0 5px var(--green); }
+    .agent-dot-idle { background: var(--text3); }
+    .agent-status-text { white-space: nowrap; }
+    .btn-remind { font-size: 11px; padding: 2px 8px; color: var(--blue); border-color: rgba(88,166,255,.4); }
 
     /* ─── Mobile responsive ─── */
     @media (max-width: 600px) {
@@ -438,6 +444,7 @@
     <main id="content" class="hidden" role="main"></main>
     <div id="close-bar" class="hidden">
       <button id="close-btn" class="btn btn-ghost btn-close-session" type="button">&#10005; Close Session</button>
+      <div id="agent-status-area"></div>
     </div>
   </div>
   <script src="openwebgoggles-sdk.js"></script>

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.7] - 2026-03-27
+
+### Added
+
+- **Agent status indicator** — The close bar now shows a live "Agent watching" (green dot) / "Agent processing…" / "Agent not watching" status. The server writes a liveness file every 2s while `wait_for_action` is running; the browser polls `/_api/agent-status` every 5s to reflect this.
+- **"Remind Agent" button** — After the agent has been idle for 20s, a "Remind Agent" button appears. Clicking it sends an `owg_attention` action (type `attention`) so the agent knows the user is still there and waiting.
+- **`/_api/agent-status` endpoint** — New auth-protected GET endpoint returns `{"waiting": true/false}` based on the liveness file freshness (stale after 10s).
+- **`window.close()` on Close Session** — After showing the closed overlay, a `window.close()` call is attempted. Works when the window was opened via `window.open()`; silently no-ops for regular browser tabs. Either way, "You can close this tab." hint is shown.
+
+### Fixed
+
+- **"Attention" action type** — Added `"attention"` to `SecurityGate.ALLOWED_ACTION_TYPES` for the Remind Agent button.
+
+---
+
 ## [0.17.6] - 2026-03-26
 
 ### Fixed

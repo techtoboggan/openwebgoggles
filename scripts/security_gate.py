@@ -153,6 +153,7 @@ class SecurityGate:
             "warning",
             "ghost",
             "session_closed",
+            "attention",
         }
     )
     ALLOWED_STATUS_VALUES = frozenset(

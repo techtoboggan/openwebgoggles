@@ -465,33 +465,58 @@ class WebviewSession:
                 connection alive (prevents client-side -32001 timeouts).
         """
         actions_path = self.data_dir / "actions.json"
+        liveness_path = self.data_dir / "_agent_waiting"
         start = time.monotonic()
         deadline = (start + timeout) if timeout is not None else None
         last_progress = start
+        last_liveness = start - self.PROGRESS_INTERVAL  # write immediately on first pass
 
-        while deadline is None or time.monotonic() < deadline:
-            try:
-                data = json.loads(actions_path.read_text())
-                actions = data.get("actions", [])
-                # Filter: only user-initiated actions break the wait.
-                # Internal actions (prefixed with _) like _page_switch are
-                # navigation bookkeeping and are ignored here.
-                user_actions = [a for a in actions if not str(a.get("action_id", "")).startswith("_")]
-                if user_actions:
-                    return data
-            except (FileNotFoundError, json.JSONDecodeError):
-                pass
+        # Signal to the browser that the agent is actively waiting for input.
+        # The liveness file is touched every PROGRESS_INTERVAL seconds; the
+        # /_api/agent-status endpoint reads it so the UI can show a "watching"
+        # indicator and a "Remind Agent" button when the agent stops waiting.
+        try:
+            liveness_path.write_text(str(time.time()))
+        except OSError:
+            pass
 
-            now = time.monotonic()
-            if on_progress and (now - last_progress) >= self.PROGRESS_INTERVAL:
-                elapsed = now - start
+        try:
+            while deadline is None or time.monotonic() < deadline:
                 try:
-                    await on_progress(elapsed, timeout)
-                except Exception:
-                    pass  # Never let progress reporting break the wait loop
-                last_progress = now
+                    data = json.loads(actions_path.read_text())
+                    actions = data.get("actions", [])
+                    # Filter: only user-initiated actions break the wait.
+                    # Internal actions (prefixed with _) like _page_switch are
+                    # navigation bookkeeping and are ignored here.
+                    user_actions = [a for a in actions if not str(a.get("action_id", "")).startswith("_")]
+                    if user_actions:
+                        return data
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
 
-            await asyncio.sleep(self.POLL_INTERVAL)
+                now = time.monotonic()
+                if (now - last_liveness) >= self.PROGRESS_INTERVAL:
+                    try:
+                        liveness_path.write_text(str(time.time()))
+                    except OSError:
+                        pass
+                    last_liveness = now
+
+                if on_progress and (now - last_progress) >= self.PROGRESS_INTERVAL:
+                    elapsed = now - start
+                    try:
+                        await on_progress(elapsed, timeout)
+                    except Exception:
+                        pass  # Never let progress reporting break the wait loop
+                    last_progress = now
+
+                await asyncio.sleep(self.POLL_INTERVAL)
+        finally:
+            # Remove liveness file — browser will detect agent is no longer waiting.
+            try:
+                liveness_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
         return None
 

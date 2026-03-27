@@ -1,6 +1,6 @@
 {
   "name": "openwebgoggles",
-  "version": "0.17.6",
+  "version": "0.17.7",
   "description": "Browser-based human-in-the-loop UIs for AI coding agents — JS SDK",
   "license": "Apache-2.0",
   "author": "Techtoboggan",

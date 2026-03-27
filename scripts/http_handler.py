@@ -368,6 +368,23 @@ class WebviewHTTPHandler:
             await self._broadcast(patch_msg)
             await self._send_response(writer, 200, {"ok": True, "ops": len(ops)})
 
+        elif path == "/_api/agent-status":
+            # Returns whether the agent is currently in wait_for_action (liveness file present
+            # and fresh). The browser polls this to show "Agent watching" vs "Agent idle".
+            if method != "GET":
+                await self._send_response(writer, 405, {"error": "Method not allowed"})
+                return
+            liveness_path = self.contract.data_dir / "_agent_waiting"
+            try:
+                if liveness_path.exists():
+                    age = time.time() - float(liveness_path.read_text())
+                    if age < 10.0:
+                        await self._send_response(writer, 200, {"waiting": True, "age": round(age, 1)})
+                        return
+            except (OSError, ValueError):
+                pass
+            await self._send_response(writer, 200, {"waiting": False})
+
         elif path == "/_api/close":
             # Broadcast close message to all connected WebSocket clients, then optionally stop
             try:

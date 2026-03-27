@@ -44,6 +44,7 @@
   // ─── Closed overlay (shared by close button, disconnect, and close event) ───
   function showClosedOverlay(message) {
     if (els.closeBar) els.closeBar.classList.add("hidden");
+    stopAgentStatusPolling();
     var wrap = document.createElement("div");
     wrap.className = "done-state";
     var icon = document.createElement("div");
@@ -55,13 +56,21 @@
     var msg = document.createElement("div");
     msg.className = "done-msg";
     if (message) msg.textContent = message;
+    // Hint: try window.close(), if browser blocks it show a "close this tab" prompt
+    var hint = document.createElement("div");
+    hint.style.cssText = "margin-top:16px;font-size:12px;color:var(--text3)";
+    hint.textContent = "You can close this tab.";
     wrap.appendChild(icon);
     wrap.appendChild(label);
     wrap.appendChild(msg);
+    wrap.appendChild(hint);
     els.content.textContent = "";
     els.content.appendChild(wrap);
     els.content.classList.remove("hidden");
     els.loading.classList.add("hidden");
+    // Attempt to close the window — works when opened via window.open(),
+    // silently no-ops in browser tabs opened directly by the OS/CLI.
+    setTimeout(function () { try { window.close(); } catch (e) { /* no-op */ } }, 400);
   }
 
   // ─── Close Session ──────────────────────────────────────────────────────────
@@ -78,6 +87,64 @@
 
   if (els.closeBtn) {
     els.closeBtn.addEventListener("click", sendCloseAction);
+  }
+
+  // ─── Agent status polling (browser mode only) ───────────────────────────────
+  // Polls /_api/agent-status every 5s to detect if the agent is still in
+  // wait_for_action. Shows a "watching" dot or "Agent idle — Remind?" notice.
+  var _agentStatusTimer = null;
+  var _agentIdleSince = null;
+  var AGENT_IDLE_REMIND_THRESHOLD = 20000; // 20s idle → show "Remind Agent" button
+
+  function stopAgentStatusPolling() {
+    if (_agentStatusTimer) { clearTimeout(_agentStatusTimer); _agentStatusTimer = null; }
+  }
+
+  function updateAgentStatusUI(waiting) {
+    if (!els.closeBar || done) return;
+    var existing = document.getElementById("agent-status-area");
+    if (!existing) return;
+    var now = Date.now();
+    if (waiting) {
+      _agentIdleSince = null;
+      existing.innerHTML = '<span class="agent-dot agent-dot-on"></span><span class="agent-status-text">Agent watching</span>';
+    } else {
+      if (!_agentIdleSince) _agentIdleSince = now;
+      var idleMs = now - _agentIdleSince;
+      if (idleMs > AGENT_IDLE_REMIND_THRESHOLD) {
+        existing.innerHTML =
+          '<span class="agent-dot agent-dot-idle"></span>' +
+          '<span class="agent-status-text">Agent not watching</span>' +
+          '<button class="btn btn-ghost btn-remind" id="remind-btn" type="button">Remind Agent</button>';
+        var remindBtn = document.getElementById("remind-btn");
+        if (remindBtn) {
+          remindBtn.addEventListener("click", function () {
+            remindBtn.disabled = true;
+            remindBtn.textContent = "Sent \u2713";
+            wv.sendAction("owg_attention", "attention", { reason: "user_waiting" }).catch(function () {
+              remindBtn.disabled = false;
+              remindBtn.textContent = "Remind Agent";
+            });
+          });
+        }
+      } else {
+        existing.innerHTML = '<span class="agent-dot agent-dot-idle"></span><span class="agent-status-text">Agent processing\u2026</span>';
+      }
+    }
+  }
+
+  function pollAgentStatus() {
+    if (done || isMCPApps) return;
+    var token = wv && wv._token;
+    var base  = wv && wv._httpUrl;
+    if (!token || !base) { _agentStatusTimer = setTimeout(pollAgentStatus, 5000); return; }
+    fetch(base + "/_api/agent-status", { headers: { Authorization: "Bearer " + token } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { updateAgentStatusUI(!!d.waiting); })
+      .catch(function () { /* ignore — server may be briefly busy */ })
+      .finally(function () {
+        if (!done) _agentStatusTimer = setTimeout(pollAgentStatus, 5000);
+      });
   }
 
   // Notify the agent when the browser window/tab is closed (browser mode only).
@@ -105,6 +172,7 @@
       }
       if (els.closeBar) els.closeBar.classList.remove("hidden");
       render(instance.getState());
+      if (!isMCPApps) pollAgentStatus();
     })
     .catch(function (err) {
       U.safeHTML(els.loading, "<p style='color:var(--red)'>Connection failed: " + U.esc(String(err)) + "</p>");
