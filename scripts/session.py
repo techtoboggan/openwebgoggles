@@ -101,7 +101,7 @@ class WebviewSession:
     MAX_PORT_ATTEMPTS = 10
     HEALTH_TIMEOUT = 15.0
     POLL_INTERVAL = 0.5
-    PROGRESS_INTERVAL = 5.0
+    PROGRESS_INTERVAL = 2.0
 
     def __init__(self, work_dir: Path | None = None, open_browser: bool = True, remote: bool = False):
         self.work_dir = work_dir or Path.cwd()
@@ -444,27 +444,32 @@ class WebviewSession:
 
     async def wait_for_action(
         self,
-        timeout: float = 300.0,
+        timeout: float | None = None,
         on_progress: Any | None = None,
     ) -> dict[str, Any] | None:
-        """Poll actions.json until a user action appears, or timeout.
+        """Poll actions.json until a user action appears.
+
+        The window is kept alive indefinitely by default (``timeout=None``).
+        Pass an explicit ``timeout`` in seconds only when a hard deadline is
+        required; ``None`` (the default) loops forever until the user acts or
+        the session is cancelled from outside.
 
         Internal actions (action_id starting with ``_``, e.g. ``_page_switch``)
         are navigation bookkeeping and do **not** break the wait.  Only
         explicit user actions (approve / reject / submit buttons) count.
 
         Args:
-            timeout: Maximum seconds to wait.
+            timeout: Maximum seconds to wait, or ``None`` for no limit.
             on_progress: Optional ``async callable(elapsed, total)`` invoked
                 every :pyattr:`PROGRESS_INTERVAL` seconds to keep the MCP
                 connection alive (prevents client-side -32001 timeouts).
         """
         actions_path = self.data_dir / "actions.json"
         start = time.monotonic()
-        deadline = start + timeout
+        deadline = (start + timeout) if timeout is not None else None
         last_progress = start
 
-        while time.monotonic() < deadline:
+        while deadline is None or time.monotonic() < deadline:
             try:
                 data = json.loads(actions_path.read_text())
                 actions = data.get("actions", [])

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.4] - 2026-03-26
+
+### Fixed
+
+- **Truly infinite window lifetime** — `wait_for_action` now defaults to `timeout=None`, which removes the deadline entirely and loops forever until the user acts or the agent closes the session. The previous 0.17.3 default of 86 400 s was still an arbitrary limit. The `openwebgoggles` MCP tool parameter also defaults to `None`; pass an explicit integer only when a hard deadline is intentionally required.
+- **Heartbeat every 2 s** — `PROGRESS_INTERVAL` reduced from 5 s to 2 s for tighter MCP keepalive pings.
+
+---
+
 ## [0.17.3] - 2026-03-26
 
 ### Fixed
