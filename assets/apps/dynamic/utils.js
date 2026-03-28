@@ -278,8 +278,6 @@
   var _builtinStrings = {
     en: {
       "session_prefix": "Session: ",
-      "connection_lost": "Connection lost",
-      "disconnected_default": "The host disconnected unexpectedly.",
       "session_closed": "Session closed",
       "default_title": "OpenWebGoggles",
       "action_sent": "\u2713 Sent \u2014 waiting for agent\u2026",
@@ -311,8 +309,6 @@
     },
     es: {
       "session_prefix": "Sesi\u00f3n: ",
-      "connection_lost": "Conexi\u00f3n perdida",
-      "disconnected_default": "El servidor se desconect\u00f3 inesperadamente.",
       "session_closed": "Sesi\u00f3n cerrada",
       "action_sent": "\u2713 Enviado \u2014 esperando al agente\u2026",
       "copy": "Copiar",
@@ -344,8 +340,6 @@
     },
     fr: {
       "session_prefix": "Session\u00a0: ",
-      "connection_lost": "Connexion perdue",
-      "disconnected_default": "L\u2019h\u00f4te s\u2019est d\u00e9connect\u00e9 de mani\u00e8re inattendue.",
       "session_closed": "Session ferm\u00e9e",
       "action_sent": "\u2713 Envoy\u00e9 \u2014 en attente de l\u2019agent\u2026",
       "copy": "Copier",
@@ -377,8 +371,6 @@
     },
     de: {
       "session_prefix": "Sitzung: ",
-      "connection_lost": "Verbindung verloren",
-      "disconnected_default": "Der Host hat sich unerwartet getrennt.",
       "session_closed": "Sitzung geschlossen",
       "action_sent": "\u2713 Gesendet \u2014 warte auf Agent\u2026",
       "copy": "Kopieren",
@@ -410,7 +402,6 @@
     },
     ja: {
       "session_prefix": "\u30bb\u30c3\u30b7\u30e7\u30f3: ",
-      "connection_lost": "\u63a5\u7d9a\u304c\u5207\u308c\u307e\u3057\u305f",
       "session_closed": "\u30bb\u30c3\u30b7\u30e7\u30f3\u7d42\u4e86",
       "action_sent": "\u2713 \u9001\u4fe1\u6e08\u307f \u2014 \u30a8\u30fc\u30b8\u30a7\u30f3\u30c8\u5f85\u3061\u2026",
       "copy": "\u30b3\u30d4\u30fc",
@@ -420,7 +411,6 @@
       "field_required": "\u3053\u306e\u30d5\u30a3\u30fc\u30eb\u30c9\u306f\u5fc5\u9808\u3067\u3059",
       "invalid_format": "\u7121\u52b9\u306a\u5f62\u5f0f\u3067\u3059",
       "default_title": "OpenWebGoggles",
-      "disconnected_default": "\u30db\u30b9\u30c8\u304c\u4e88\u671f\u305b\u305a\u5207\u65ad\u3055\u308c\u307e\u3057\u305f\u3002",
       "choose_files": "\u30d5\u30a1\u30a4\u30eb\u3092\u9078\u629e",
       "no_file_chosen": "\u30d5\u30a1\u30a4\u30eb\u672a\u9078\u629e",
       "file_too_large": "\u26a0 \u30d5\u30a1\u30a4\u30eb\u304c\u5927\u304d\u3059\u304e\u307e\u3059\uff08\u6700\u5927 {0} KB\uff09",
@@ -443,7 +433,6 @@
     },
     zh: {
       "session_prefix": "\u4f1a\u8bdd\uff1a",
-      "connection_lost": "\u8fde\u63a5\u5df2\u65ad\u5f00",
       "session_closed": "\u4f1a\u8bdd\u5df2\u5173\u95ed",
       "action_sent": "\u2713 \u5df2\u53d1\u9001 \u2014 \u7b49\u5f85\u4ee3\u7406\u2026",
       "copy": "\u590d\u5236",
@@ -453,7 +442,6 @@
       "field_required": "\u6b64\u5b57\u6bb5\u4e3a\u5fc5\u586b\u9879",
       "invalid_format": "\u683c\u5f0f\u65e0\u6548",
       "default_title": "OpenWebGoggles",
-      "disconnected_default": "\u4e3b\u673a\u610f\u5916\u65ad\u5f00\u8fde\u63a5\u3002",
       "choose_files": "\u9009\u62e9\u6587\u4ef6",
       "no_file_chosen": "\u672a\u9009\u62e9\u6587\u4ef6",
       "file_too_large": "\u26a0 \u6587\u4ef6\u8fc7\u5927\uff08\u6700\u5927 {0} KB\uff09",

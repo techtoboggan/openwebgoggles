@@ -98,7 +98,7 @@ class TestWebviewTool:
         }
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state={"title": "Test"}, timeout=30, ctx=None)
+            result = await openwebgoggles(state={"title": "Test"}, ctx=None)
 
         # Browser mode returns the wait_for_action result directly (plain dict)
         assert isinstance(result, dict)
@@ -113,7 +113,7 @@ class TestWebviewTool:
         mock_session.wait_for_action.return_value = None  # timeout
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state={"title": "Test"}, timeout=1, ctx=None)
+            result = await openwebgoggles(state={"title": "Test"}, ctx=None)
 
         assert "error" in result
         assert "Timed out" in result["error"]
@@ -124,7 +124,7 @@ class TestWebviewTool:
         mock_session.wait_for_action.return_value = {"actions": []}
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            await openwebgoggles(state={"title": "Test"}, timeout=30, ctx=None)
+            await openwebgoggles(state={"title": "Test"}, ctx=None)
 
         mock_session.ensure_started.assert_called_once()
         mock_session.clear_actions.assert_called_once()
@@ -138,7 +138,6 @@ class TestWebviewTool:
             await openwebgoggles(
                 state={"title": "Confirm?", "message": "Are you sure?"},
                 preset="confirm",
-                timeout=1,
                 ctx=None,
             )
 
@@ -152,7 +151,6 @@ class TestWebviewTool:
             result = await openwebgoggles(
                 state={"title": "Test"},
                 preset="nonexistent_preset",
-                timeout=1,
                 ctx=None,
             )
 
@@ -168,7 +166,7 @@ class TestWebviewTool:
         mcp_server._security_gate = mock_gate
         try:
             with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-                result = await openwebgoggles(state={"title": "<script>alert(1)</script>"}, timeout=1, ctx=None)
+                result = await openwebgoggles(state={"title": "<script>alert(1)</script>"}, ctx=None)
             assert "error" in result
             assert "validation failed" in result["error"]
         finally:
@@ -181,7 +179,7 @@ class TestWebviewTool:
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             with pytest.raises(RuntimeError, match="bind failed"):
-                await openwebgoggles(state={"title": "Test"}, timeout=1, ctx=None)
+                await openwebgoggles(state={"title": "Test"}, ctx=None)
 
 
 # ---------------------------------------------------------------------------
@@ -995,7 +993,7 @@ class TestWebviewMetricIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
         # State should have been written to the session
@@ -1026,7 +1024,7 @@ class TestWebviewMetricIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1045,7 +1043,7 @@ class TestWebviewMetricIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" in result
         assert "validation failed" in result["error"]
@@ -1077,7 +1075,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1105,7 +1103,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1131,7 +1129,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1156,7 +1154,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1181,7 +1179,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1203,7 +1201,7 @@ class TestWebviewChartIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1226,7 +1224,7 @@ class TestWebviewChartIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" in result
 
@@ -1246,7 +1244,7 @@ class TestWebviewChartIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" in result
 
@@ -1277,7 +1275,7 @@ class TestWebviewClickableTableIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1302,7 +1300,7 @@ class TestWebviewClickableTableIntegration:
             },
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1345,7 +1343,7 @@ class TestWebviewPagesIntegration:
             "activePage": "overview",
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1390,7 +1388,7 @@ class TestWebviewPagesIntegration:
             "activePage": "servers",
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1418,7 +1416,7 @@ class TestWebviewPagesIntegration:
             "activePage": "logs",
         }
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
 
@@ -1436,7 +1434,7 @@ class TestWebviewPagesIntegration:
         }
         mock_session = _make_mock_session()
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" in result
 
@@ -1454,7 +1452,7 @@ class TestWebviewPagesIntegration:
         mock_session.wait_for_action.return_value = {"actions": []}
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state=state, timeout=1, ctx=None)
+            result = await openwebgoggles(state=state, ctx=None)
 
         assert "error" not in result
         mock_session.write_state.assert_called_once()

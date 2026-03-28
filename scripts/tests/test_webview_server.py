@@ -3524,3 +3524,68 @@ class TestFileWatcherSrcDetection:
         w.check_src_changes()  # detect the change
         changed_again = w.check_src_changes()  # now mtime is current — no change
         assert js not in changed_again
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# /_api/agent-status endpoint
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAgentStatusEndpoint:
+    """Tests for the /_api/agent-status HTTP endpoint."""
+
+    AUTH = {"authorization": "Bearer secret_token_abc"}
+
+    @pytest.mark.asyncio
+    async def test_no_liveness_file_returns_not_waiting(self, handler, tmp_data_dir):
+        """When no _agent_waiting file exists, returns waiting=False, was_active=False."""
+        # Ensure the file does not exist
+        liveness = tmp_data_dir / "_agent_waiting"
+        liveness.unlink(missing_ok=True)
+
+        w = await send_request(handler, "GET", "/_api/agent-status", headers=self.AUTH)
+        assert w.status_code == 200
+        data = w.json_body
+        assert data["waiting"] is False
+        assert data["was_active"] is False
+
+    @pytest.mark.asyncio
+    async def test_fresh_liveness_file_returns_waiting(self, handler, tmp_data_dir):
+        """A fresh liveness file (age < 10s) returns waiting=True, was_active=True, and age."""
+        liveness = tmp_data_dir / "_agent_waiting"
+        liveness.write_text(str(time.time()))
+
+        w = await send_request(handler, "GET", "/_api/agent-status", headers=self.AUTH)
+        assert w.status_code == 200
+        data = w.json_body
+        assert data["waiting"] is True
+        assert data["was_active"] is True
+        assert "age" in data
+        assert isinstance(data["age"], float)
+        assert data["age"] >= 0.0
+
+    @pytest.mark.asyncio
+    async def test_stale_liveness_file_returns_was_active(self, handler, tmp_data_dir):
+        """A stale liveness file (age > 10s) returns waiting=False, was_active=True."""
+        liveness = tmp_data_dir / "_agent_waiting"
+        # Write a timestamp from 20 seconds ago
+        liveness.write_text(str(time.time() - 20.0))
+
+        w = await send_request(handler, "GET", "/_api/agent-status", headers=self.AUTH)
+        assert w.status_code == 200
+        data = w.json_body
+        assert data["waiting"] is False
+        assert data["was_active"] is True
+        assert "age" not in data
+
+    @pytest.mark.asyncio
+    async def test_requires_auth(self, handler, tmp_data_dir):
+        """/_api/agent-status returns 401 without authorization header."""
+        w = await send_request(handler, "GET", "/_api/agent-status")
+        assert w.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_post_method_not_allowed(self, handler):
+        """POST to /_api/agent-status returns 405."""
+        w = await send_request(handler, "POST", "/_api/agent-status", headers=self.AUTH)
+        assert w.status_code == 405

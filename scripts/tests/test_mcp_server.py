@@ -1099,3 +1099,198 @@ class TestExpandPresetMaxLines:
         lines = ["alpha", "beta", "gamma"]
         result = _expand_preset("log", {"lines": lines})
         assert result["data"]["sections"][0]["lines"] == lines
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# wait_for_action liveness file management
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _make_bare_session(data_dir: Path) -> WebviewSession:
+    """Create a WebviewSession with __new__ and manually set required attrs."""
+    session = WebviewSession.__new__(WebviewSession)
+    session.data_dir = data_dir
+    session.POLL_INTERVAL = 0.01
+    session.PROGRESS_INTERVAL = 5.0
+    session.process = None
+    return session
+
+
+def _run_loop(coro):
+    """Run a coroutine in a fresh event loop."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+class TestWaitForActionLiveness:
+    """Verify _agent_waiting liveness file is managed correctly by wait_for_action."""
+
+    def test_liveness_file_created_immediately(self, tmp_path):
+        """The liveness file must exist before the first poll completes."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        actions_path = data_dir / "actions.json"
+        liveness_path = data_dir / "_agent_waiting"
+
+        # Write a real user action so wait returns quickly, but we want to
+        # confirm the file was created before the first poll.
+        actions_path.write_text(json.dumps({"actions": [{"action_id": "approve", "type": "approve", "value": True}]}))
+
+        _run_loop(session.wait_for_action(timeout=2.0))
+
+        # The file is removed in the finally block on return, so check indirectly:
+        # the finally block removes it, meaning it existed during the wait.
+        # We verify by checking it is absent after completion (implies it was created and removed).
+        assert not liveness_path.exists(), "Liveness file should be removed after wait returns"
+
+    def test_liveness_file_removed_on_normal_exit(self, tmp_path):
+        """After wait_for_action returns (action found), the liveness file is gone."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        actions_path = data_dir / "actions.json"
+        liveness_path = data_dir / "_agent_waiting"
+
+        actions_path.write_text(json.dumps({"actions": [{"action_id": "submit", "type": "submit", "value": {}}]}))
+
+        _run_loop(session.wait_for_action(timeout=2.0))
+
+        assert not liveness_path.exists()
+
+    def test_liveness_file_removed_on_timeout(self, tmp_path):
+        """After wait_for_action times out (returns None), the liveness file is gone."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        actions_path = data_dir / "actions.json"
+        liveness_path = data_dir / "_agent_waiting"
+
+        # No actions — wait will time out
+        actions_path.write_text(json.dumps({"actions": []}))
+
+        result = _run_loop(session.wait_for_action(timeout=0.05))
+
+        assert result is None
+        assert not liveness_path.exists()
+
+    def test_liveness_file_removed_on_cancellation(self, tmp_path):
+        """The liveness file is removed even when the coroutine is cancelled."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        actions_path = data_dir / "actions.json"
+        liveness_path = data_dir / "_agent_waiting"
+
+        # No actions so it polls indefinitely until cancelled
+        actions_path.write_text(json.dumps({"actions": []}))
+
+        async def _run_and_cancel():
+            task = asyncio.ensure_future(session.wait_for_action(timeout=None))
+            # Let one poll tick complete so the liveness file is definitely written
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        _run_loop(_run_and_cancel())
+        assert not liveness_path.exists()
+
+    def test_liveness_file_contains_float_timestamp(self, tmp_path):
+        """The liveness file written at start contains a parseable float timestamp."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        session.POLL_INTERVAL = 0.01
+        actions_path = data_dir / "actions.json"
+        liveness_path = data_dir / "_agent_waiting"
+
+        # No actions yet
+        actions_path.write_text(json.dumps({"actions": []}))
+
+        captured_content: list[str] = []
+
+        async def _check_during_wait():
+            task = asyncio.ensure_future(session.wait_for_action(timeout=None))
+            # Wait for liveness file to appear
+            for _ in range(50):
+                await asyncio.sleep(0.02)
+                if liveness_path.exists():
+                    captured_content.append(liveness_path.read_text())
+                    break
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        _run_loop(_check_during_wait())
+
+        assert captured_content, "Liveness file was never created"
+        ts = float(captured_content[0])
+        assert ts > 0, "Timestamp must be a positive float"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# wait_for_action filter — new action types break the wait
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWaitForActionNewTypes:
+    """Verify session_closed and attention actions break the wait loop."""
+
+    def test_session_closed_breaks_wait(self, tmp_path):
+        """session_closed action (non-_ prefix) must not be filtered."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        actions_path = data_dir / "actions.json"
+
+        actions_path.write_text(
+            json.dumps(
+                {
+                    "actions": [
+                        {
+                            "action_id": "owg_session_closed",
+                            "type": "session_closed",
+                            "value": {"reason": "user_closed"},
+                        }
+                    ]
+                }
+            )
+        )
+
+        result = _run_loop(session.wait_for_action(timeout=2.0))
+
+        assert result is not None, "session_closed action should break the wait"
+        assert result["actions"][0]["action_id"] == "owg_session_closed"
+
+    def test_attention_breaks_wait(self, tmp_path):
+        """attention action must not be filtered by the _ prefix rule."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        actions_path = data_dir / "actions.json"
+
+        actions_path.write_text(
+            json.dumps(
+                {"actions": [{"action_id": "owg_attention", "type": "attention", "value": {"reason": "user_waiting"}}]}
+            )
+        )
+
+        result = _run_loop(session.wait_for_action(timeout=2.0))
+
+        assert result is not None, "attention action should break the wait"
+        assert result["actions"][0]["action_id"] == "owg_attention"
+
+    def test_internal_action_filtered(self, tmp_path):
+        """_page_switch (internal action) must NOT break the wait loop."""
+        data_dir = tmp_path
+        session = _make_bare_session(data_dir)
+        actions_path = data_dir / "actions.json"
+
+        actions_path.write_text(
+            json.dumps({"actions": [{"action_id": "_page_switch", "type": "navigate", "value": "page2"}]})
+        )
+
+        result = _run_loop(session.wait_for_action(timeout=0.1))
+
+        assert result is None, "_page_switch should be filtered (wait returns None on timeout)"

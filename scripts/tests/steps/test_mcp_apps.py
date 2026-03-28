@@ -161,7 +161,6 @@ def call_webview_fallback_ui(ctx):
             with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
                 return await mcp_server.openwebgoggles(
                     state={"title": "Fallback UI", "data": {"sections": []}},
-                    timeout=30,
                 )
 
         ctx.result = loop.run_until_complete(_call())

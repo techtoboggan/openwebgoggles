@@ -124,7 +124,6 @@ class TestLocaleCompleteness:
         """CJK locales (ja, zh) have at least the core UI keys."""
         core_keys = {
             "session_prefix",
-            "connection_lost",
             "session_closed",
             "action_sent",
             "copy",

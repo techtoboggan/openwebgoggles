@@ -72,20 +72,28 @@ class TestGetInstalledVersionInfo:
 
 
 class TestReadVersionFresh:
-    def test_returns_unknown_when_not_installed(self):
-        with mock.patch(
-            "importlib.metadata.distribution",
-            side_effect=importlib.metadata.PackageNotFoundError("openwebgoggles"),
-        ):
-            assert _read_version_fresh() == "unknown"
+    def test_returns_unknown_when_not_installed(self, tmp_path):
+        # _read_version_fresh has 3 strategies: (1) dist_info_hint file, (2) scan
+        # site-packages, (3) importlib fallback. Use dist_info_hint pointing to a
+        # dir with no METADATA file so strategy 1 fails; empty site-packages list
+        # so strategy 2 fails; PackageNotFoundError mock so strategy 3 returns
+        # "unknown". _get_site_packages_dirs lives in mcp_server; distribution
+        # is patched globally on importlib.metadata.
+        empty_hint = tmp_path / "fake.dist-info"
+        empty_hint.mkdir()
+        with mock.patch("mcp_server._get_site_packages_dirs", return_value=[]):
+            with mock.patch(
+                "importlib.metadata.distribution",
+                side_effect=importlib.metadata.PackageNotFoundError("openwebgoggles"),
+            ):
+                assert _read_version_fresh(dist_info_hint=empty_hint) == "unknown"
 
-    def test_returns_fresh_version(self):
-        mock_dist = mock.MagicMock()
-        mock_dist.metadata = {"Version": "2.0.0"}
-
-        with mock.patch("importlib.metadata.distribution", return_value=mock_dist):
-            with mock.patch("importlib.invalidate_caches"):
-                assert _read_version_fresh() == "2.0.0"
+    def test_returns_fresh_version(self, tmp_path):
+        # Strategy 1: provide a real dist-info hint with a METADATA file on disk.
+        dist_info = tmp_path / "openwebgoggles-2.0.0.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text("Metadata-Version: 2.1\nVersion: 2.0.0\n")
+        assert _read_version_fresh(dist_info_hint=dist_info) == "2.0.0"
 
 
 # ---------------------------------------------------------------------------

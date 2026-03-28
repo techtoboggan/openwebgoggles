@@ -8767,3 +8767,52 @@ class TestNetworkSection:
             )
         )
         assert ok, err
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# New action types: session_closed and attention
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNewActionTypes:
+    """Verify session_closed and attention action types are valid."""
+
+    def test_session_closed_in_allowed_types(self, gate):
+        """'session_closed' must be listed in ALLOWED_ACTION_TYPES."""
+        assert "session_closed" in gate.ALLOWED_ACTION_TYPES
+
+    def test_attention_in_allowed_types(self, gate):
+        """'attention' must be listed in ALLOWED_ACTION_TYPES."""
+        assert "attention" in gate.ALLOWED_ACTION_TYPES
+
+    def test_validate_action_session_closed(self, gate):
+        """session_closed action with value dict validates successfully."""
+        action = {
+            "action_id": "owg_session_closed",
+            "type": "session_closed",
+            "value": {"reason": "user_closed"},
+        }
+        ok, err = gate.validate_action(action)
+        assert ok, f"session_closed should be valid: {err}"
+        assert err == ""
+
+    def test_validate_action_attention(self, gate):
+        """attention action with value dict validates successfully."""
+        action = {
+            "action_id": "owg_attention",
+            "type": "attention",
+            "value": {"reason": "user_waiting"},
+        }
+        ok, err = gate.validate_action(action)
+        assert ok, f"attention should be valid: {err}"
+        assert err == ""
+
+    def test_validate_action_session_closed_none_value(self, gate):
+        """session_closed action with value=None is valid."""
+        action = {
+            "action_id": "x",
+            "type": "session_closed",
+            "value": None,
+        }
+        ok, err = gate.validate_action(action)
+        assert ok, f"session_closed with None value should be valid: {err}"
