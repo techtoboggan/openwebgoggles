@@ -1,0 +1,21 @@
+{
+  "version": 4,
+  "title": "Light Theme Test",
+  "status": "processing",
+  "message": "Testing light mode",
+  "theme": "light",
+  "data": {
+    "sections": [
+      {"type": "form", "title": "Settings", "fields": [
+        {"key": "name", "label": "Name", "type": "text", "value": "Alice"}
+      ]},
+      {"type": "metric", "columns": 2, "cards": [
+        {"label": "Users", "value": "1,234"},
+        {"label": "Revenue", "value": "$42k"}
+      ]}
+    ]
+  },
+  "actions_requested": [
+    {"id": "approve", "label": "Approve", "type": "approve"}
+  ]
+}

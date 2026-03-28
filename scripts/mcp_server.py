@@ -58,6 +58,18 @@ except Exception as exc:
 
             return _decorator
 
+        def resource(self, *a: Any, **kw: Any):  # noqa: ANN201
+            def _decorator(fn):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202
+                return fn
+
+            return _decorator
+
+        def prompt(self, *a: Any, **kw: Any):  # noqa: ANN201
+            def _decorator(fn):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202
+                return fn
+
+            return _decorator
+
 
 logger = logging.getLogger("openwebgoggles")
 
@@ -1605,6 +1617,44 @@ mcp._mcp_server.get_capabilities = _patched_get_capabilities
 
 
 # ---------------------------------------------------------------------------
+# MCP Prompt — session workflow guide
+# ---------------------------------------------------------------------------
+
+
+@mcp.prompt()
+def openwebgoggles_workflow() -> str:
+    """OpenWebGoggles session workflow guide."""
+    return """
+## OpenWebGoggles Session Workflow
+
+When using openwebgoggles tools, follow this pattern strictly:
+
+**Browser mode:**
+1. `openwebgoggles(state)` — opens window and BLOCKS until user acts → returns action
+2. Handle the action (check `actions[0].type` and `actions[0].value`)
+3. `openwebgoggles_update(state)` — push updated UI while you work (optional but encouraged)
+4. `openwebgoggles_ping(message)` — send a quick status during long tasks
+5. Repeat from step 1 if more interaction needed
+6. `openwebgoggles_close()` — **REQUIRED** when completely done
+
+**MCP Apps mode (Claude Code / Claude Desktop):**
+1. `openwebgoggles(state)` — renders UI immediately, returns right away
+2. `openwebgoggles_read()` — **call this immediately** to wait for user response
+3. Handle the action
+4. `openwebgoggles_update(state)` — push updated content
+5. Repeat from step 2 if more interaction needed
+6. `openwebgoggles_close()` — **REQUIRED** when completely done
+
+**Rules:**
+- Never abandon a session without calling `openwebgoggles_close()`
+- If `action.type == "session_closed"` → user closed the window → stop immediately
+- If `action.type == "attention"` → user clicked "Remind Agent" → re-engage now
+- Use `openwebgoggles_ping(message)` any time you start a long step so the user isn't staring at a stale screen
+- Check `openwebgoggles_status()` if you're unsure what sessions are open
+"""
+
+
+# ---------------------------------------------------------------------------
 # MCP Apps resource — serves bundled HTML for native iframe rendering
 # ---------------------------------------------------------------------------
 
@@ -1711,6 +1761,28 @@ async def openwebgoggles(
     - "show me / display / visualize" — render tables, charts, metrics
     - "fill out / input / collect" — present a form and gather responses
     - "waiting for user / need feedback" — block until user acts
+
+    WORKFLOW — follow this sequence exactly:
+      Browser mode:
+        1. openwebgoggles(state)         → blocks, returns user action
+        2. Process action["actions"][0]  → check type/value
+        3. openwebgoggles_update(state)  → show updated content (optional)
+        4. Repeat 1-3 as needed
+        5. openwebgoggles_close()        → REQUIRED when done
+
+      MCP Apps mode (Claude Code / Claude Desktop):
+        1. openwebgoggles(state)         → returns immediately, UI is displayed
+        2. openwebgoggles_read()         → REQUIRED: call this right away to wait for response
+        3. Process action["actions"][0]
+        4. openwebgoggles_update(state)  → push updated content
+        5. Repeat 2-4 as needed
+        6. openwebgoggles_close()        → REQUIRED when done
+
+    CRITICAL RULES:
+      - NEVER abandon the window without calling openwebgoggles_close()
+      - In MCP Apps mode, ALWAYS call openwebgoggles_read() after openwebgoggles()
+      - The window stays open indefinitely until you close it; the user is waiting
+      - If the user closes the window (type="session_closed"), stop processing immediately
 
     Pass a state object describing the UI; this tool blocks until the user
     clicks an action button, then returns their response.
@@ -1883,6 +1955,12 @@ async def openwebgoggles(
                 session=session,
             )
 
+        result_state = dict(state)
+        result_state["_hint"] = (
+            "UI is now displayed to the user. "
+            "REQUIRED NEXT STEP: Call openwebgoggles_read() immediately to wait for the user's response. "
+            "Do not do other work first — the user is actively looking at this window."
+        )
         return CallToolResult(
             content=[
                 TextContent(
@@ -1894,7 +1972,7 @@ async def openwebgoggles(
                     ),
                 )
             ],
-            structuredContent=state,
+            structuredContent=result_state,
         )
 
     # ── Browser mode: start subprocess, block until user acts ──────────
@@ -1940,6 +2018,12 @@ async def openwebgoggles(
     if persist:
         _persist_session(ws.session_id, state, result, mode="browser")
 
+    result["_hint"] = (
+        "The browser window is STILL OPEN. "
+        "You MUST call openwebgoggles_update() to show follow-up content OR "
+        "openwebgoggles_close() when completely done. "
+        "Do not abandon the session — the user is waiting."
+    )
     return result
 
 
@@ -2108,6 +2192,67 @@ async def openwebgoggles_update(  # noqa: C901
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
+async def openwebgoggles_ping(
+    message: str,
+    session: str = "default",
+) -> dict[str, Any]:
+    """Push a quick status message to the open browser window.
+
+    Use this during long-running tasks to keep the user informed without
+    composing a full state object. Call it every time you start a significant
+    step so the user knows you haven't forgotten about the window.
+
+    This is the lightweight alternative to openwebgoggles_update() — just pass
+    a plain-text message describing what you're doing right now.
+
+    Examples:
+        openwebgoggles_ping("Analyzing 47 files, this may take a moment...")
+        openwebgoggles_ping("Running tests...")
+        openwebgoggles_ping("Done analyzing. Preparing results...")
+
+    Args:
+        message: Status message to display (plain text, shown as a message box).
+        session: Session name (default: "default").
+
+    Returns:
+        Confirmation that the ping was delivered.
+    """
+    # Build a minimal state that just shows the message with a spinner-style status
+    ping_state: dict[str, Any] = {
+        "title": "Working\u2026",
+        "status": "processing",
+        "message": message,
+    }
+    # Validate the ping state before pushing it
+    if not _security_gate:
+        return {"error": f"SecurityGate unavailable: {_security_gate_error or 'unknown'}. Cannot validate state."}
+    raw = json.dumps(ping_state, separators=(",", ":"))
+    ok, err, validated = _security_gate.validate_state(raw)
+    if not ok:
+        return {"error": f"Ping rejected: {err}"}
+
+    mode = _resolve_mode(None)
+    if mode == "app":
+        app_state = _get_app_state(session)
+        app_state.write_state(validated)
+        return {
+            "ok": True,
+            "message": message,
+            "_hint": (
+                "Window updated. Continue your work — call openwebgoggles_read() or "
+                "openwebgoggles() when ready for user input."
+            ),
+        }
+    # Browser mode — use the session's write_state method
+    slot = await _session_manager.get(session)
+    if slot is None or slot.browser_session is None or not slot.browser_session.is_alive():
+        return {"error": f"No active browser session '{session}'"}
+    slot.browser_session.write_state(validated)
+    return {"ok": True, "message": message, "_hint": "Window updated with status message. Continue your work."}
+
+
+@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@_track_tool_call
 async def openwebgoggles_status(session: str | None = None) -> dict[str, Any]:
     """Check whether an OpenWebGoggles human-in-the-loop session is active.
 
@@ -2139,11 +2284,13 @@ async def openwebgoggles_status(session: str | None = None) -> dict[str, Any]:
 
     # ── All sessions ────────────────────────────────────────────────────
     sessions = await _session_manager.list_active()
-    return {
+    result = {
         "active_count": len(sessions),
         "max_sessions": MAX_CONCURRENT_SESSIONS,
         "sessions": sessions,
+        "_hint": "If any sessions above are no longer needed, call openwebgoggles_close(session='name') to close them.",
     }
+    return result
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})

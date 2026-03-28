@@ -1,0 +1,1 @@
+{"version": "1.0", "app": {"name": "playground", "entry": "playground/index.html", "title": "playground"}, "session": {"id": "dev", "created_at": "dev", "token": "REDACTED"}, "server": {"http_port": 18432, "ws_port": 18433, "host": "127.0.0.1"}}

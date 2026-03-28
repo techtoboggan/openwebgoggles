@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.9] - 2026-03-27
+
+### Added
+
+- **`openwebgoggles_ping(message)` tool** — Lightweight one-liner for agents to push a status message to the open window during long tasks (`openwebgoggles_ping("Analyzing files…")`). No need to compose a full state object. Keeps the user informed and the agent "on rails". Auto-allowed in Claude settings.
+- **`_hint` in every tool return** — `openwebgoggles()` now returns a `_hint` field reminding the agent the window is still open and what to do next (update, close, or call `openwebgoggles_read()` in MCP Apps mode). `openwebgoggles_status()` includes a hint to close unused sessions.
+- **`WORKFLOW` section in `openwebgoggles()` docstring** — Explicit step-by-step sequence for browser mode and MCP Apps mode, with CRITICAL RULES about never abandoning sessions and always handling `session_closed` / `attention` action types.
+- **MCP `openwebgoggles_workflow` prompt** — Workflow guide exposed as an MCP prompt so hosts that support prompt injection (Claude Code, Claude Desktop) can include it in the agent's system context automatically.
+
+---
+
 ## [0.17.8] - 2026-03-27
 
 ### Fixed

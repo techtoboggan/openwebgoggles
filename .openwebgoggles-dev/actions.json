@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "action_id": "close",
+      "type": "reject",
+      "value": {
+        "decision": "Approve"
+      },
+      "id": "fb2aa47f-016a-4eec-8311-520c6c8e7dce",
+      "timestamp": "2026-03-04T02:19:25Z"
+    }
+  ]
+}
