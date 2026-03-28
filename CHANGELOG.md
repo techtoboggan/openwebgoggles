@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.10] - 2026-03-28
+
+### Fixed
+
+- **Test suite** — All fixable test failures resolved; 2719 tests passing. Fixed mock targets for `_get_site_packages_dirs` (lives in `mcp_server`, not `monitor`) and patched `importlib.metadata.distribution` globally. Removed stale `connection_lost` CJK core key and all `timeout=` kwargs from `openwebgoggles()` test calls. Fixed BDD browser-fallback step.
+
+### Added
+
+- **New test coverage** — `TestAgentStatusEndpoint` (5 tests for `/_api/agent-status`), `TestNewActionTypes` (session_closed/attention in SecurityGate), `TestWaitForActionLiveness` + `TestWaitForActionNewTypes` (liveness file lifecycle), `test_ping_tool.py` (10 tests), `test_workflow_prompt.py` (4 tests). 33 new tests covering all 0.17.x behavior.
+
+---
+
 ## [0.17.9] - 2026-03-27
 
 ### Added
