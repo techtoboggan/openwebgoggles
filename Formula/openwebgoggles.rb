@@ -15,7 +15,7 @@ class Openwebgoggles < Formula
 
   desc "Browser-based human-in-the-loop UI panels for AI coding agents"
   homepage "https://github.com/techtoboggan/openwebgoggles"
-  url "https://files.pythonhosted.org/packages/source/o/openwebgoggles/openwebgoggles-0.17.12.tar.gz"
+  url "https://files.pythonhosted.org/packages/source/o/openwebgoggles/openwebgoggles-0.17.13.tar.gz"
   sha256 "PLACEHOLDER_SHA256_UPDATED_BY_WORKFLOW"
   license "Apache-2.0"
   head "https://github.com/techtoboggan/openwebgoggles.git", branch: "main"

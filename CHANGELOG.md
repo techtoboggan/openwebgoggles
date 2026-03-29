@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.13] - 2026-03-29
+
+### Fixed
+
+- **CI**: suppress pygments CVE-2026-4539 (ReDoS in AdlLexer, local-access only, no patch available yet — transitive dep via mcp→rich). Will remove ignore once pygments 2.20+ is released.
+
+---
+
 ## [0.17.12] - 2026-03-29
 
 ### Changed

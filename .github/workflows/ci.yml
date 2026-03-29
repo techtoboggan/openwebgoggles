@@ -35,7 +35,9 @@ jobs:
       - name: Audit dependencies
         run: |
           pip install pip-audit
-          pip-audit --desc on --skip-editable
+          # CVE-2026-4539: ReDoS in pygments AdlLexer (local-access only, no patch yet).
+          # pygments is a transitive dep via mcp→rich; remove ignore when pygments 2.20+ is released.
+          pip-audit --desc on --skip-editable --ignore-vuln CVE-2026-4539
 
       - name: Run tests with coverage
         run: python -m pytest scripts/tests/ -v --cov=scripts --cov-report=term --cov-fail-under=80 -m "not slow"
