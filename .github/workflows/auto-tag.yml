@@ -1,0 +1,85 @@
+name: Auto-tag on version bump
+
+# When pyproject.toml is pushed to next-version or main with a new version
+# number, automatically create and push the matching vX.Y.Z tag.
+#
+# This removes the need to manually run:
+#   git tag vX.Y.Z && git push origin vX.Y.Z
+#
+# Flow:
+#   bump version in pyproject.toml → commit → push to next-version or main
+#   → this workflow → git tag vX.Y.Z pushed
+#   → release.yml triggers → GitHub Release created
+#   → publish.yml triggers → PyPI updated
+#
+# Idempotent: if the tag already exists the workflow exits cleanly (no error).
+
+on:
+  push:
+    branches:
+      - main
+      - next-version
+    paths:
+      - pyproject.toml
+
+permissions:
+  contents: write  # needed to push tags
+
+jobs:
+  auto-tag:
+    name: Create version tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          fetch-depth: 0  # full history so we can check existing tags
+
+      - name: Read version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(python3 -c "
+          import tomllib
+          with open('pyproject.toml', 'rb') as f:
+              print(tomllib.load(f)['project']['version'])
+          ")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Detected version: ${VERSION}"
+
+      - name: Check if tag already exists
+        id: tag_check
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} already exists — nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} does not exist — will create it."
+          fi
+
+      - name: Verify version format is valid semver
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! echo "${VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::Version '${VERSION}' is not valid semver — skipping tag creation."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        if: steps.tag_check.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "${TAG}" HEAD
+          git push origin "${TAG}"
+          echo "✓ Pushed tag ${TAG} → release.yml will create GitHub Release"
+          echo "                    → publish.yml will publish to PyPI"
