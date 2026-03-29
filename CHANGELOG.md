@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.11] - 2026-03-28
+
+### Added
+
+- **BDD feature files** — 3 new Gherkin `.feature` files (19 scenarios) as executable specifications for all 0.17.x business behaviour: `agent_liveness.feature`, `session_close.feature`, `anti_zombification.feature`. Step implementations in `scripts/tests/steps/`. Scenarios define the expected behaviour first; code was validated against them (2 genuine gaps found and fixed during step authoring — liveness file lifecycle assertion and `CallToolResult` normalisation in app mode).
+
+---
+
 ## [0.17.10] - 2026-03-28
 
 ### Fixed
