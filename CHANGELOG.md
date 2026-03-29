@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.12] - 2026-03-29
+
+### Changed
+
+- **Auto-tagging CI** — releasing no longer requires a manual `git tag && git push origin tag`. Push a version bump to `pyproject.toml` and `auto-tag.yml` automatically creates and pushes the `vX.Y.Z` tag, which triggers `release.yml` (GitHub Release) → `publish.yml` (PyPI). Idempotent: skips if tag already exists.
+- **CI runs on `next-version`** — CI previously only ran on `main`; now also runs on every push to `next-version` so failures are caught before merge.
+
+---
+
 ## [0.17.11] - 2026-03-28
 
 ### Added
