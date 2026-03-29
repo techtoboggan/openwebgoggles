@@ -4,15 +4,15 @@ name: Auto-tag and release on version bump
 #   1. Create and push the vX.Y.Z git tag
 #   2. Create the GitHub Release (extracts CHANGELOG section)
 #
-# The GitHub Release creation fires an API-level `release: published` event
-# which triggers publish.yml → PyPI upload. This bypasses the GitHub
-# security restriction that blocks GITHUB_TOKEN tag-pushes from triggering
-# downstream workflows (those are blocked; release API events are not).
+# GitHub's GITHUB_TOKEN restriction blocks implicit downstream triggers
+# (push/release events created by GITHUB_TOKEN don't fire other workflows).
+# workflow_dispatch calls ARE permitted from GITHUB_TOKEN, so after creating
+# the GitHub Release this workflow explicitly dispatches publish.yml.
 #
 # Flow:
 #   bump pyproject.toml version → commit → push to next-version or main
-#   → this workflow → git tag vX.Y.Z + GitHub Release created
-#   → publish.yml triggers (release: published) → PyPI updated
+#   → this workflow → git tag + GitHub Release + gh workflow run publish.yml
+#   → publish.yml (workflow_dispatch) → PyPI updated
 #
 # Idempotent: skips cleanly if the tag or release already exists.
 
@@ -124,4 +124,19 @@ jobs:
             --verify-tag \
             ${PRERELEASE_FLAG}
           echo "✓ GitHub Release created: v${VERSION}"
-          echo "  → publish.yml will now trigger → PyPI updated"
+
+      - name: Trigger PyPI publish
+        # workflow_dispatch IS allowed from GITHUB_TOKEN (unlike implicit push/release events).
+        # publish.yml already accepts workflow_dispatch with a `tag` input.
+        if: >
+          steps.tag_check.outputs.exists == 'false' &&
+          steps.release_check.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          gh workflow run publish.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${GITHUB_REF_NAME}" \
+            --field tag="${TAG}"
+          echo "✓ Dispatched publish.yml for ${TAG} → PyPI upload in progress"
