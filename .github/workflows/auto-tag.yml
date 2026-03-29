@@ -1,18 +1,20 @@
-name: Auto-tag on version bump
+name: Auto-tag and release on version bump
 
-# When pyproject.toml is pushed to next-version or main with a new version
-# number, automatically create and push the matching vX.Y.Z tag.
+# When pyproject.toml changes on next-version or main, automatically:
+#   1. Create and push the vX.Y.Z git tag
+#   2. Create the GitHub Release (extracts CHANGELOG section)
 #
-# This removes the need to manually run:
-#   git tag vX.Y.Z && git push origin vX.Y.Z
+# The GitHub Release creation fires an API-level `release: published` event
+# which triggers publish.yml → PyPI upload. This bypasses the GitHub
+# security restriction that blocks GITHUB_TOKEN tag-pushes from triggering
+# downstream workflows (those are blocked; release API events are not).
 #
 # Flow:
-#   bump version in pyproject.toml → commit → push to next-version or main
-#   → this workflow → git tag vX.Y.Z pushed
-#   → release.yml triggers → GitHub Release created
-#   → publish.yml triggers → PyPI updated
+#   bump pyproject.toml version → commit → push to next-version or main
+#   → this workflow → git tag vX.Y.Z + GitHub Release created
+#   → publish.yml triggers (release: published) → PyPI updated
 #
-# Idempotent: if the tag already exists the workflow exits cleanly (no error).
+# Idempotent: skips cleanly if the tag or release already exists.
 
 on:
   push:
@@ -23,11 +25,11 @@ on:
       - pyproject.toml
 
 permissions:
-  contents: write  # needed to push tags
+  contents: write  # needed to push tags and create releases
 
 jobs:
-  auto-tag:
-    name: Create version tag
+  auto-release:
+    name: Tag and release
     runs-on: ubuntu-latest
 
     steps:
@@ -47,6 +49,14 @@ jobs:
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Detected version: ${VERSION}"
 
+      - name: Verify version format is valid semver
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! echo "${VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::Version '${VERSION}' is not valid semver — skipping."
+            exit 1
+          fi
+
       - name: Check if tag already exists
         id: tag_check
         run: |
@@ -59,27 +69,59 @@ jobs:
             echo "Tag ${TAG} does not exist — will create it."
           fi
 
-      - name: Verify version format is valid semver
+      - name: Check if GitHub Release already exists
+        id: release_check
+        if: steps.tag_check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "${TAG}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} already exists."
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push git tag
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}" HEAD
+          git push origin "${TAG}"
+          echo "✓ Pushed tag ${TAG}"
+
+      - name: Extract CHANGELOG section
+        id: changelog
         if: steps.tag_check.outputs.exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if ! echo "${VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
-            echo "::error::Version '${VERSION}' is not valid semver — skipping tag creation."
-            exit 1
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
           fi
+          printf '%s' "$NOTES" > /tmp/release_notes.md
+          echo "Extracted $(wc -l < /tmp/release_notes.md) lines of release notes"
 
-      - name: Create and push tag
-        if: steps.tag_check.outputs.exists == 'false'
+      - name: Create GitHub Release
+        if: >
+          steps.tag_check.outputs.exists == 'false' &&
+          steps.release_check.outputs.release_exists == 'false'
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git tag "${TAG}" HEAD
-          git push origin "${TAG}"
-          echo "✓ Pushed tag ${TAG} → release.yml will create GitHub Release"
-          echo "                    → publish.yml will publish to PyPI"
+          PRERELEASE_FLAG=""
+          if [[ "${TAG}" == *"-"* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "${TAG}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release_notes.md \
+            --verify-tag \
+            ${PRERELEASE_FLAG}
+          echo "✓ GitHub Release created: v${VERSION}"
+          echo "  → publish.yml will now trigger → PyPI updated"
