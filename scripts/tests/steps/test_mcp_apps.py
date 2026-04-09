@@ -54,6 +54,14 @@ def test_app_mode_state_cleared():
     pass
 
 
+@scenario(
+    "../features/mcp_apps.feature",
+    "Browser mode is non-blocking — agent polls openwebgoggles_read",
+)
+def test_browser_mode_non_blocking():
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Shared state container
 # ---------------------------------------------------------------------------
@@ -150,6 +158,9 @@ def call_webview_fallback_ui(ctx):
     mock_session.ensure_started = mock.AsyncMock()
     mock_session.clear_actions = mock.MagicMock()
     mock_session.write_state = mock.MagicMock()
+    mock_session.url = "http://127.0.0.1:18420"
+    mock_session.read_state = mock.MagicMock(return_value={})
+    mock_session.read_actions = mock.MagicMock(return_value={"version": 0, "actions": []})
     mock_session.wait_for_action = mock.AsyncMock(
         return_value={"actions": [{"action_id": "ok", "type": "click"}]},
     )
@@ -165,6 +176,11 @@ def call_webview_fallback_ui(ctx):
 
         ctx.result = loop.run_until_complete(_call())
         ctx.mock_session = mock_session
+        # Inject the slot so subsequent openwebgoggles_read() calls can find it
+        slot = mcp_server.SessionSlot("default")
+        slot.browser_session = mock_session
+        slot.mode = "browser"
+        mcp_server._session_manager._slots["default"] = slot
     finally:
         loop.close()
 
@@ -225,10 +241,11 @@ def assert_browser_fallback(ctx):
     # The mock session's ensure_started should have been called
     ctx.mock_session.ensure_started.assert_called_once()
     ctx.mock_session.write_state.assert_called_once()
-    ctx.mock_session.wait_for_action.assert_called_once()
-    # Browser mode returns plain dict from wait_for_action (not CallToolResult)
+    # Non-blocking: wait_for_action is NOT called from openwebgoggles() — agent polls
+    ctx.mock_session.wait_for_action.assert_not_called()
+    # Browser mode returns ui_ready immediately (not CallToolResult)
     assert isinstance(ctx.result, dict), f"Browser fallback should return plain dict, got: {type(ctx.result).__name__}"
-    assert "actions" in ctx.result
+    assert ctx.result.get("status") == "ui_ready", f"Expected ui_ready status, got: {ctx.result}"
 
 
 @then("webview_read should return the action")
@@ -262,3 +279,53 @@ def assert_app_mode_cleared(ctx):
     assert app_state.state == {}, f"Expected empty state, got: {app_state.state}"
     assert app_state.state_version > 0, f"Expected epoch-ms baseline version, got: {app_state.state_version}"
     assert app_state.read_actions() == [], f"Expected empty actions, got: {app_state.read_actions()}"
+
+
+# ---------------------------------------------------------------------------
+# Non-blocking browser mode poll steps
+# ---------------------------------------------------------------------------
+
+
+@then("openwebgoggles returns ui_ready immediately")
+def assert_ui_ready(ctx):
+    """Browser mode must return {status: ui_ready} without blocking."""
+    assert isinstance(ctx.result, dict), f"Expected dict, got {type(ctx.result).__name__}"
+    assert ctx.result.get("status") == "ui_ready", f"Expected ui_ready, got: {ctx.result}"
+    assert "url" in ctx.result, "Expected 'url' in result"
+    assert "_hint" in ctx.result, "Expected '_hint' in result"
+    ctx.mock_session.wait_for_action.assert_not_called()
+
+
+@then("openwebgoggles_read returns empty actions before user acts")
+def assert_read_empty_before_action(ctx):
+    """Polling before any user action returns an empty actions list."""
+    # mock_session.read_actions already returns {"version": 0, "actions": []}
+    loop = asyncio.new_event_loop()
+    try:
+        read_result = loop.run_until_complete(mcp_server.openwebgoggles_read())
+    finally:
+        loop.close()
+
+    assert "actions" in read_result, f"Expected 'actions' key, got: {read_result}"
+    assert read_result["actions"] == [], f"Expected empty actions, got: {read_result['actions']}"
+    assert "_hint" in read_result, "Expected polling hint in result"
+
+
+@then("openwebgoggles_read returns actions after user submits")
+def assert_read_returns_actions_after_submit(ctx):
+    """After the mock browser session receives an action, polling returns it."""
+    # Simulate user submitting an action by swapping the read_actions mock
+    ctx.mock_session.read_actions.return_value = {
+        "version": 1,
+        "actions": [{"action_id": "submit", "type": "approve", "value": True}],
+    }
+
+    loop = asyncio.new_event_loop()
+    try:
+        read_result = loop.run_until_complete(mcp_server.openwebgoggles_read())
+    finally:
+        loop.close()
+
+    assert len(read_result["actions"]) == 1, f"Expected one action, got: {read_result['actions']}"
+    assert read_result["actions"][0]["action_id"] == "submit"
+    assert "_hint" in read_result

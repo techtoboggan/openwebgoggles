@@ -218,7 +218,6 @@ class TestMultiSessionTools:
     async def test_openwebgoggles_with_session_param(self):
         """Named session parameter routes to the correct slot."""
         mock_session = _make_mock_session()
-        mock_session.wait_for_action.return_value = {"actions": [{"id": "ok"}]}
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(
@@ -227,7 +226,9 @@ class TestMultiSessionTools:
                 ctx=None,
             )
 
-        assert "actions" in result
+        # Non-blocking: returns ui_ready immediately
+        assert result["status"] == "ui_ready"
+        assert result["session"] == "my-panel"
         mock_session.write_state.assert_called_once()
 
     async def test_two_sessions_independent_state(self):

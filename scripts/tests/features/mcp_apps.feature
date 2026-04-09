@@ -14,6 +14,13 @@ Feature: MCP Apps dual-mode support
     When the agent calls webview with title "Fallback UI"
     Then the browser fallback should be used
 
+  Scenario: Browser mode is non-blocking — agent polls openwebgoggles_read
+    Given the host has not fetched the UI resource
+    When the agent calls webview with title "Fallback UI"
+    Then openwebgoggles returns ui_ready immediately
+    And openwebgoggles_read returns empty actions before user acts
+    And openwebgoggles_read returns actions after user submits
+
   Scenario: User action received via _owg_action
     Given the host has fetched the UI resource
     And the agent has displayed a webview

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.16] - 2026-04-09
+
+### Fixed
+
+- **Browser-mode timeout (root cause fix)** — `openwebgoggles()` in browser mode now returns immediately after opening the window, instead of blocking on `wait_for_action()` for the user's response. Agents poll `openwebgoggles_read()` instead — exactly the same flow as MCP Apps mode.
+
+  **Why this was happening**: `@modelcontextprotocol/sdk` (used by OpenCode, Cursor, Zed, Cline, Continue, etc.) only injects `_meta.progressToken` into outgoing requests when an `onprogress` callback is provided — not when `resetTimeoutOnProgress: true` is set alone. Without a token, the server's progress pings are protocol-correct but are silently dropped by the client, so the 60-second default timeout (`DEFAULT_REQUEST_TIMEOUT_MSEC = 60000`) fires regardless of how frequently we ping. All the 0.17.x keepalive patches were server-side fixes for a client-side contract mismatch.
+
+  **What changed**: `openwebgoggles()` in browser mode now returns `{"status": "ui_ready", "url": ..., "session": ..., "_hint": ...}` immediately. `openwebgoggles_read()` (which already existed and already worked for browser mode) is the polling interface — returns immediately in all cases, empty `"actions"` means the user hasn't acted yet. `openwebgoggles_read()` now also includes `_hint` guidance and handles audit logging at action-consume time (`clear=True`). Session `persist` is stored on the slot and honoured by `openwebgoggles_close()` rather than at wait-return time.
+
+  **Upstream**: two follow-up PRs filed —
+  - `anomalyco/opencode`: add `onprogress: () => {}` to `convertMcpTool` so the SDK injects a progressToken, making progress pings work for every MCP server talking to OpenCode.
+  - `modelcontextprotocol/typescript-sdk`: inject `progressToken` when `resetTimeoutOnProgress: true` is set, not only when `onprogress` is provided — so the flag does what its name promises.
+
+---
+
 ## [0.17.15] - 2026-03-29
 
 ### Fixed

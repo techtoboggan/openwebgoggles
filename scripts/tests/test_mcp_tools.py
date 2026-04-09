@@ -90,38 +90,27 @@ def _inject_slot(mock_session, name="default"):
 
 
 class TestWebviewTool:
-    async def test_browser_mode_blocks_and_returns_actions(self):
-        """webview in browser mode blocks via wait_for_action and returns result."""
+    async def test_browser_mode_returns_ui_ready_immediately(self):
+        """openwebgoggles() in browser mode returns ui_ready immediately without blocking."""
         mock_session = _make_mock_session()
-        mock_session.wait_for_action.return_value = {
-            "actions": [{"action_id": "ok", "type": "approve"}],
-        }
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             result = await openwebgoggles(state={"title": "Test"}, ctx=None)
 
-        # Browser mode returns the wait_for_action result directly (plain dict)
+        # Non-blocking: returns ui_ready dict immediately
         assert isinstance(result, dict)
-        assert "actions" in result
+        assert result["status"] == "ui_ready"
+        assert "url" in result
+        assert "session" in result
+        assert "_hint" in result
+        # Never calls wait_for_action — that's the agent's job via openwebgoggles_read()
+        mock_session.wait_for_action.assert_not_called()
         mock_session.ensure_started.assert_called_once()
         mock_session.write_state.assert_called_once()
-        mock_session.wait_for_action.assert_called_once()
-
-    async def test_browser_mode_timeout(self):
-        """webview returns timeout error when no user action arrives."""
-        mock_session = _make_mock_session()
-        mock_session.wait_for_action.return_value = None  # timeout
-
-        with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
-            result = await openwebgoggles(state={"title": "Test"}, ctx=None)
-
-        assert "error" in result
-        assert "Timed out" in result["error"]
 
     async def test_browser_mode_starts_session(self):
-        """webview starts browser subprocess and clears actions."""
+        """openwebgoggles() starts browser subprocess and clears stale actions."""
         mock_session = _make_mock_session()
-        mock_session.wait_for_action.return_value = {"actions": []}
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             await openwebgoggles(state={"title": "Test"}, ctx=None)
@@ -132,7 +121,6 @@ class TestWebviewTool:
     async def test_preset_expansion(self):
         """webview expands preset before writing state."""
         mock_session = _make_mock_session()
-        mock_session.wait_for_action.return_value = {"actions": [{"id": "confirm"}]}
 
         with mock.patch("mcp_server._get_browser_session", return_value=mock_session):
             await openwebgoggles(

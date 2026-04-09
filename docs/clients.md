@@ -3,7 +3,7 @@
 OpenWebGoggles operates in one of two modes depending on the MCP client (host) it connects to:
 
 - **MCP Apps mode** — UI renders in a native pane/iframe inside the host. State flows via `structuredContent` in tool results. Non-blocking.
-- **Browser mode** — UI opens in a browser tab. State flows via WebSocket to `localhost:18420/18421`. Blocking (agent waits for user action).
+- **Browser mode** — UI opens in a browser tab. State flows via WebSocket to `localhost:18420/18421`. Non-blocking — `openwebgoggles()` returns immediately, agent polls `openwebgoggles_read()` until the user responds.
 
 Mode is detected automatically at connection time — no configuration needed.
 
@@ -13,15 +13,15 @@ Mode is detected automatically at connection time — no configuration needed.
 
 | Client | Mode | Detection Signal | Notes |
 |--------|------|-----------------|-------|
-| **Claude Code** (v1.x+) | MCP Apps | `clientInfo.name` starts with `"local-agent-mode-"` | Renders `structuredContent` as an inline preview pane. Non-blocking tool call. |
+| **Claude Code** (v1.x+) | MCP Apps | `clientInfo.name` starts with `"local-agent-mode-"` | Renders `structuredContent` as an inline preview pane. Non-blocking. |
 | **Claude Desktop** | MCP Apps | `capabilities.extensions["io.modelcontextprotocol/ui"]` | Native iframe pane. Some versions use `capabilities.experimental` instead. |
-| **OpenCode** | Browser | No UI extension | Browser tab opens automatically. |
-| **Cursor** | Browser | No UI extension | Browser tab opens automatically. |
-| **Zed** | Browser | No UI extension | Browser tab opens automatically. |
-| **Cline** (VS Code) | Browser | No UI extension | Browser tab opens automatically. |
-| **Continue** (VS Code) | Browser | No UI extension | Browser tab opens automatically. |
-| **Sourcegraph Cody** | Browser | No UI extension | Browser tab opens automatically. |
-| **Any other client** | Browser | No UI extension | Browser fallback is always available. |
+| **OpenCode** | Browser | No UI extension | Browser tab opens automatically. Non-blocking — agent polls `openwebgoggles_read()`. |
+| **Cursor** | Browser | No UI extension | Browser tab opens automatically. Non-blocking — agent polls `openwebgoggles_read()`. |
+| **Zed** | Browser | No UI extension | Browser tab opens automatically. Non-blocking — agent polls `openwebgoggles_read()`. |
+| **Cline** (VS Code) | Browser | No UI extension | Browser tab opens automatically. Non-blocking — agent polls `openwebgoggles_read()`. |
+| **Continue** (VS Code) | Browser | No UI extension | Browser tab opens automatically. Non-blocking — agent polls `openwebgoggles_read()`. |
+| **Sourcegraph Cody** | Browser | No UI extension | Browser tab opens automatically. Non-blocking — agent polls `openwebgoggles_read()`. |
+| **Any other client** | Browser | No UI extension | Browser fallback is always available. Non-blocking. |
 
 ---
 
@@ -58,7 +58,7 @@ The detected mode is **cached for the session lifetime**. Calling `openwebgoggle
 | Forms + actions | ✓ | ✓ |
 | `openwebgoggles_update()` live push | ✓ | ✓ |
 | Multi-page navigation | ✓ | ✓ |
-| Blocking agent wait | — | ✓ |
+| Non-blocking (poll `openwebgoggles_read()`) | ✓ | ✓ |
 | No browser window needed | ✓ | — |
 | Works without GUI | ✓ | — |
 | HMAC/Ed25519 transport auth | Host | ✓ |

@@ -591,6 +591,13 @@ async def _close_slot(slot: SessionSlot, message: str = "Session complete.") -> 
             )
         slot.app_state.clear()
     if slot.browser_session is not None and slot.browser_session._started:
+        if slot.persist_enabled:
+            _persist_session(
+                slot.browser_session.session_id,
+                slot.browser_session.read_state(),
+                slot.browser_session.read_actions(),
+                mode="browser",
+            )
         try:
             await slot.browser_session.close(message=message)
         except Exception:
@@ -1762,30 +1769,22 @@ async def openwebgoggles(
     - "fill out / input / collect" — present a form and gather responses
     - "waiting for user / need feedback" — block until user acts
 
-    WORKFLOW — follow this sequence exactly:
-      Browser mode:
-        1. openwebgoggles(state)         → blocks, returns user action
-        2. Process action["actions"][0]  → check type/value
-        3. openwebgoggles_update(state)  → show updated content (optional)
-        4. Repeat 1-3 as needed
-        5. openwebgoggles_close()        → REQUIRED when done
-
-      MCP Apps mode (Claude Code / Claude Desktop):
+    WORKFLOW — follow this sequence exactly (both browser and MCP Apps modes):
         1. openwebgoggles(state)         → returns immediately, UI is displayed
-        2. openwebgoggles_read()         → REQUIRED: call this right away to wait for response
-        3. Process action["actions"][0]
-        4. openwebgoggles_update(state)  → push updated content
+        2. openwebgoggles_read()         → REQUIRED: poll until actions appear (returns fast)
+        3. Process action["actions"][0]  → check type/value
+        4. openwebgoggles_update(state)  → push updated content (optional)
         5. Repeat 2-4 as needed
         6. openwebgoggles_close()        → REQUIRED when done
 
     CRITICAL RULES:
       - NEVER abandon the window without calling openwebgoggles_close()
-      - In MCP Apps mode, ALWAYS call openwebgoggles_read() after openwebgoggles()
+      - ALWAYS call openwebgoggles_read() in a loop after openwebgoggles() returns
       - The window stays open indefinitely until you close it; the user is waiting
       - If the user closes the window (type="session_closed"), stop processing immediately
 
-    Pass a state object describing the UI; this tool blocks until the user
-    clicks an action button, then returns their response.
+    Pass a state object describing the UI; this tool opens the panel and returns
+    immediately. Call openwebgoggles_read() to wait for the user's response.
 
     The state object schema:
       - title (str): Header title
@@ -1975,11 +1974,22 @@ async def openwebgoggles(
             structuredContent=result_state,
         )
 
-    # ── Browser mode: start subprocess, block until user acts ──────────
+    # ── Browser mode: open window and return immediately ───────────────
+    # MCP clients (OpenCode, Cursor, Zed, Cline, …) use @modelcontextprotocol/sdk
+    # which injects _meta.progressToken only when onprogress is provided — not
+    # when resetTimeoutOnProgress is set alone. Without a token, the server's
+    # progress pings cannot match the pending request and the 60 s default timeout
+    # fires regardless of how often we send them.
+    # Fix: return immediately, let the agent poll openwebgoggles_read().
     ws = await _get_browser_session(session, app)
     await ws.ensure_started(app)
     ws.clear_actions()
     ws.write_state(state)
+
+    # Store persist flag on the slot so _close_slot can honour it at session end.
+    browser_slot = await _session_manager.get(session)
+    if browser_slot is not None:
+        browser_slot.persist_enabled = persist
 
     # Webhook notification (non-blocking)
     if _webhook and _webhook.enabled:
@@ -1990,41 +2000,18 @@ async def openwebgoggles(
             session=session,
         )
 
-    async def _progress(elapsed: float, total: float) -> None:  # noqa: ARG001
-        if ctx:
-            # Use indeterminate progress (total=None) so the host never sees
-            # "100% complete" and cancels the long-running wait with -32001.
-            await ctx.report_progress(1, None)
-
-    result = await ws.wait_for_action(
-        timeout=None,  # infinite — window stays open until user acts or session is closed
-        on_progress=_progress if ctx else None,
-    )
-    if result is None:
-        # Unreachable with timeout=None; guard for future explicit timeout use.
-        return {"error": "Timed out waiting for user action."}
-
-    # Audit log: record user actions from browser mode
-    if _audit and _audit.enabled:
-        for action in result.get("actions", []):
-            _audit.log_action(
-                action_id=action.get("action_id", action.get("id", "")),
-                action_type=action.get("type", ""),
-                session=session,
-                value=action.get("value"),
-            )
-
-    # Persist final state + actions if requested
-    if persist:
-        _persist_session(ws.session_id, state, result, mode="browser")
-
-    result["_hint"] = (
-        "The browser window is STILL OPEN. "
-        "You MUST call openwebgoggles_update() to show follow-up content OR "
-        "openwebgoggles_close() when completely done. "
-        "Do not abandon the session — the user is waiting."
-    )
-    return result
+    return {
+        "status": "ui_ready",
+        "url": ws.url,
+        "session": session,
+        "_hint": (
+            "Browser window is open and waiting for user input. "
+            "REQUIRED NEXT STEP: Call openwebgoggles_read() in a loop until actions appear "
+            "(each call returns immediately — empty actions = user hasn't acted yet). "
+            "Call openwebgoggles_close() when completely done. "
+            "Do NOT abandon the session — the user is waiting."
+        ),
+    }
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
@@ -2032,12 +2019,11 @@ async def openwebgoggles(
 async def openwebgoggles_read(clear: bool = False, session: str = "default") -> dict[str, Any]:
     """Read the current user actions from the OpenWebGoggles panel.
 
-    Poll this after openwebgoggles() returns (MCP Apps / Claude Desktop) to
-    check if the human has submitted a response. Use in a polling loop:
-    call openwebgoggles_read() repeatedly until actions are present.
+    Poll this after openwebgoggles() returns — for BOTH browser mode and MCP Apps
+    mode. Call repeatedly until actions are non-empty, then process them.
 
-    Returns the actions array (may be empty if no response yet).
-    Set clear=True to clear actions after reading so the next poll starts fresh.
+    Returns immediately in all cases; empty actions means the user hasn't acted yet.
+    Set clear=True to consume and clear actions so the next poll starts fresh.
     """
     mode = _resolve_mode(None)
 
@@ -2056,11 +2042,34 @@ async def openwebgoggles_read(clear: bool = False, session: str = "default") -> 
     if slot is None or slot.browser_session is None or not slot.browser_session._started:
         return {"version": 0, "actions": []}
 
-    actions = slot.browser_session.read_actions()
-    if clear and actions.get("actions"):
+    data = slot.browser_session.read_actions()
+    has_actions = bool(data.get("actions"))
+
+    if clear and has_actions:
+        # Audit log: record user actions at consume time (clear=True)
+        if _audit and _audit.enabled:
+            for action in data.get("actions", []):
+                _audit.log_action(
+                    action_id=action.get("action_id", action.get("id", "")),
+                    action_type=action.get("type", ""),
+                    session=session,
+                    value=action.get("value"),
+                )
         slot.browser_session.clear_actions()
 
-    return actions
+    if has_actions:
+        data["_hint"] = (
+            "The browser window is STILL OPEN. "
+            "Call openwebgoggles_update() to show follow-up content, "
+            "or openwebgoggles_close() when completely done."
+        )
+    else:
+        data["_hint"] = (
+            "No user action yet — keep polling. "
+            "Call openwebgoggles_read() again; the user is still looking at the window."
+        )
+
+    return data
 
 
 @mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
