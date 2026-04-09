@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.17] - 2026-04-09
+
+### Fixed
+
+- **Tool name double-prefix in OpenCode** — All MCP tools now register with short base names (`open`, `read`, `update`, `ping`, `status`, `close`, `sessions`, `restore`) via FastMCP's `name=` parameter. Clients that prepend the server name (like OpenCode, which produces `openwebgoggles_{tool}`) now show clean names: `openwebgoggles_read`, `openwebgoggles_close`, etc., instead of the previous `openwebgoggles_openwebgoggles_read`. Clients without a prefix (Claude Desktop) are unaffected — they see the short base names as before.
+
+- **`openwebgoggles_read` tight-loop polling** — Browser mode now long-polls internally for up to `poll_for` seconds (default 8 s) before returning an empty result. Previously, each call returned instantly when no user action had been submitted, causing agent runtimes like OpenCode to spin the tool in a tight loop (hundreds of calls/min, cluttering the tool-use log). With 8-second long-polling the natural call rate drops to ~7/min while responsiveness remains sub-8-second. Set `poll_for=0` to restore the old immediate-return behaviour.
+
+---
+
 ## [0.17.16] - 2026-04-09
 
 ### Fixed

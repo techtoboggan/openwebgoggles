@@ -1634,30 +1634,26 @@ def openwebgoggles_workflow() -> str:
     return """
 ## OpenWebGoggles Session Workflow
 
-When using openwebgoggles tools, follow this pattern strictly:
+When using openwebgoggles tools, follow this pattern strictly.
+Tool names below are base names — your client may prefix them with `openwebgoggles_`
+(e.g. `openwebgoggles_read`, `openwebgoggles_close` in OpenCode).
 
-**Browser mode:**
-1. `openwebgoggles(state)` — opens window and BLOCKS until user acts → returns action
-2. Handle the action (check `actions[0].type` and `actions[0].value`)
-3. `openwebgoggles_update(state)` — push updated UI while you work (optional but encouraged)
-4. `openwebgoggles_ping(message)` — send a quick status during long tasks
-5. Repeat from step 1 if more interaction needed
-6. `openwebgoggles_close()` — **REQUIRED** when completely done
-
-**MCP Apps mode (Claude Code / Claude Desktop):**
-1. `openwebgoggles(state)` — renders UI immediately, returns right away
-2. `openwebgoggles_read()` — **call this immediately** to wait for user response
-3. Handle the action
-4. `openwebgoggles_update(state)` — push updated content
-5. Repeat from step 2 if more interaction needed
-6. `openwebgoggles_close()` — **REQUIRED** when completely done
+**Standard workflow (both browser and MCP Apps modes):**
+1. `open(state)` — opens/renders the UI; returns immediately with `{status: "ui_ready"}`
+2. `read()` — **call immediately and repeatedly** until `actions` is non-empty
+   - Each call long-polls up to ~8 s before returning empty (not a tight loop)
+3. Handle the action (check `actions[0].type` and `actions[0].value`)
+4. `update(state)` — push updated UI content while you work (optional but encouraged)
+5. `ping(message)` — send a quick status message during long tasks
+6. Repeat from step 2 if more interaction needed
+7. `close()` — **REQUIRED** when completely done (also `openwebgoggles_close()`)
 
 **Rules:**
 - Never abandon a session without calling `openwebgoggles_close()`
 - If `action.type == "session_closed"` → user closed the window → stop immediately
 - If `action.type == "attention"` → user clicked "Remind Agent" → re-engage now
-- Use `openwebgoggles_ping(message)` any time you start a long step so the user isn't staring at a stale screen
-- Check `openwebgoggles_status()` if you're unsure what sessions are open
+- Use `ping(message)` any time you start a long step so the user isn't staring at a stale screen
+- Check `status()` if you're unsure what sessions are open
 """
 
 
@@ -1687,7 +1683,7 @@ def dynamic_app_resource() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI, "visibility": ["app"]}})
+@mcp.tool(name="_owg_action", meta={"ui": {"resourceUri": _RESOURCE_URI, "visibility": ["app"]}})
 @_track_tool_call
 async def _owg_action(
     action_id: str,
@@ -1746,7 +1742,7 @@ async def _owg_action(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@mcp.tool(name="open", meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def openwebgoggles(
     state: dict[str, Any],
@@ -2014,15 +2010,23 @@ async def openwebgoggles(
     }
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@mcp.tool(name="read", meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
-async def openwebgoggles_read(clear: bool = False, session: str = "default") -> dict[str, Any]:
+async def openwebgoggles_read(
+    clear: bool = False,
+    poll_for: float = 8.0,
+    session: str = "default",
+) -> dict[str, Any]:
     """Read the current user actions from the OpenWebGoggles panel.
 
     Poll this after openwebgoggles() returns — for BOTH browser mode and MCP Apps
     mode. Call repeatedly until actions are non-empty, then process them.
 
-    Returns immediately in all cases; empty actions means the user hasn't acted yet.
+    In browser mode the call will wait up to ``poll_for`` seconds (default 8 s)
+    before returning an empty result, so the agent's polling loop runs at a
+    comfortable ~7 calls/min instead of hammering every few milliseconds.
+    Set ``poll_for=0`` to return immediately without waiting.
+
     Set clear=True to consume and clear actions so the next poll starts fresh.
     """
     mode = _resolve_mode(None)
@@ -2042,8 +2046,18 @@ async def openwebgoggles_read(clear: bool = False, session: str = "default") -> 
     if slot is None or slot.browser_session is None or not slot.browser_session._started:
         return {"version": 0, "actions": []}
 
+    # Fast path: actions already available — return immediately.
     data = slot.browser_session.read_actions()
     has_actions = bool(data.get("actions"))
+
+    # Slow path: no actions yet — long-poll to reduce tight-loop spam.
+    if not has_actions and poll_for > 0:
+        waited = await slot.browser_session.wait_for_action(timeout=poll_for)
+        if waited is not None:
+            data = waited
+        else:
+            data = slot.browser_session.read_actions()
+        has_actions = bool(data.get("actions"))
 
     if clear and has_actions:
         # Audit log: record user actions at consume time (clear=True)
@@ -2072,7 +2086,7 @@ async def openwebgoggles_read(clear: bool = False, session: str = "default") -> 
     return data
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@mcp.tool(name="update", meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def openwebgoggles_update(  # noqa: C901
     state: dict[str, Any],
@@ -2199,7 +2213,7 @@ async def openwebgoggles_update(  # noqa: C901
     return {"updated": True, "version": ws._state_version}
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@mcp.tool(name="ping", meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def openwebgoggles_ping(
     message: str,
@@ -2260,7 +2274,7 @@ async def openwebgoggles_ping(
     return {"ok": True, "message": message, "_hint": "Window updated with status message. Continue your work."}
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@mcp.tool(name="status", meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def openwebgoggles_status(session: str | None = None) -> dict[str, Any]:
     """Check whether an OpenWebGoggles human-in-the-loop session is active.
@@ -2302,7 +2316,7 @@ async def openwebgoggles_status(session: str | None = None) -> dict[str, Any]:
     return result
 
 
-@mcp.tool(meta={"ui": {"resourceUri": _RESOURCE_URI}})
+@mcp.tool(name="close", meta={"ui": {"resourceUri": _RESOURCE_URI}})
 @_track_tool_call
 async def openwebgoggles_close(
     message: str = "Session complete.",
@@ -2346,7 +2360,7 @@ async def openwebgoggles_close(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(name="sessions")
 @_track_tool_call
 async def openwebgoggles_sessions(max_results: int = 20) -> dict[str, Any]:
     """List persisted session snapshots.
@@ -2362,7 +2376,7 @@ async def openwebgoggles_sessions(max_results: int = 20) -> dict[str, Any]:
     return {"count": len(sessions), "sessions": sessions}
 
 
-@mcp.tool()
+@mcp.tool(name="restore")
 @_track_tool_call
 async def openwebgoggles_restore(session_id: str) -> dict[str, Any]:
     """Restore a previously persisted session snapshot.

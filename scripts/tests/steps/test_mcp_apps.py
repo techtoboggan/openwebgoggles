@@ -298,8 +298,14 @@ def assert_ui_ready(ctx):
 
 @then("openwebgoggles_read returns empty actions before user acts")
 def assert_read_empty_before_action(ctx):
-    """Polling before any user action returns an empty actions list."""
-    # mock_session.read_actions already returns {"version": 0, "actions": []}
+    """Polling before any user action returns an empty actions list.
+
+    Long-polling: wait_for_action times out (returns None) when no user has acted yet.
+    """
+    # Simulate "no user action yet" — wait_for_action times out
+    ctx.mock_session.wait_for_action = mock.AsyncMock(return_value=None)
+    # read_actions already returns {"version": 0, "actions": []}
+
     loop = asyncio.new_event_loop()
     try:
         read_result = loop.run_until_complete(mcp_server.openwebgoggles_read())
