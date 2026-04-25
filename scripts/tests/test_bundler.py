@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import bundler  # noqa: E402
 from bundler import bundle_html, clear_cache  # noqa: E402
 
 
@@ -107,9 +108,33 @@ class TestBundleHTML:
 
 
 class TestFindAssetsDir:
-    """Validate that bundle_html raises when the assets directory is missing."""
+    """Validate assets-directory resolution across dev and installed layouts."""
 
     def test_missing_assets_dir(self):
         """Passing a nonexistent assets_dir raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             bundle_html(assets_dir=Path("/nonexistent"))
+
+    def test_find_assets_dir_dev_layout(self, tmp_path, monkeypatch):
+        """Dev layout: assets/ at repo root (sibling of scripts/)."""
+        fake_scripts = tmp_path / "scripts"
+        fake_scripts.mkdir()
+        (tmp_path / "assets").mkdir()
+        monkeypatch.setattr(bundler, "__file__", str(fake_scripts / "bundler.py"))
+        assert bundler._find_assets_dir() == tmp_path / "assets"
+
+    def test_find_assets_dir_installed_layout(self, tmp_path, monkeypatch):
+        """Installed layout: assets/ inside the scripts/ package (pipx/pip install)."""
+        fake_scripts = tmp_path / "site-packages" / "scripts"
+        fake_scripts.mkdir(parents=True)
+        (fake_scripts / "assets").mkdir()
+        monkeypatch.setattr(bundler, "__file__", str(fake_scripts / "bundler.py"))
+        assert bundler._find_assets_dir() == fake_scripts / "assets"
+
+    def test_find_assets_dir_neither_layout_raises(self, tmp_path, monkeypatch):
+        """When neither layout has assets/, raise with both candidate paths named."""
+        fake_scripts = tmp_path / "scripts"
+        fake_scripts.mkdir()
+        monkeypatch.setattr(bundler, "__file__", str(fake_scripts / "bundler.py"))
+        with pytest.raises(FileNotFoundError, match="Cannot find assets directory"):
+            bundler._find_assets_dir()

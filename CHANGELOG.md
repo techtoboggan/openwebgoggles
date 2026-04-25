@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.18] - 2026-04-24
+
+### Fixed
+
+- **MCP Apps UI fails to load on pipx/pip installs** — `scripts/bundler.py:_find_assets_dir()` only checked the dev-repo layout (`assets/` at the repo root, sibling of `scripts/`), so in an installed wheel — where `[tool.hatch.build.targets.wheel.force-include]` places assets at `site-packages/scripts/assets/` — the lookup resolved to the nonexistent `site-packages/assets/` and raised `FileNotFoundError`. `_get_bundled_html()`'s broad exception handler then returned the opaque fallback `"Error: Failed to load OpenWebGoggles UI"` HTML, which surfaced in hosts like LibreCode as "Error: Failed to load OpenWebGoggles UI". Resolver now tries the dev layout first, then the installed layout (matching the existing convention in `scripts/cli.py:_find_template_dir` and `scripts/session.py:_find_assets_dir`). Regression tests cover both layouts and the not-found path.
+
+---
+
 ## [0.17.17] - 2026-04-09
 
 ### Fixed
