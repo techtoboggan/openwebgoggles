@@ -37,7 +37,10 @@ jobs:
           pip install pip-audit
           # CVE-2026-4539: ReDoS in pygments AdlLexer (local-access only, no patch yet).
           # pygments is a transitive dep via mcp→rich; remove ignore when pygments 2.20+ is released.
-          pip-audit --desc on --skip-editable --ignore-vuln CVE-2026-4539
+          # CVE-2026-3219: pip handles concatenated tar+ZIP files as ZIP regardless of name.
+          # pip is the runner-installed package manager itself, not under our control.
+          # Remove the ignore once GitHub-hosted runners ship a patched pip.
+          pip-audit --desc on --skip-editable --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
 
       - name: Run tests with coverage
         run: python -m pytest scripts/tests/ -v --cov=scripts --cov-report=term --cov-fail-under=80 -m "not slow"

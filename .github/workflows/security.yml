@@ -31,7 +31,8 @@ jobs:
           pip install pip-audit
 
       - name: Run pip-audit
-        run: pip-audit --strict --desc on
+        # See ci.yml for the same ignore list and rationale.
+        run: pip-audit --strict --desc on --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
 
   sast:
     name: Static security analysis
