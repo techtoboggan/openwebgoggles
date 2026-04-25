@@ -2616,6 +2616,10 @@ def _dispatch_subcommand(cmd: str | None) -> bool:  # noqa: C901
         http_port, ws_port, no_open = _parse_playground_args(sys.argv[2:])
         sys.exit(_cmd_playground(http_port=http_port, ws_port=ws_port, no_open=no_open))
 
+    if cmd in ("--version", "-v", "-V"):
+        print(f"openwebgoggles {_get_version()}")
+        return True
+
     if cmd in ("help", "--help", "-h") or (cmd is not None and cmd.startswith("-")):
         _print_usage()
         return True
@@ -2623,33 +2627,25 @@ def _dispatch_subcommand(cmd: str | None) -> bool:  # noqa: C901
     return False
 
 
-def main():
-    """Entry point for the openwebgoggles console script.
+def _get_version() -> str:
+    """Return the installed package version, or "unknown" if not installable."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:  # pragma: no cover — Python < 3.8, unsupported here
+        return "unknown"
+    try:
+        return version("openwebgoggles")
+    except PackageNotFoundError:
+        return "unknown"
 
-    Usage:
-        openwebgoggles                          # Run MCP server (stdio transport)
-        openwebgoggles init <editor> [dir]      # Bootstrap for an editor
-        openwebgoggles restart [dir]            # Restart running MCP server
-        openwebgoggles status [dir]             # Show server status
-        openwebgoggles doctor [dir]             # Diagnose setup
-        openwebgoggles cleanup                  # Kill all stale webview instances
-        openwebgoggles logs [--lines N] [-f]    # Show server log
-        openwebgoggles scaffold <app> [-o DIR]  # Create custom app scaffold
-        openwebgoggles dev <app> [--watch-dir D] # Start dev server with hot-reload
-        openwebgoggles playground [--no-open]   # Interactive state playground
-    """
-    cmd = sys.argv[1] if len(sys.argv) > 1 else None
 
-    if _dispatch_subcommand(cmd):
-        return
-
-    # Default: run MCP server (stdio transport)
+def _run_mcp_server() -> None:
+    """Boot the MCP server on stdio. Exits the process on import failure."""
     if _mcp_import_error is not None:
         print(f"Error: failed to load mcp library: {_mcp_import_error}", file=sys.stderr)
         print("Install with: pipx install openwebgoggles  (or: pip install openwebgoggles)", file=sys.stderr)
         sys.exit(1)
 
-    # Register SIGUSR1 handler for `openwebgoggles restart`
     if platform.system() != "Windows":
         signal.signal(signal.SIGUSR1, _sigusr1_handler)
 
@@ -2660,6 +2656,54 @@ def main():
         stream=sys.stderr,  # MCP uses stdout for JSON-RPC; logs go to stderr
     )
     mcp.run(transport="stdio")
+
+
+def main():
+    """Entry point for the openwebgoggles console script.
+
+    Usage:
+        openwebgoggles                          # Show help (TTY) or run MCP server (piped stdin)
+        openwebgoggles serve                    # Run MCP server (stdio transport)
+        openwebgoggles --version                # Print version
+        openwebgoggles init <editor> [dir]      # Bootstrap for an editor
+        openwebgoggles restart [dir]            # Restart running MCP server
+        openwebgoggles status [dir]             # Show server status
+        openwebgoggles doctor [dir]             # Diagnose setup
+        openwebgoggles cleanup                  # Kill all stale webview instances
+        openwebgoggles logs [--lines N] [-f]    # Show server log
+        openwebgoggles scaffold <app> [-o DIR]  # Create custom app scaffold
+        openwebgoggles dev <app> [--watch-dir D] # Start dev server with hot-reload
+        openwebgoggles playground [--no-open]   # Interactive state playground
+
+    When invoked with no arguments, behaviour depends on stdin:
+      - TTY (a human typing in a shell): print help and exit.
+      - Piped (an MCP client like Claude Desktop spawning us): run the MCP server.
+    The explicit `serve` subcommand always runs the server regardless of stdin.
+    """
+    cmd = sys.argv[1] if len(sys.argv) > 1 else None
+
+    # `serve` is the explicit way to run the MCP server.
+    if cmd == "serve":
+        _run_mcp_server()
+        return
+
+    if _dispatch_subcommand(cmd):
+        return
+
+    # No subcommand matched. If a human is invoking us interactively, show help
+    # instead of silently waiting on stdin for JSON-RPC. MCP clients always pipe
+    # stdin, so they fall through to the server path and remain unaffected.
+    if cmd is None and sys.stdin.isatty():
+        _print_usage()
+        return
+
+    # Unknown subcommand from a TTY: show help with a hint and exit non-zero.
+    if cmd is not None and sys.stdin.isatty():
+        print(f"openwebgoggles: unknown command '{cmd}'\n", file=sys.stderr)
+        _print_usage()
+        sys.exit(2)
+
+    _run_mcp_server()
 
 
 if __name__ == "__main__":

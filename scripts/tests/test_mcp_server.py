@@ -1294,3 +1294,77 @@ class TestWaitForActionNewTypes:
         result = _run_loop(session.wait_for_action(timeout=0.1))
 
         assert result is None, "_page_switch should be filtered (wait returns None on timeout)"
+
+
+class TestCLIEntryPoint:
+    """Behaviour of openwebgoggles' main() CLI dispatcher."""
+
+    def _run_main(self, argv, isatty, monkeypatch, capsys):
+        """Invoke main() with a controlled argv and stdin TTY state."""
+        import mcp_server
+
+        monkeypatch.setattr(sys, "argv", ["openwebgoggles", *argv])
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: isatty)
+        # Guard against accidentally booting the real MCP server during tests.
+        sentinel = {"called": False}
+
+        def _fake_run_mcp_server():
+            sentinel["called"] = True
+
+        monkeypatch.setattr(mcp_server, "_run_mcp_server", _fake_run_mcp_server)
+        try:
+            mcp_server.main()
+            exit_code = 0
+        except SystemExit as e:
+            exit_code = e.code or 0
+        captured = capsys.readouterr()
+        return exit_code, captured.out, captured.err, sentinel["called"]
+
+    def test_version_flag(self, monkeypatch, capsys):
+        """--version prints the package version and exits cleanly without touching MCP."""
+        code, out, _err, served = self._run_main(["--version"], True, monkeypatch, capsys)
+        assert code == 0
+        assert out.startswith("openwebgoggles ")
+        assert served is False
+
+    def test_short_version_flag(self, monkeypatch, capsys):
+        """-v is an alias for --version."""
+        code, out, _err, served = self._run_main(["-v"], True, monkeypatch, capsys)
+        assert code == 0
+        assert out.startswith("openwebgoggles ")
+        assert served is False
+
+    def test_bare_invocation_on_tty_shows_help(self, monkeypatch, capsys):
+        """Bare `openwebgoggles` from a human shell must show help, not silently block on stdin."""
+        code, out, _err, served = self._run_main([], True, monkeypatch, capsys)
+        assert code == 0
+        assert "Usage: openwebgoggles" in out
+        assert served is False, "MCP server must NOT start when stdin is a TTY"
+
+    def test_bare_invocation_with_piped_stdin_runs_server(self, monkeypatch, capsys):
+        """Bare `openwebgoggles` with piped stdin (MCP client launch) keeps running the server."""
+        code, _out, _err, served = self._run_main([], False, monkeypatch, capsys)
+        assert code == 0
+        assert served is True, "MCP clients pipe stdin; bare invocation must still serve"
+
+    def test_explicit_serve_subcommand_runs_server(self, monkeypatch, capsys):
+        """`openwebgoggles serve` runs the MCP server even when stdin is a TTY."""
+        code, _out, _err, served = self._run_main(["serve"], True, monkeypatch, capsys)
+        assert code == 0
+        assert served is True
+
+    def test_unknown_subcommand_on_tty_errors(self, monkeypatch, capsys):
+        """Typing a typo at the shell prints an error to stderr, usage to stdout, exits non-zero."""
+        code, out, err, served = self._run_main(["bogus"], True, monkeypatch, capsys)
+        assert code == 2
+        assert "unknown command 'bogus'" in err
+        assert "Usage: openwebgoggles" in out
+        assert served is False
+
+    def test_help_subcommand(self, monkeypatch, capsys):
+        """`help`, `--help`, `-h` all print usage and exit 0."""
+        for arg in ("help", "--help", "-h"):
+            code, out, _err, served = self._run_main([arg], True, monkeypatch, capsys)
+            assert code == 0, f"{arg} should exit 0"
+            assert "Usage: openwebgoggles" in out, f"{arg} should print usage"
+            assert served is False, f"{arg} must not start the server"
