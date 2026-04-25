@@ -545,7 +545,7 @@ class TestMarkStale:
 
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(dummy())
+        result = asyncio.run(dummy())
         assert result["error"] == "Custom stale message for testing."
         mcp_server._reload_pending = False
         mcp_server._stale_version_msg = ""
