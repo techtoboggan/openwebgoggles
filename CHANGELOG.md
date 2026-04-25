@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.19] - 2026-04-25
+
+### Added
+
+- **`openwebgoggles --version` / `-v`** — prints the installed package version (read via `importlib.metadata`).
+- **`openwebgoggles serve`** — explicit subcommand to run the MCP server on stdio. The recommended way for tooling/scripts to launch the server unambiguously.
+
+### Changed
+
+- **CLI-first behaviour for human invocations.** Bare `openwebgoggles` previously always started the MCP server on stdio, which silently blocked waiting for JSON-RPC input when a human ran it from a terminal — appearing as "the command did nothing". Now the binary detects whether stdin is a TTY: if you're in an interactive shell it prints help and exits; if stdin is piped (which is exactly what every MCP client does — Claude Desktop, Cursor, OpenCode, Windsurf), it still runs the server. Existing MCP client configurations are unaffected.
+- **Unknown subcommands** from a TTY now print `unknown command '<x>'` on stderr, show usage, and exit with status 2 — instead of falling through to the silent-server path.
+- **Help text** updated to list `serve` and the new `--version` / `-h` flags, and to explain the TTY-vs-piped behaviour.
+
+---
+
 ## [0.17.18] - 2026-04-24
 
 ### Fixed

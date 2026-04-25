@@ -1169,8 +1169,8 @@ def _print_usage() -> None:
     """Print top-level usage."""
     print("Usage: openwebgoggles <command> [options]\n")
     print("Commands:")
-    print("  (none)        Run MCP server (stdio transport)")
     print("  init          Bootstrap config for your editor")
+    print("  serve         Run the MCP server on stdio (used by MCP clients)")
     print("  restart       Restart the running MCP server")
     print("  status        Show server status and health")
     print("  doctor        Diagnose setup and environment")
@@ -1180,4 +1180,12 @@ def _print_usage() -> None:
     print("  dev           Start webview server in dev mode with hot-reload")
     print("  playground    Start interactive playground for testing UI states")
     print()
+    print("Flags:")
+    print("  -v, --version  Print version and exit")
+    print("  -h, --help     Print this help and exit")
+    print()
     print("Run 'openwebgoggles <command>' for command-specific help.")
+    print(
+        "When invoked with stdin piped (e.g. by an MCP client like Claude Desktop), "
+        "openwebgoggles runs the MCP server automatically — no subcommand needed."
+    )
