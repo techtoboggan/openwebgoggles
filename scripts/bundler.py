@@ -27,13 +27,17 @@ _bundled_cache: str | None = None
 
 
 def _find_assets_dir() -> Path:
-    """Locate the assets directory relative to this file or the package root."""
-    # scripts/bundler.py -> project_root/assets
-    project_root = Path(__file__).resolve().parent.parent
-    assets = project_root / "assets"
-    if assets.is_dir():
-        return assets
-    msg = f"Assets directory not found at {assets}"
+    """Locate the assets/ directory (works for both dev and installed)."""
+    # Dev layout: scripts/bundler.py → repo root / assets
+    repo_root = Path(__file__).resolve().parent.parent
+    dev_assets = repo_root / "assets"
+    if dev_assets.is_dir():
+        return dev_assets
+    # Installed layout: assets/ bundled alongside scripts/ (per pyproject force-include)
+    pkg_assets = Path(__file__).resolve().parent / "assets"
+    if pkg_assets.is_dir():
+        return pkg_assets
+    msg = f"Cannot find assets directory. Expected at {dev_assets} or {pkg_assets}"
     raise FileNotFoundError(msg)
 
 
