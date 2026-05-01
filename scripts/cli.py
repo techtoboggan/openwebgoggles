@@ -778,8 +778,7 @@ def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic 
             warn(f"{loc.path}: exists but openwebgoggles not configured here")
         elif status == "stale":
             warn(
-                f"{loc.description} [{loc.path}]: stale command "
-                f"{entry['command']!r} — binary missing or not executable"
+                f"{loc.description} [{loc.path}]: stale command {entry['command']!r} — binary missing or not executable"
             )
         elif status == "ok":
             ok(f"{loc.description} [{loc.path.name}]: {entry['key']} configured")
@@ -800,8 +799,10 @@ def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic 
             warn("No entries were repaired — pass --remove to delete stale entries when binary is gone")
     elif stale_entries:
         print()
-        print(f"  Tip: run 'openwebgoggles doctor --fix' to repair {len(stale_entries)} stale entr"
-              f"{'y' if len(stale_entries) == 1 else 'ies'} automatically.")
+        print(
+            f"  Tip: run 'openwebgoggles doctor --fix' to repair {len(stale_entries)} stale entr"
+            f"{'y' if len(stale_entries) == 1 else 'ies'} automatically."
+        )
 
     # Stale permissions from old 'webview' tool name (pre-rename migration)
     for sp in (cwd / ".claude" / "settings.json", Path.home() / ".claude" / "settings.json"):

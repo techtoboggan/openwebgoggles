@@ -773,23 +773,32 @@ class TestInitOpencodeAliases:
 
 
 class TestDoctorAliases:
-    def test_recognizes_webview_alias_in_mcp_json(self, tmp_path, capsys):
-        """Doctor should recognize 'webview' as valid config key."""
+    def test_recognizes_webview_alias_in_mcp_json(self, tmp_path, capsys, monkeypatch):
+        """Doctor should recognize 'webview' as a valid alias for the openwebgoggles entry."""
+        # Isolate global config lookups so the CI runner's home dir doesn't leak in.
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+        # Real executable so the entry registers as `ok` rather than `stale`.
+        fake_bin = tmp_path / "openwebgoggles"
+        fake_bin.write_text("#!/bin/sh\nexit 0\n")
+        fake_bin.chmod(0o755)
+        binary = str(fake_bin)
+
         mcp_json = tmp_path / ".mcp.json"
-        binary = "/usr/bin/openwebgoggles"
         mcp_json.write_text(json.dumps({"mcpServers": {"webview": {"command": binary}}}))
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
-            with mock.patch("shutil.which", return_value=binary):
+            with mock.patch("cli._try_resolve_binary", return_value=binary):
                 _cmd_doctor()
 
         output = capsys.readouterr().out
-        assert "webview" in output
+        assert "webview" in output, "alias key 'webview' not surfaced in doctor output"
         assert "configured" in output
         assert "[ok]" in output
 
-    def test_recognizes_owg_alias_in_opencode(self, tmp_path, capsys):
+    def test_recognizes_owg_alias_in_opencode(self, tmp_path, capsys, monkeypatch):
         """Doctor should recognize 'owg' as valid key in opencode.json."""
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
         oc_json = tmp_path / "opencode.json"
         oc_json.write_text(json.dumps({"mcp": {"owg": {"command": ["owg"]}}}))
 

@@ -191,9 +191,7 @@ EDITORS: dict[str, EditorSpec] = {
         summary="Claude Desktop only — adds to claude_desktop_config.json",
         init_target=None,  # claude-desktop ignores target — uses platform-specific path
         config_locations=_claude_desktop_locations,
-        examples=(
-            ("openwebgoggles init claude-desktop", "set up Claude Desktop only"),
-        ),
+        examples=(("openwebgoggles init claude-desktop", "set up Claude Desktop only"),),
     ),
     "opencode": EditorSpec(
         name="opencode",

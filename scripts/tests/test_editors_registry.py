@@ -169,9 +169,7 @@ class TestScanConfigs:
 
     def test_scan_recognizes_aliases(self, tmp_path, isolated_home):
         """_find_server_key handles 'webview', 'open-webgoggles', etc."""
-        (tmp_path / ".mcp.json").write_text(
-            json.dumps({"mcpServers": {"webview": {"command": "/x/owg"}}})
-        )
+        (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"webview": {"command": "/x/owg"}}}))
         results = _scan_configs(tmp_path)
         assert any(r.get("key") == "webview" for r in results)
 
@@ -186,9 +184,7 @@ class TestScanConfigs:
         assert any(r["status"] == "no-entry" for r in results)
 
     def test_scan_reports_ok_for_live_entry(self, tmp_path, isolated_home, fake_binary):
-        (tmp_path / ".mcp.json").write_text(
-            json.dumps({"mcpServers": {"openwebgoggles": {"command": fake_binary}}})
-        )
+        (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": fake_binary}}}))
         results = _scan_configs(tmp_path)
         ok_entries = [r for r in results if r["status"] == "ok"]
         assert ok_entries, "live config not detected as ok"
@@ -202,9 +198,7 @@ class TestScanConfigs:
 class TestRepairConfigs:
     def test_rewrites_stale_mcp_servers_path(self, tmp_path, isolated_home, fake_binary):
         cfg_path = tmp_path / ".mcp.json"
-        cfg_path.write_text(
-            json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/old-owg"}}})
-        )
+        cfg_path.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/old-owg"}}}))
         with mock.patch("cli._try_resolve_binary", return_value=fake_binary):
             fixed, removed = _repair_configs(tmp_path)
         assert fixed == 1 and removed == 0
@@ -225,9 +219,7 @@ class TestRepairConfigs:
 
     def test_leaves_live_entries_alone(self, tmp_path, isolated_home, fake_binary):
         cfg_path = tmp_path / ".mcp.json"
-        cfg_path.write_text(
-            json.dumps({"mcpServers": {"openwebgoggles": {"command": fake_binary}}})
-        )
+        cfg_path.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": fake_binary}}}))
         before = cfg_path.read_text()
         with mock.patch("cli._try_resolve_binary", return_value=fake_binary):
             fixed, removed = _repair_configs(tmp_path)
@@ -237,9 +229,7 @@ class TestRepairConfigs:
     def test_removes_entry_when_binary_unresolvable_and_remove_flag(self, tmp_path, isolated_home):
         cfg_path = tmp_path / ".mcp.json"
         cfg_path.write_text(
-            json.dumps(
-                {"mcpServers": {"openwebgoggles": {"command": "/gone"}, "other": {"command": "/x"}}}
-            )
+            json.dumps({"mcpServers": {"openwebgoggles": {"command": "/gone"}, "other": {"command": "/x"}}})
         )
         with mock.patch("cli._try_resolve_binary", return_value=None):
             fixed, removed = _repair_configs(tmp_path, remove_if_unresolvable=True)
@@ -251,9 +241,7 @@ class TestRepairConfigs:
 
     def test_keeps_entry_when_binary_unresolvable_without_remove_flag(self, tmp_path, isolated_home):
         cfg_path = tmp_path / ".mcp.json"
-        cfg_path.write_text(
-            json.dumps({"mcpServers": {"openwebgoggles": {"command": "/gone"}}})
-        )
+        cfg_path.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/gone"}}}))
         with mock.patch("cli._try_resolve_binary", return_value=None):
             fixed, removed = _repair_configs(tmp_path, remove_if_unresolvable=False)
         assert fixed == 0 and removed == 0
@@ -269,11 +257,11 @@ class TestRepairConfigs:
 class TestDoctorFixEndToEnd:
     """The exact scenario from the bug report:
 
-      - Claude Desktop config points at /usr/bin/openwebgoggles
-      - That path doesn't exist anymore
-      - User runs `openwebgoggles doctor --fix`
-      - Config is rewritten to point at the live binary
-      - No more ENOENT spam on next Claude Desktop launch
+    - Claude Desktop config points at /usr/bin/openwebgoggles
+    - That path doesn't exist anymore
+    - User runs `openwebgoggles doctor --fix`
+    - Config is rewritten to point at the live binary
+    - No more ENOENT spam on next Claude Desktop launch
     """
 
     def test_repairs_stale_claude_desktop_entry(self, tmp_path, isolated_home, fake_binary, capsys):
@@ -283,9 +271,7 @@ class TestDoctorFixEndToEnd:
         claude_dir = isolated_home / ".config" / "Claude"
         claude_dir.mkdir(parents=True)
         cfg_path = claude_dir / "claude_desktop_config.json"
-        cfg_path.write_text(
-            json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/openwebgoggles"}}})
-        )
+        cfg_path.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/openwebgoggles"}}}))
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path), "--fix"]):
             with mock.patch("cli._try_resolve_binary", return_value=fake_binary):

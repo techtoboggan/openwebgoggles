@@ -2408,6 +2408,7 @@ async def openwebgoggles_restore(session_id: str) -> dict[str, Any]:
 
 _EDITORS = ["claude", "claude-desktop", "opencode", "cursor", "windsurf"]
 
+
 # Default config directories per editor (when user doesn't specify a target).
 # Derived from the editors registry — each ``EditorSpec.init_target`` is a
 # zero-arg callable returning the global default (or None for cwd). Adding a
@@ -2417,10 +2418,7 @@ def _build_editor_default_dirs() -> dict[str, Path | None]:
         from .editors import EDITORS as _EDITORS_REG  # noqa: I001
     except ImportError:
         from editors import EDITORS as _EDITORS_REG  # type: ignore[no-redef]
-    return {
-        name: (spec.init_target() if spec.init_target is not None else None)
-        for name, spec in _EDITORS_REG.items()
-    }
+    return {name: (spec.init_target() if spec.init_target is not None else None) for name, spec in _EDITORS_REG.items()}
 
 
 _EDITOR_DEFAULT_DIRS: dict[str, Path | None] = _build_editor_default_dirs()
