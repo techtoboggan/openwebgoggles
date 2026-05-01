@@ -42,3 +42,13 @@ class AssetError(OWGError):
 
 class AuthError(OWGError):
     """Raised when authentication or token validation fails."""
+
+
+class BinaryResolveError(OWGError):
+    """Raised when the openwebgoggles binary cannot be located on disk.
+
+    Used by init/repair flows: writing an unresolvable command into an MCP
+    config produces silent ENOENT spam every time the host launches, so we
+    refuse to write a config we know is broken and surface the problem
+    instead.
+    """

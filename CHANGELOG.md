@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.20] - 2026-04-26
+
+### Added
+
+- **`openwebgoggles doctor --fix`** — automatically rewrites stale `command` paths in MCP configs across every known editor (Claude Code, Claude Desktop, OpenCode, Cursor, Windsurf) to point at the currently-resolved `openwebgoggles` binary. Add `--remove` to delete the entry instead when no binary can be located on the system (true uninstall). One command repairs every config in one shot. Fixes the bug where moving/uninstalling the binary leaves stale entries that produce ENOENT spam every time the host (e.g. Claude Desktop) launches.
+- **Data-driven editor registry** (`scripts/editors.py`) — every editor is described by a single `EditorSpec` entry: display name, summary, default init target, and a `config_locations()` callable that yields every place the editor might keep an MCP config. `init`, `doctor` scan/repair, and the init usage block all derive from this registry. Adding a new editor (e.g. LibreCode, Zed, JetBrains, …) is a registry change, not a code change.
+- **`scripts/exceptions.py:BinaryResolveError`** — typed exception raised when the openwebgoggles binary cannot be located on disk. Lets callers handle the failure deliberately instead of writing an unspawnable bare name into a config.
+
+### Changed
+
+- **`_resolve_binary()` is now strict** — `shutil.which()` and `sys.argv[0]` candidates are validated with `os.access(X_OK)` before being returned. The previous bare-name fallback (`return "openwebgoggles"`) was the root cause of the `ENOENT` spam reported in the bug: a non-existent absolute path silently spawn-fails on every Claude Desktop launch. Now we raise `BinaryResolveError` with a clear remediation message instead, and `init` refuses to write a config we know is broken.
+- **`doctor` uses the registry** — the per-editor checks have been replaced with a single registry-driven scan that inspects every known config location (project-level *and* global), reports stale `command` paths, parse errors, and missing entries uniformly, and points users at `--fix` when there's a stale entry to repair. Removes the previous duplication between Claude Code and OpenCode special cases and now also covers Cursor, Windsurf, and Claude Desktop configs (the bug-report scenario).
+
+---
+
 ## [0.17.19] - 2026-04-25
 
 ### Added
