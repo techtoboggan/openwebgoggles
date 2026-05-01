@@ -1585,7 +1585,7 @@ class TestMainMCPMode:
         """Init without explicit dir uses default."""
         with mock.patch("sys.argv", ["openwebgoggles", "init", "claude"]):
             with mock.patch("mcp_server._EDITOR_DEFAULT_DIRS", {"claude": tmp_path}):
-                with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+                with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
                     mcp_server.main()
         assert (tmp_path / ".mcp.json").exists()
 

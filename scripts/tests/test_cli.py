@@ -153,24 +153,46 @@ class TestStripJsoncComments:
 
 
 class TestResolveBinary:
-    def test_found_via_which(self):
-        with mock.patch("shutil.which", return_value="/usr/local/bin/openwebgoggles"):
+    def test_found_via_which(self, tmp_path):
+        # which() must return a path that is actually executable — bare names
+        # are not enough, since the host would spawn-fail later anyway.
+        fake_bin = tmp_path / "openwebgoggles"
+        fake_bin.write_text("#!/bin/sh\nexit 0\n")
+        fake_bin.chmod(0o755)
+        with mock.patch("shutil.which", return_value=str(fake_bin)):
             result = _resolve_binary()
-            assert "openwebgoggles" in result
+            assert result == str(fake_bin)
 
     def test_fallback_to_argv0(self, tmp_path):
         fake_bin = tmp_path / "openwebgoggles"
-        fake_bin.write_text("#!/bin/sh")
+        fake_bin.write_text("#!/bin/sh\nexit 0\n")
+        fake_bin.chmod(0o755)
         with mock.patch("shutil.which", return_value=None):
             with mock.patch("sys.argv", [str(fake_bin)]):
                 result = _resolve_binary()
-                assert "openwebgoggles" in result
+                assert result == str(fake_bin)
 
-    def test_last_resort_bare_name(self):
+    def test_raises_when_unresolvable(self):
+        # New strict behavior: refuse to return a bare name the host can't spawn.
+        # The previous fallback ("openwebgoggles") was the root cause of the
+        # ENOENT-spam bug — this test pins the new contract.
+        from exceptions import BinaryResolveError
+
         with mock.patch("shutil.which", return_value=None):
             with mock.patch("sys.argv", ["/nonexistent/openwebgoggles"]):
-                result = _resolve_binary()
-                assert result == "openwebgoggles"
+                with pytest.raises(BinaryResolveError, match="Cannot locate"):
+                    _resolve_binary()
+
+    def test_which_result_must_be_executable(self, tmp_path):
+        """A which() result that isn't executable falls back; raises if no fallback."""
+        non_exec = tmp_path / "fake-openwebgoggles"
+        non_exec.write_text("#!/bin/sh")  # NOT chmod +x — file exists but not executable
+        from exceptions import BinaryResolveError
+
+        with mock.patch("shutil.which", return_value=str(non_exec)):
+            with mock.patch("sys.argv", ["/also-nonexistent"]):
+                with pytest.raises(BinaryResolveError):
+                    _resolve_binary()
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +202,7 @@ class TestResolveBinary:
 
 class TestInitClaude:
     def test_creates_mcp_json_and_settings(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
 
         # .mcp.json created
@@ -199,7 +221,7 @@ class TestInitClaude:
         assert "created" in output.lower() or "Done" in output
 
     def test_idempotent_skips_existing(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
             _init_claude(tmp_path)
 
@@ -210,7 +232,7 @@ class TestInitClaude:
         mcp_json = tmp_path / ".mcp.json"
         mcp_json.write_text(json.dumps({"mcpServers": {"other": {"command": "other"}}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
 
         cfg = json.loads(mcp_json.read_text())
@@ -223,7 +245,7 @@ class TestInitClaude:
         settings = claude_dir / "settings.json"
         settings.write_text(json.dumps({"permissions": {"allow": ["some_other_tool"]}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
 
         scfg = json.loads(settings.read_text())
@@ -239,7 +261,7 @@ class TestInitClaude:
 
 class TestInitOpencode:
     def test_creates_opencode_json(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_opencode(tmp_path)
 
         cfg_path = tmp_path / "opencode.json"
@@ -248,7 +270,7 @@ class TestInitOpencode:
         assert "openwebgoggles" in cfg["mcp"]
 
     def test_idempotent_skips_existing(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_opencode(tmp_path)
             _init_opencode(tmp_path)
 
@@ -259,7 +281,7 @@ class TestInitOpencode:
         cfg_path = tmp_path / "opencode.json"
         cfg_path.write_text(json.dumps({"mcp": {"other": {"command": ["other"]}}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_opencode(tmp_path)
 
         cfg = json.loads(cfg_path.read_text())
@@ -270,7 +292,7 @@ class TestInitOpencode:
         jsonc_path = tmp_path / "opencode.jsonc"
         jsonc_path.write_text('{\n  // MCP servers\n  "mcp": {}\n}\n')
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_opencode(tmp_path)
 
         # Should have added to the jsonc file (rewritten as json)
@@ -279,7 +301,7 @@ class TestInitOpencode:
 
     def test_global_config_message(self, tmp_path, capsys):
         global_dir = Path.home() / ".config" / "opencode"
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             # Patch Path.home resolution to match tmp_path
             with mock.patch.object(Path, "resolve", return_value=global_dir.resolve()):
                 _init_opencode(tmp_path)
@@ -296,7 +318,7 @@ class TestInitOpencode:
 
 class TestInitCursor:
     def test_creates_cursor_mcp_json(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_cursor(tmp_path)
 
         cfg_path = tmp_path / ".cursor" / "mcp.json"
@@ -306,7 +328,7 @@ class TestInitCursor:
         assert cfg["mcpServers"]["openwebgoggles"]["command"] == "/usr/bin/openwebgoggles"
 
     def test_idempotent_skips_existing(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_cursor(tmp_path)
             _init_cursor(tmp_path)
 
@@ -319,7 +341,7 @@ class TestInitCursor:
         cfg_path = config_dir / "mcp.json"
         cfg_path.write_text(json.dumps({"mcpServers": {"other": {"command": "other"}}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_cursor(tmp_path)
 
         cfg = json.loads(cfg_path.read_text())
@@ -327,7 +349,7 @@ class TestInitCursor:
         assert "other" in cfg["mcpServers"]
 
     def test_done_message_mentions_cursor(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_cursor(tmp_path)
 
         output = capsys.readouterr().out
@@ -341,7 +363,7 @@ class TestInitCursor:
 
 class TestInitWindsurf:
     def test_creates_windsurf_mcp_json(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_windsurf(tmp_path)
 
         cfg_path = tmp_path / ".windsurf" / "mcp.json"
@@ -350,7 +372,7 @@ class TestInitWindsurf:
         assert "openwebgoggles" in cfg["mcpServers"]
 
     def test_idempotent_skips_existing(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_windsurf(tmp_path)
             _init_windsurf(tmp_path)
 
@@ -363,7 +385,7 @@ class TestInitWindsurf:
         cfg_path = config_dir / "mcp.json"
         cfg_path.write_text(json.dumps({"mcpServers": {"other": {"command": "other"}}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_windsurf(tmp_path)
 
         cfg = json.loads(cfg_path.read_text())
@@ -371,7 +393,7 @@ class TestInitWindsurf:
         assert "other" in cfg["mcpServers"]
 
     def test_done_message_mentions_windsurf(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_windsurf(tmp_path)
 
         output = capsys.readouterr().out
@@ -621,11 +643,21 @@ class TestCmdDoctor:
         assert "not configured" in output
 
     def test_binary_path_mismatch(self, tmp_path, capsys):
+        # An "old" binary that exists+executes but doesn't match the currently
+        # resolved one. Doctor should warn on the mismatch (without flagging it
+        # as stale, since the old path is still live).
+        old_bin = tmp_path / "old-openwebgoggles"
+        old_bin.write_text("#!/bin/sh\nexit 0\n")
+        old_bin.chmod(0o755)
+        new_bin = tmp_path / "new-openwebgoggles"
+        new_bin.write_text("#!/bin/sh\nexit 0\n")
+        new_bin.chmod(0o755)
+
         mcp_json = tmp_path / ".mcp.json"
-        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/old/path/openwebgoggles"}}}))
+        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": str(old_bin)}}}))
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
-            with mock.patch("shutil.which", return_value="/new/path/openwebgoggles"):
+            with mock.patch("cli._try_resolve_binary", return_value=str(new_bin)):
                 _cmd_doctor()
 
         output = capsys.readouterr().out
@@ -708,7 +740,7 @@ class TestInitClaudeAliases:
         mcp_json = tmp_path / ".mcp.json"
         mcp_json.write_text(json.dumps({"mcpServers": {"webview": {"command": "owg"}}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
 
         output = capsys.readouterr().out
@@ -727,7 +759,7 @@ class TestInitOpencodeAliases:
         cfg_path = tmp_path / "opencode.json"
         cfg_path.write_text(json.dumps({"mcp": {"open-webview": {"command": ["owg"]}}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_opencode(tmp_path)
 
         output = capsys.readouterr().out
@@ -814,25 +846,25 @@ class TestMainDispatch:
 
     def test_init_claude_dispatch(self, tmp_path):
         with mock.patch("sys.argv", ["openwebgoggles", "init", "claude", str(tmp_path)]):
-            with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
                 main()
         assert (tmp_path / ".mcp.json").exists()
 
     def test_init_opencode_dispatch(self, tmp_path):
         with mock.patch("sys.argv", ["openwebgoggles", "init", "opencode", str(tmp_path)]):
-            with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
                 main()
         assert (tmp_path / "opencode.json").exists()
 
     def test_init_cursor_dispatch(self, tmp_path):
         with mock.patch("sys.argv", ["openwebgoggles", "init", "cursor", str(tmp_path)]):
-            with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
                 main()
         assert (tmp_path / ".cursor" / "mcp.json").exists()
 
     def test_init_windsurf_dispatch(self, tmp_path):
         with mock.patch("sys.argv", ["openwebgoggles", "init", "windsurf", str(tmp_path)]):
-            with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+            with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
                 main()
         assert (tmp_path / ".windsurf" / "mcp.json").exists()
 
@@ -987,20 +1019,31 @@ class TestCmdDoctorEdgeCases:
         assert "PyNaCl 1.0.0" in output
         assert "mcp 1.0.0" in output
 
-    def test_all_checks_pass_summary(self, tmp_path, capsys):
-        """When all checks pass, prints all checks passed (line 2113)."""
+    def test_all_checks_pass_summary(self, tmp_path, capsys, monkeypatch):
+        """When all checks pass, prints the all-passed summary line."""
 
         def mock_dist(name):
             d = mock.MagicMock()
             d.metadata = {"Version": "1.0.0"}
             return d
 
+        # Isolate global config lookups (Claude Desktop, OpenCode global,
+        # etc.) — without this, configs already on the developer's machine
+        # leak into the scan and fail the test.
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+        # Real executable so the strict binary check passes and the config's
+        # command is considered live (not stale).
+        fake_bin = tmp_path / "openwebgoggles"
+        fake_bin.write_text("#!/bin/sh\nexit 0\n")
+        fake_bin.chmod(0o755)
+
         mcp_json = tmp_path / ".mcp.json"
-        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": "/usr/bin/openwebgoggles"}}}))
+        mcp_json.write_text(json.dumps({"mcpServers": {"openwebgoggles": {"command": str(fake_bin)}}}))
 
         with mock.patch("sys.argv", ["openwebgoggles", "doctor", str(tmp_path)]):
             with mock.patch("importlib.metadata.distribution", side_effect=mock_dist):
-                with mock.patch("shutil.which", return_value="/usr/bin/openwebgoggles"):
+                with mock.patch("cli._try_resolve_binary", return_value=str(fake_bin)):
                     _cmd_doctor()
 
         output = capsys.readouterr().out
@@ -1148,7 +1191,7 @@ class TestPermissionMigration:
         old_perms = list(_DEPRECATED_PERMISSIONS) + ["some_other_tool"]
         settings.write_text(json.dumps({"permissions": {"allow": old_perms}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
 
         scfg = json.loads(settings.read_text())
@@ -1169,7 +1212,7 @@ class TestPermissionMigration:
         stale = ["mcp__openwebgoggles__webview", "mcp__openwebgoggles__webview_read"]
         settings.write_text(json.dumps({"permissions": {"allow": stale}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
 
         output = capsys.readouterr().out
@@ -1187,7 +1230,7 @@ class TestPermissionMigration:
         current = list(_CLAUDE_SETTINGS["permissions"]["allow"])
         settings.write_text(json.dumps({"permissions": {"allow": current}}) + "\n")
 
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             _init_claude(tmp_path)
 
         output = capsys.readouterr().out
@@ -1237,7 +1280,7 @@ class TestDoctorDeprecatedPermissions:
 
 class TestInitClaudeGlobal:
     def test_global_flag_routes_to_home(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             with mock.patch("sys.argv", ["openwebgoggles", "init", "claude", "--global"]):
                 with mock.patch("mcp_server._init_claude") as mock_init:
                     main()
@@ -1250,7 +1293,7 @@ class TestInitClaudeGlobal:
     def test_global_flag_writes_to_home_dir(self, tmp_path, capsys):
         fake_home = tmp_path / "home"
         fake_home.mkdir()
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             with mock.patch("sys.argv", ["openwebgoggles", "init", "claude", "--global"]):
                 with mock.patch("pathlib.Path.home", return_value=fake_home):
                     with mock.patch("mcp_server._setup_claude_desktop_config"):
@@ -1262,7 +1305,7 @@ class TestInitClaudeGlobal:
         assert (fake_home / ".claude" / "settings.json").exists()
 
     def test_global_done_message(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             with mock.patch("mcp_server._setup_claude_desktop_config"):
                 _init_claude(tmp_path, global_mode=True)
 
@@ -1270,7 +1313,7 @@ class TestInitClaudeGlobal:
         assert "globally" in output.lower() or "all projects" in output.lower()
 
     def test_project_done_message(self, tmp_path, capsys):
-        with mock.patch("mcp_server.shutil.which", return_value="/usr/bin/openwebgoggles"):
+        with mock.patch("cli._try_resolve_binary", return_value="/usr/bin/openwebgoggles"):
             with mock.patch("mcp_server._setup_claude_desktop_config"):
                 _init_claude(tmp_path, global_mode=False)
 

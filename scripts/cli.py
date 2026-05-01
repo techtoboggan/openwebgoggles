@@ -79,24 +79,58 @@ def _find_server_key(servers: dict[str, Any]) -> str | None:
     return None
 
 
-def _resolve_binary() -> str:
-    """Find the absolute path to the openwebgoggles binary.
+def _try_resolve_binary() -> str | None:
+    """Find the absolute path to the openwebgoggles binary, or None.
 
-    Since this function runs *inside* the openwebgoggles process, we can
-    resolve it reliably without depending on PATH at runtime.
+    Validates that the resolved path is executable. Returns None if the
+    binary cannot be located *or* if every candidate fails the executable
+    check. Used by ``doctor`` so the scan can still report stale entries
+    even when the binary itself has been uninstalled.
     """
     # Best: shutil.which finds us in the current PATH
     found = shutil.which("openwebgoggles")
     if found:
-        return str(Path(found).resolve())
+        path = Path(found).resolve()
+        if os.access(path, os.X_OK):
+            return str(path)
 
     # Fallback: we're running as a console_script, so sys.argv[0] is the binary
     argv0 = Path(sys.argv[0])
     if argv0.exists():
-        return str(argv0.resolve())
+        resolved = argv0.resolve()
+        if os.access(resolved, os.X_OK):
+            return str(resolved)
 
-    # Last resort: bare name (will need PATH at runtime)
-    return "openwebgoggles"
+    return None
+
+
+def _resolve_binary() -> str:
+    """Find the absolute path to the openwebgoggles binary, or raise.
+
+    Used by ``init``, where writing an unresolvable path into a config would
+    cause silent ENOENT spam every time the host launches the MCP server.
+    Refuses to return a bare ``"openwebgoggles"`` fallback.
+    """
+    # Avoid circular import — exceptions sits below this module in the dep graph.
+    try:
+        from .exceptions import BinaryResolveError  # noqa: I001
+    except ImportError:
+        from exceptions import BinaryResolveError  # type: ignore[no-redef]
+
+    resolved = _try_resolve_binary()
+    if resolved is not None:
+        return resolved
+
+    msg = (
+        "Cannot locate the 'openwebgoggles' binary on this system.\n"
+        "  - shutil.which('openwebgoggles') returned nothing\n"
+        f"  - sys.argv[0] ({sys.argv[0]!r}) is not an executable file\n"
+        "Try one of:\n"
+        "  pipx install openwebgoggles\n"
+        "  pip install --user openwebgoggles\n"
+        "Then re-run this command."
+    )
+    raise BinaryResolveError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -290,30 +324,216 @@ def _init_windsurf(root: Path) -> None:
 
 
 def _init_usage() -> None:
-    """Print init subcommand usage."""
+    """Print init subcommand usage. Derived from the editors registry."""
+    try:
+        from .editors import EDITORS  # noqa: I001
+    except ImportError:
+        from editors import EDITORS  # type: ignore[no-redef]
+
     print("Usage: openwebgoggles init <editor> [target_dir] [--global]\n")
     print("Set up OpenWebGoggles for your editor.\n")
     print("Editors:")
-    print("  claude          Claude Code + Claude Desktop (sets up both)")
-    print("                  Default target: current directory (project-level)")
-    print("                  Use --global to write ~/.mcp.json + ~/.claude/settings.json")
-    print("  claude-desktop  Claude Desktop only — adds to claude_desktop_config.json")
-    print("                  Uses the global platform-specific config path")
-    print("  opencode        OpenCode — creates opencode.json")
-    print("                  Default target: ~/.config/opencode/ (global, all projects)")
-    print("  cursor          Cursor — creates .cursor/mcp.json")
-    print("                  Default target: current directory (project-level)")
-    print("  windsurf        Windsurf — creates .windsurf/mcp.json")
-    print("                  Default target: current directory (project-level)\n")
+    name_width = max(len(spec.name) for spec in EDITORS.values())
+    for spec in EDITORS.values():
+        print(f"  {spec.name:<{name_width + 2}}{spec.summary}")
+        # Special-case Claude's --global flag in the usage hint
+        if spec.name == "claude":
+            print(f"  {' ' * (name_width + 2)}Use --global to write to ~/.mcp.json + ~/.claude/settings.json")
+    print()
     print("Examples:")
-    print("  openwebgoggles init claude              # set up Claude Code for this project")
-    print("  openwebgoggles init claude --global     # set up Claude Code for ALL projects")
-    print("  openwebgoggles init claude-desktop       # set up Claude Desktop only")
-    print("  openwebgoggles init opencode             # set up OpenCode globally")
-    print("  openwebgoggles init opencode .           # set up OpenCode for this project only")
-    print("  openwebgoggles init cursor               # set up Cursor for this project")
-    print("  openwebgoggles init windsurf             # set up Windsurf for this project")
-    print("  openwebgoggles init claude ~/my-proj     # set up a specific project for Claude")
+    examples: list[tuple[str, str]] = []
+    for spec in EDITORS.values():
+        examples.extend(spec.examples)
+    if examples:
+        cmd_width = max(len(cmd) for cmd, _ in examples)
+        for cmd, comment in examples:
+            print(f"  {cmd:<{cmd_width}}  # {comment}")
+
+
+# ---------------------------------------------------------------------------
+# Config scan / repair — detects and fixes stale entries everywhere
+# ---------------------------------------------------------------------------
+
+
+def _config_servers_table(cfg: dict, schema: "ConfigSchema") -> dict | None:  # type: ignore[name-defined]  # noqa: F821
+    """Return the mutable mapping of MCP servers under the given schema, or None."""
+    try:
+        from .editors import ConfigSchema  # noqa: I001
+    except ImportError:
+        from editors import ConfigSchema  # type: ignore[no-redef]
+
+    if schema is ConfigSchema.MCP_SERVERS:
+        servers = cfg.get("mcpServers")
+        return servers if isinstance(servers, dict) else None
+    if schema is ConfigSchema.OPENCODE:
+        servers = cfg.get("mcp")
+        return servers if isinstance(servers, dict) else None
+    return None
+
+
+def _entry_command_path(entry: Any, schema: "ConfigSchema") -> str | None:  # type: ignore[name-defined]  # noqa: F821
+    """Extract the configured ``command`` filesystem path from an MCP entry.
+
+    Handles both schemas:
+      - mcpServers: ``{"command": "/path/to/binary"}``
+      - opencode:   ``{"command": ["/path/to/binary", ...]}``
+
+    Returns the path string, or None if the entry doesn't include one.
+    """
+    try:
+        from .editors import ConfigSchema  # noqa: I001
+    except ImportError:
+        from editors import ConfigSchema  # type: ignore[no-redef]
+
+    if not isinstance(entry, dict):
+        return None
+    cmd = entry.get("command")
+    if schema is ConfigSchema.OPENCODE:
+        # OpenCode uses a list — first element is the executable
+        if isinstance(cmd, list) and cmd:
+            return str(cmd[0]) if cmd[0] is not None else None
+        return None
+    # Standard mcpServers shape — command is a string
+    return str(cmd) if isinstance(cmd, str) else None
+
+
+def _set_entry_command(entry: dict, new_path: str, schema: "ConfigSchema") -> None:  # type: ignore[name-defined]  # noqa: F821
+    """Rewrite the ``command`` field of an MCP entry to ``new_path`` in place."""
+    try:
+        from .editors import ConfigSchema  # noqa: I001
+    except ImportError:
+        from editors import ConfigSchema  # type: ignore[no-redef]
+
+    if schema is ConfigSchema.OPENCODE:
+        existing = entry.get("command")
+        if isinstance(existing, list) and existing:
+            existing[0] = new_path
+        else:
+            entry["command"] = [new_path]
+    else:
+        entry["command"] = new_path
+
+
+def _is_stale_path(cmd: str | None) -> bool:
+    """A command path is stale if it's absolute and points at a non-existent file.
+
+    Bare names (no path separator) are considered live — the host will resolve
+    them via PATH at spawn time. We only flag full paths we *know* are broken.
+    """
+    if not cmd:
+        return True  # missing entirely
+    p = Path(cmd)
+    if not p.is_absolute() and os.sep not in cmd:
+        return False  # bare name — host resolves via PATH
+    return not p.exists() or not os.access(p, os.X_OK)
+
+
+def _scan_configs(target: Path) -> list[dict]:
+    """Scan all known editor config locations.
+
+    Returns a list of records, one per config FILE that exists, with a
+    ``status`` field describing what we found:
+
+      - "ok"             — openwebgoggles entry present, command path is live
+      - "stale"          — entry present, command path missing or non-executable
+      - "no-entry"       — file exists, parses, but no openwebgoggles server in it
+      - "parse-error"    — file exists but isn't valid JSON
+
+    For "ok" and "stale" the record also includes ``key``, ``command``, and
+    ``stale`` (bool, kept for backward-compat with callers that expect it).
+    """
+    try:
+        from .editors import all_known_locations  # noqa: I001
+    except ImportError:
+        from editors import all_known_locations  # type: ignore[no-redef]
+
+    entries: list[dict] = []
+    for loc in all_known_locations(target):
+        if not loc.path.exists():
+            continue
+        try:
+            raw = loc.path.read_text()
+            if loc.path.suffix == ".jsonc":
+                raw = _strip_jsonc_comments(raw)
+            cfg = json.loads(raw)
+        except (json.JSONDecodeError, OSError):
+            entries.append({"location": loc, "status": "parse-error"})
+            continue
+        servers = _config_servers_table(cfg, loc.schema)
+        if servers is None:
+            # File parses but has no MCP table at all — uninteresting.
+            continue
+        key = _find_server_key(servers)
+        if key is None:
+            entries.append({"location": loc, "status": "no-entry"})
+            continue
+        cmd = _entry_command_path(servers[key], loc.schema)
+        stale = _is_stale_path(cmd)
+        entries.append(
+            {
+                "location": loc,
+                "key": key,
+                "command": cmd,
+                "stale": stale,
+                "status": "stale" if stale else "ok",
+            }
+        )
+    return entries
+
+
+def _repair_configs(target: Path, *, remove_if_unresolvable: bool = False) -> tuple[int, int]:
+    """Fix every stale openwebgoggles entry across all known editor configs.
+
+    If a binary can be resolved on this system, stale entries are rewritten
+    to point at it. If the binary cannot be resolved (true uninstall) and
+    ``remove_if_unresolvable`` is True, the openwebgoggles entry is deleted
+    from each config file instead.
+
+    Returns ``(fixed, removed)`` counts.
+    """
+    try:
+        from .editors import all_known_locations  # noqa: I001
+    except ImportError:
+        from editors import all_known_locations  # type: ignore[no-redef]
+
+    binary = _try_resolve_binary()
+    fixed = removed = 0
+
+    for loc in all_known_locations(target):
+        if not loc.path.exists():
+            continue
+        try:
+            raw = loc.path.read_text()
+            if loc.path.suffix == ".jsonc":
+                raw = _strip_jsonc_comments(raw)
+            cfg = json.loads(raw)
+        except (json.JSONDecodeError, OSError):
+            print(f"  skip: {loc.path} — invalid JSON")
+            continue
+        servers = _config_servers_table(cfg, loc.schema)
+        if servers is None:
+            continue
+        key = _find_server_key(servers)
+        if key is None:
+            continue
+        cmd = _entry_command_path(servers[key], loc.schema)
+        if not _is_stale_path(cmd):
+            continue
+
+        if binary is not None:
+            _set_entry_command(servers[key], binary, loc.schema)
+            loc.path.write_text(json.dumps(cfg, indent=2) + "\n")
+            print(f"  fixed: {loc.path}: {cmd or '<missing>'} → {binary}")
+            fixed += 1
+        elif remove_if_unresolvable:
+            del servers[key]
+            loc.path.write_text(json.dumps(cfg, indent=2) + "\n")
+            print(f"  removed: {loc.path}: {key} (binary not found anywhere)")
+            removed += 1
+        else:
+            print(f"  stale (no binary on system): {loc.path}: {cmd}")
+
+    return fixed, removed
 
 
 # ---------------------------------------------------------------------------
@@ -478,10 +698,23 @@ def _cmd_status() -> None:
 
 
 def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic functions
-    """Diagnose the OpenWebGoggles setup and environment."""
+    """Diagnose the OpenWebGoggles setup and environment.
+
+    Flags:
+      --fix      Rewrite stale openwebgoggles entries to point at the
+                 currently-resolved binary across every known editor config.
+      --remove   Combined with --fix: when no binary can be resolved at all
+                 (true uninstall), delete the openwebgoggles entry from each
+                 config file instead of trying to repair it.
+    """
+    args = sys.argv[2:]
+    fix = "--fix" in args
+    remove = "--remove" in args
     data_dir_arg = None
-    if len(sys.argv) > 2:
-        data_dir_arg = Path(sys.argv[2])
+    for a in args:
+        if not a.startswith("-"):
+            data_dir_arg = Path(a)
+            break
 
     print("OpenWebGoggles Doctor")
     print()
@@ -514,53 +747,61 @@ def _cmd_doctor() -> None:  # noqa: C901 — TODO: extract per-check diagnostic 
         except importlib.metadata.PackageNotFoundError:
             warn(f"{pkg} not installed")
 
-    # Binary resolution
-    binary = shutil.which("openwebgoggles")
+    # Binary resolution — validate it's actually executable, not just on PATH.
+    binary = _try_resolve_binary()
     if binary:
         ok(f"Binary: {binary}")
     else:
-        warn("Binary not on PATH (run with full path or check pipx)")
+        warn("openwebgoggles binary cannot be located (try: pipx install openwebgoggles)")
 
-    # Config files
+    # Config scan — every editor in the registry, every known config location.
+    # Detects stale `command` paths (binary moved/uninstalled) and offers repair.
     cwd = Path(data_dir_arg) if data_dir_arg else Path.cwd()
+    entries = _scan_configs(cwd)
 
-    # Check for Claude Code config
-    mcp_json = cwd / ".mcp.json"
-    if mcp_json.exists():
-        try:
-            cfg = json.loads(mcp_json.read_text())
-            servers = cfg.get("mcpServers", {})
-            server_key = _find_server_key(servers)
-            if server_key:
-                ok(f".mcp.json: {server_key} configured")
-                # Verify binary path matches
-                cmd = servers[server_key].get("command", "")
-                if binary and cmd and Path(cmd).resolve() == Path(binary).resolve():
-                    ok("Config binary path matches installed binary")
-                elif binary and cmd:
-                    warn(f"Config binary ({cmd}) differs from installed ({binary})")
-            else:
-                warn(".mcp.json exists but openwebgoggles not configured")
-        except (json.JSONDecodeError, OSError):
-            warn(".mcp.json exists but is invalid JSON")
+    if not entries or all(e["status"] in ("parse-error", "no-entry") for e in entries):
+        # Nothing healthy — but we may still have parse-errors / empty configs to flag.
+        configured_count = 0
     else:
-        # Check OpenCode config
-        opencode_json = cwd / "opencode.json"
-        global_opencode = Path.home() / ".config" / "opencode" / "opencode.json"
-        found_config = False
-        for cfg_path in (opencode_json, global_opencode):
-            if cfg_path.exists():
-                try:
-                    cfg = json.loads(cfg_path.read_text())
-                    server_key = _find_server_key(cfg.get("mcp", {}))
-                    if server_key:
-                        ok(f"{cfg_path.name}: {server_key} configured")
-                        found_config = True
-                        break
-                except (json.JSONDecodeError, OSError):
-                    pass
-        if not found_config:
-            warn("No editor config found (run: openwebgoggles init claude)")
+        configured_count = sum(1 for e in entries if e["status"] in ("ok", "stale"))
+
+    if configured_count == 0:
+        warn("No editor config found (run: openwebgoggles init claude)")
+
+    stale_entries = [e for e in entries if e.get("stale")]
+    for entry in entries:
+        loc = entry["location"]
+        status = entry["status"]
+        if status == "parse-error":
+            warn(f"{loc.path}: invalid JSON — cannot scan for openwebgoggles entry")
+        elif status == "no-entry":
+            warn(f"{loc.path}: exists but openwebgoggles not configured here")
+        elif status == "stale":
+            warn(
+                f"{loc.description} [{loc.path}]: stale command "
+                f"{entry['command']!r} — binary missing or not executable"
+            )
+        elif status == "ok":
+            ok(f"{loc.description} [{loc.path.name}]: {entry['key']} configured")
+            cmd = entry["command"]
+            if binary and cmd and Path(cmd).resolve() != Path(binary).resolve():
+                # Not stale but mismatched — common when there are multiple installs.
+                warn(f"      Config binary ({cmd}) differs from currently-resolved ({binary})")
+
+    if fix and stale_entries:
+        print()
+        print("Repairing stale entries:")
+        fixed, removed = _repair_configs(cwd, remove_if_unresolvable=remove)
+        if fixed:
+            ok(f"Fixed {fixed} stale entr{'y' if fixed == 1 else 'ies'}")
+        if removed:
+            ok(f"Removed {removed} entr{'y' if removed == 1 else 'ies'} (no binary on system)")
+        if not fixed and not removed:
+            warn("No entries were repaired — pass --remove to delete stale entries when binary is gone")
+    elif stale_entries:
+        print()
+        print(f"  Tip: run 'openwebgoggles doctor --fix' to repair {len(stale_entries)} stale entr"
+              f"{'y' if len(stale_entries) == 1 else 'ies'} automatically.")
 
     # Stale permissions from old 'webview' tool name (pre-rename migration)
     for sp in (cwd / ".claude" / "settings.json", Path.home() / ".claude" / "settings.json"):
